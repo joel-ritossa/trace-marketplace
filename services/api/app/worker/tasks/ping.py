@@ -1,4 +1,4 @@
-from app import db
+from app.clients import db
 from app.worker.broker import broker
 
 

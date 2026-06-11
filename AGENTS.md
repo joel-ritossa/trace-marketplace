@@ -59,7 +59,14 @@
 ### Process
 
 - Implement in `spec/stage-1/5_build-order.md` slice order. A slice is done when its "done when" passes on a fresh `docker compose up`; do not start the next slice on top of a broken one.
-- Every slice gets a buildlog directory at `buildlog/stage-1/slice-N/` with a `README.md`: write the implementation plan before coding, record drift from the plan (what changed and why) during implementation, and close with an outcome section verifying the done-when. Follow-up passes on a finished slice (audits, fix rounds) get their own file in the same directory. The buildlog is a record, not a spec — the spec stays in `spec/`.
+- Every slice gets a buildlog directory at `buildlog/stage-1/slice-N/` with numbered pass files: `000_implementation.md` (plan written before coding, drift recorded during implementation, outcome verifying the done-when), `001_audit.md` (post-implementation code review), then `00N_<slug>.md` for each subsequent pass. The full slice process is in `buildlog/stage-1/README.md`. The buildlog is a record, not a spec — the spec stays in `spec/`.
+- Audit passes follow `.cursor/skills/code-audit/SKILL.md`: read everything in scope, report findings across the fixed audit axes (no edits), implement only after approval, re-verify, document in the buildlog.
+
+### Explainers
+
+- `explainers/` holds short canonical write-ups of system behaviors with high discussion probability (delivery guarantees, consistency rules, security boundaries). One topic per file; index in `explainers/README.md`.
+- Add one when a "how does X behave?" question recurs or a design discussion produces an answer worth keeping. Lead with the one-line answer, then mechanism with code pointers, then honest caveats.
+- When a change alters a behavior documented in an explainer, update the explainer in the same pass. Explainers are descriptive (how it actually behaves); `spec/` stays normative — on conflict, fix code or spec first, then the explainer.
 
 ## Product Direction
 

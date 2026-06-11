@@ -31,6 +31,7 @@ One submitted file. Immutable after ingestion finishes.
 | `error_message` | text | Readable reason when `failed`. |
 | `attempts` | integer | Ingestion attempts so far; incremented by the worker. |
 | `parse_warnings` | jsonb | Count + samples of skipped malformed spans. |
+| `last_attempt_at` | timestamptz | Set when a worker claims the job; the stuck-upload sweep keys off this. |
 | `created_at`, `processed_at` | timestamptz | |
 
 `uploads.status` is the state of record for ingestion. Redis holds in-flight job messages only; if Redis loses a job, a sweep re-enqueues uploads stuck in `received`/`processing` past a timeout (see [6_architecture.md](6_architecture.md)).

@@ -2,7 +2,7 @@ from fastapi import APIRouter
 
 from app.auth import CurrentUser
 from app.schemas.dev import PingEnqueuedResponse, PingResultResponse
-from app.worker import broker
+from app.worker.broker import broker
 from app.worker.tasks import ping
 
 router = APIRouter(prefix="/dev")

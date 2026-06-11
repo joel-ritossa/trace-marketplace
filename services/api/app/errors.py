@@ -22,10 +22,18 @@ class ApiError(Exception):
         self.details = details or {}
 
 
-def _envelope(code: str, message: str, status: int, details: dict | None = None) -> JSONResponse:
+def error_response(
+    code: str,
+    message: str,
+    status: int,
+    details: dict | None = None,
+    headers: dict[str, str] | None = None,
+) -> JSONResponse:
+    """The one spec error shape, for handlers and middleware alike."""
     return JSONResponse(
         status_code=status,
         content={"error": {"code": code, "message": message, "details": details or {}}},
+        headers=headers,
     )
 
 
@@ -42,16 +50,16 @@ def register_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(ApiError)
     async def _api_error(_: Request, exc: ApiError) -> JSONResponse:
-        return _envelope(exc.code, exc.message, exc.status, exc.details)
+        return error_response(exc.code, exc.message, exc.status, exc.details)
 
     @app.exception_handler(StarletteHTTPException)
     async def _http_error(_: Request, exc: StarletteHTTPException) -> JSONResponse:
         code = _HTTP_CODES.get(exc.status_code, "http_error")
-        return _envelope(code, str(exc.detail), exc.status_code)
+        return error_response(code, str(exc.detail), exc.status_code)
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
-        return _envelope(
+        return error_response(
             "validation_error",
             "Request validation failed.",
             422,

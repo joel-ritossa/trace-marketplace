@@ -11,6 +11,7 @@ Docker Compose services:
 | `web` | Next.js frontend. Talks only to `api`. |
 | `api` | FastAPI. Synchronous request/response; enqueues ingestion jobs; never parses traces in-request. |
 | `worker` | taskiq worker, same Python codebase as `api`, separate entrypoint. Consumes jobs from Redis. Scale with `docker compose up --scale worker=N`. |
+| `scheduler` | taskiq scheduler, same image as `worker`, separate entrypoint. Fires scheduled tasks (the stuck-upload sweep; future periodic work). Single instance; scheduled tasks must be idempotent so an accidental double-fire is harmless. |
 | `redis` | Job broker (taskiq) and rate-limit state. Holds no state of record. |
 | Supabase stack | Postgres, auth, storage (local Supabase CLI stack). |
 
@@ -58,7 +59,7 @@ This makes retries, requeues, and duplicate deliveries safe by construction. It 
 
 ## Lost-Job Recovery
 
-If Redis drops a message (restart, eviction), the job is gone but the upload row is not. A periodic sweep (taskiq scheduled task, every 60s) re-enqueues uploads stuck in `received` or `processing` for more than 10 minutes. Combined with idempotency, at-least-once delivery is sufficient — no exactly-once machinery.
+If Redis drops a message (restart, eviction), the job is gone but the upload row is not. A periodic sweep (taskiq scheduled task fired by the `scheduler` service, every 60s) re-enqueues uploads stuck in `received` or `processing` for more than 10 minutes since the last claim (`uploads.last_attempt_at`, falling back to `created_at`), so a legitimately long-running attempt is re-enqueued at most once per timeout window. Combined with idempotency, at-least-once delivery is sufficient — no exactly-once machinery.
 
 ## Rate Limiting
 

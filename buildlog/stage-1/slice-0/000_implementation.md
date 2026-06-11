@@ -76,11 +76,11 @@ Done-when verified in-browser against the Compose stack on 2026-06-10:
 
 Slice complete, including two post-slice passes (each re-verified end to end):
 
-1. **[audit.md](audit.md)** — code review fixes and restructure: spec error
-   envelope, worker DB pool, routers/schemas/queries/worker layout, typed FE
-   API client, `DEV_ROUTES` flag (off by default), compose env interpolation.
-2. **[design-system.md](design-system.md)** — shadcn/ui themed via DESIGN.md
-   tokens, plus the UI polish pass. The ping demo *page* described above was
+1. **[001_audit.md](001_audit.md)** — code review fixes and restructure: spec
+   error envelope, worker DB pool, routers/schemas/queries/worker layout, typed
+   FE API client, `DEV_ROUTES` flag (off by default), compose env interpolation.
+2. **[002_design-system.md](002_design-system.md)** — shadcn/ui themed via
+   DESIGN.md tokens, plus the UI polish pass. The ping demo *page* described above was
    removed (the `/v1/dev/*` endpoints and worker task remain, flag-gated);
    the home page is now the Traces empty state that Slice 1 fills in.
 

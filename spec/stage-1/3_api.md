@@ -26,7 +26,14 @@ No other fields. There is no upload-time name/tags/description (trace-level, set
 { "upload_id": "…", "status": "received", "sha256": "…" }
 ```
 
-Failure cases: `413 file_too_large` (limit 25 MB, env-configurable), `422 invalid_request` (missing/extra parts), `422 invalid_json`, `422 unsupported_format`, `409 duplicate_upload` (details include the existing `upload_id`), `429 rate_limited`.
+Failure cases: `411 length_required` (no `Content-Length`; required so the size check runs before the body is consumed), `413 file_too_large` (limit 25 MB, env-configurable), `422 invalid_request` (missing/extra parts), `422 invalid_json`, `422 unsupported_format`, `409 duplicate_upload` (details include the existing `upload_id`), `429 rate_limited`.
+
+### GET /v1/uploads
+
+The caller's own uploads, newest first. Backs the uploads list on `/upload`.
+Returns upload rows (no payload content): `upload_id`, `filename`,
+`size_bytes`, `status`, `error_message`, `created_at`, `processed_at` — plus
+`total`. `limit`/`offset` pagination, max limit 100.
 
 ### GET /v1/uploads/{upload_id}
 
@@ -39,6 +46,14 @@ Owner only. Upload status for polling from the upload page.
   "trace_ids": ["…"], "created_at": "…", "processed_at": "…"
 }
 ```
+
+### GET /v1/uploads/{upload_id}/download
+
+Owner only. Returns the raw uploaded payload byte-identical
+(`Content-Disposition` attachment, original filename; buffered — fine under
+the 25 MB upload cap). This is the
+contributor's own-file download; consumer download is trace-level
+(`GET /v1/traces/{trace_id}/download`).
 
 ### GET /v1/traces
 
@@ -93,6 +108,6 @@ Unauthenticated liveness check used by Docker Compose and the smoke script.
 ## Conventions
 
 - Pydantic models define every request/response; OpenAPI is the contract for frontend types.
-- All endpoints sit behind global and per-user rate limits (Redis token bucket; limits in [6_architecture.md](6_architecture.md)). Exceeding either returns `429 rate_limited` with `Retry-After`.
+- All endpoints sit behind global and per-user rate limits (Redis token bucket; limits in [6_architecture.md](6_architecture.md)), except `GET /v1/health`, which Compose healthchecks poll. Exceeding either returns `429 rate_limited` with `Retry-After`.
 - No endpoint ever returns another user's private trace, even by ID probe (`404`, not `403`, for traces the caller cannot see exist).
 - Logs include IDs and statuses, never span `attributes`, `events`, or raw payload bodies.

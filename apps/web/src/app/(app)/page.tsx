@@ -1,4 +1,6 @@
+import Link from "next/link";
 import { ScrollText } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 export default function HomePage() {
   return (
@@ -11,8 +13,11 @@ export default function HomePage() {
         <ScrollText className="size-8 text-muted-foreground" strokeWidth={1.5} />
         <p className="mt-4 text-sm font-medium">No traces yet</p>
         <p className="mt-1 text-sm text-muted-foreground">
-          Trace upload arrives with the next slice.
+          Upload a trace file to get started. Trace inspection arrives with the next slice.
         </p>
+        <Button asChild size="sm" className="mt-4">
+          <Link href="/upload">Upload a trace</Link>
+        </Button>
       </div>
     </div>
   );

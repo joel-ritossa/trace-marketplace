@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
-from app import db
 from app.auth import CurrentUser
+from app.clients import db
 from app.errors import ApiError
 from app.queries import profiles
 from app.schemas.profile import MeResponse

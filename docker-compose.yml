@@ -8,6 +8,10 @@ x-backend-env: &backend-env
   DATABASE_URL: postgresql://postgres:postgres@host.docker.internal:${SUPABASE_DB_PORT:-55322}/postgres
   REDIS_URL: redis://redis:6379/0
   SUPABASE_URL: http://host.docker.internal:${SUPABASE_API_PORT:-55321}
+  SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+  # Dev surface + fault injection; the worker honors X-Fault markers only when
+  # this is set. Defaults on for the local stack, overridable from .env.
+  DEV_ROUTES: ${DEV_ROUTES:-true}
 
 services:
   redis:
@@ -29,17 +33,38 @@ services:
     environment:
       <<: *backend-env
       WEB_ORIGIN: http://localhost:${WEB_PORT:-3000}
-      # This compose file is the local dev stack, so the dev surface is on.
-      DEV_ROUTES: "true"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    healthcheck:
+      # The image has no curl; stdlib urllib raises on non-2xx.
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/v1/health', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     depends_on:
       redis:
         condition: service_healthy
 
   worker:
     build: services/api
-    command: ["taskiq", "worker", "app.worker:broker"]
+    command: ["taskiq", "worker", "app.worker:broker", "--max-async-tasks", "4"]
+    environment: *backend-env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  scheduler:
+    build: services/api
+    command: ["taskiq", "scheduler", "app.worker.scheduler:scheduler"]
     environment: *backend-env
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -62,4 +87,5 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
-      - api
+      api:
+        condition: service_healthy

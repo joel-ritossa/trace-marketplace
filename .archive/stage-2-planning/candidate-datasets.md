@@ -1,6 +1,6 @@
 # Stage 2 Candidate Datasets
 
-Public datasets that could power the stage-2 data-engine demo ([session 3](ideation-session-3.md)): task clustering, outcome labeling, judge validation. Found during ideation; licenses unverified — check before use. Non-normative.
+Public datasets that could power the stage-2 data-engine demo ([session 3](ideation/ideation-session-3.md)): task clustering, outcome labeling, judge validation. Found during ideation; licenses unverified — check before use. Non-normative.
 
 Ground rules (per `AGENTS.md`): these are local dev/demo data only; committed fixtures stay synthetic. Format is not a blocker — an offline convert-to-OTLP script turns any of these into upload-ready files without touching the stage-1 "one importer" decision (conversion happens before upload).
 

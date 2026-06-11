@@ -8,7 +8,7 @@ A marketplace for AI-agent trace data: contributors upload traces, consumers dis
 
 ## Stack
 
-Next.js (`apps/web`) · FastAPI + taskiq worker (`services/api`) · Supabase (Postgres, auth, storage) · Redis (queue + rate limiting).
+Next.js (`apps/web`) · FastAPI + taskiq worker/scheduler (`services/api`) · Supabase (Postgres, auth, storage) · Redis (queue + rate limiting).
 
 ## Prerequisites
 
@@ -21,20 +21,27 @@ Next.js (`apps/web`) · FastAPI + taskiq worker (`services/api`) · Supabase (Po
 ```sh
 supabase start                 # local Postgres/auth/storage (ports 553xx)
 cp .env.example .env
-docker compose up --build      # web :3000, api :8000, redis, worker
+docker compose up --build      # web :3000, api :8000, redis, worker, scheduler
 ```
 
-Open http://localhost:3000, sign up, and you should land on an authenticated page that round-trips through the API and can ping the worker.
+Open http://localhost:3000, sign up, and upload a trace file (OTLP JSON) from the Upload page; it is validated, preserved raw, ingested by the worker, and downloadable byte-identical.
 
 ## Develop (outside Docker)
 
 ```sh
 supabase start
 docker compose up redis -d
-cd services/api && uv run uvicorn app.main:app --reload          # API :8000
-cd services/api && uv run taskiq worker app.worker:broker        # worker
-pnpm install && pnpm --filter web dev                            # web :3000 (needs .env.local, see .env.example)
+cd services/api && uv run uvicorn app.main:app --reload                  # API :8000
+cd services/api && uv run taskiq worker app.worker:broker                # worker
+cd services/api && uv run taskiq scheduler app.worker.scheduler:scheduler  # stuck-upload sweep
+pnpm install && pnpm --filter web dev                                    # web :3000 (needs .env.local, see .env.example)
 ```
+
+## Operations
+
+- **Requeue a dead-lettered upload**: `make requeue UPLOAD=<upload_id>` — resets the upload and enqueues a fresh ingest job (see `dead_letters` table).
+- **Integration tests** (stack must be running): `cd services/api && uv run pytest tests/integration`.
+- **Fault injection** (local only, requires `DEV_ROUTES=true`): send `X-Fault: transient:2 | exhaust | permanent` with `POST /v1/uploads` to demo retries and dead-lettering.
 
 ## Database
 
