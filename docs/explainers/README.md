@@ -25,3 +25,4 @@ then the explainer.
 | Topic | Question it answers |
 |---|---|
 | [trace-upload-delivery-guarantee.md](trace-upload-delivery-guarantee.md) | Can an accepted upload be lost? What guarantees ingestion happens? |
+| [trace-rendering.md](trace-rendering.md) | What does the judge see when a trace is rendered? What gets dropped, and is it deterministic? |

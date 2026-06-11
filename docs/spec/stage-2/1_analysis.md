@@ -125,7 +125,7 @@ The renderer is the integration surface we own; one adapter serves the judge and
 - **Shape:** normalized spans → chronological OpenAI-style message list (the ecosystem convention).
 - **Unit:** one trace = one judging unit (one OTLP `trace_id`; no session aggregation — extension).
 - **Per-step content caps first:** tool inputs/outputs truncated middle-out at a per-field char cap (token mass lives in observations); conversation gets a looser cap; the step skeleton (names, statuses, ordering) is never dropped.
-- **Priority-tiered budget:** must-haves are the first user message, the final K steps, all error spans; remaining middle steps fill the budget newest-first with explicit elision markers.
+- **Priority-tiered budget:** must-haves are the first user message, the final K steps, all error spans; remaining middle steps fill the budget newest-first with explicit elision markers. When must-haves alone exceed the budget, per-step caps shrink toward a skeleton-only floor and then pre-final-K error spans are elided oldest-first (marked, never silent); the first user message and the final K steps are never dropped.
 - **Deterministic:** a pure function of (trace, renderer version, config). Config changes are version bumps. Budget env-var tunable.
 - **`rendering_truncated` is stored with the verdict.**
 

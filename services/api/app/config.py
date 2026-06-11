@@ -1,23 +1,10 @@
-from pathlib import Path
-
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
-def _env_files() -> tuple[str, ...]:
-    """Locate .env/.env.local upward from cwd (repo root when run from a subdir).
-
-    Real environment variables always take precedence over file values, and
-    `.env.local` over `.env`. In containers/cloud no files exist and only the
-    injected environment applies.
-    """
-    for directory in (Path.cwd(), *Path.cwd().parents):
-        if (directory / ".env").exists() or (directory / ".env.local").exists():
-            return (str(directory / ".env"), str(directory / ".env.local"))
-    return (".env", ".env.local")
+from app.env import env_files
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=_env_files(), extra="ignore")
+    model_config = SettingsConfigDict(env_file=env_files(), extra="ignore")
 
     # Required: no localhost fallbacks, so a misconfigured deployment fails
     # loudly instead of silently pointing at a local stack.

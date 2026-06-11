@@ -1,0 +1,44 @@
+{
+  "messages": [
+    {
+      "role": "system",
+      "content": "Trace: invoke_agent demo-agent | status: ok | spans: 7 (0 errors) | duration: 5000ms | tools: get_weather"
+    },
+    {
+      "role": "user",
+      "content": "What's the weather in Paris? Use the docs if needed."
+    },
+    {
+      "role": "system",
+      "content": "[step 1/7] agent invoke_agent demo-agent (ok, 5000ms)\nattrs: gen_ai.agent.name=demo-agent"
+    },
+    {
+      "role": "assistant",
+      "content": "[step 2/7] llm chat gpt-5 (ok, 1100ms)\ninput: user: What's the weather in Paris? Use the docs if needed.\noutput: assistant: [tool_call get_weather({\"location\": \"Paris\"})]"
+    },
+    {
+      "role": "system",
+      "content": "[step 3/7] chain prepare_context (ok, 1100ms)\nattrs: traceloop.entity.name=prepare_context"
+    },
+    {
+      "role": "system",
+      "content": "[step 4/7] retriever weather_docs_lookup (ok, 400ms)\nattrs: retrieval.documents=3"
+    },
+    {
+      "role": "system",
+      "content": "[step 5/7] embedding embeddings text-embedding-4 (ok, 130ms)"
+    },
+    {
+      "role": "tool",
+      "content": "[step 6/7] tool execute_tool get_weather (ok, 500ms)\ninput: {\"location\": \"Paris\"}\noutput: {\"temperature_c\": 18, \"conditions\": \"cloudy\"}"
+    },
+    {
+      "role": "assistant",
+      "content": "[step 7/7] llm llm final answer (ok, 1800ms)"
+    }
+  ],
+  "rendering_truncated": false,
+  "renderer_version": "1",
+  "step_count": 7,
+  "elided_step_count": 0
+}

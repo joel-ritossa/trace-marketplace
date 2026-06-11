@@ -1,0 +1,16 @@
+{
+  "messages": [
+    {
+      "role": "system",
+      "content": "Trace: hello span | status: ok | spans: 1 (0 errors) | duration: 250ms"
+    },
+    {
+      "role": "system",
+      "content": "[step 1/1] other hello span (unset, 250ms)"
+    }
+  ],
+  "rendering_truncated": false,
+  "renderer_version": "1",
+  "step_count": 1,
+  "elided_step_count": 0
+}

@@ -1,0 +1,24 @@
+{
+  "messages": [
+    {
+      "role": "system",
+      "content": "Trace: invoke_agent demo-agent | status: error | spans: 3 (2 errors) | duration: 3500ms | tools: web_search"
+    },
+    {
+      "role": "system",
+      "content": "[step 1/3] agent invoke_agent demo-agent (error, 3500ms)\nattrs: gen_ai.agent.name=demo-agent"
+    },
+    {
+      "role": "assistant",
+      "content": "[step 2/3] llm chat gpt-5 (ok, 950ms)"
+    },
+    {
+      "role": "tool",
+      "content": "[step 3/3] tool execute_tool web_search (error, TimeoutError, 2300ms)\ninput: {\"query\": \"weather paris\"}"
+    }
+  ],
+  "rendering_truncated": false,
+  "renderer_version": "1",
+  "step_count": 3,
+  "elided_step_count": 0
+}
