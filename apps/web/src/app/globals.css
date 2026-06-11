@@ -1,0 +1,98 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+/* Defined but never activated: app surfaces are light-only per DESIGN.md.
+   Keeping the variant pins shadcn's dark: classes to a .dark class (which we
+   never set) instead of the OS color scheme. */
+@custom-variant dark (&:is(.dark *));
+
+/* shadcn semantic variables, resolved to DESIGN.md tokens (see DESIGN.md
+   front matter + "Trace Marketplace Adaptation"). */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* DESIGN.md domain tokens (surface ladder, status + span-kind palettes). */
+@theme {
+  --color-canvas-soft: #fafafa;
+  --color-link: #0070f3;
+  --color-link-deep: #0761d1;
+  --color-link-soft: #d3e5ff;
+  --color-status-ok: #29bc9b;
+  --color-status-ok-soft: #aaffec;
+  --color-warning: #f5a623;
+  --color-warning-soft: #ffefcf;
+  --color-warning-deep: #ab570a;
+  --color-error: #ee0000;
+  --color-error-soft: #f7d4d6;
+  --color-error-deep: #c50000;
+  --color-span-llm: #7928ca;
+  --color-span-agent: #0070f3;
+  --color-span-tool: #f5a623;
+  --color-span-retriever: #29bc9b;
+  --color-span-embedding: #eb367f;
+  --color-span-other: #a1a1a1;
+}
+
+:root {
+  /* rounded.md 8px; shadcn's rounded-md resolves to ~6px = DESIGN.md nav scale */
+  --radius: 0.5rem;
+  --background: #ffffff; /* canvas */
+  --foreground: #171717; /* ink */
+  --card: #ffffff;
+  --card-foreground: #171717;
+  --popover: #ffffff;
+  --popover-foreground: #171717;
+  --primary: #171717; /* primary CTA = black ink */
+  --primary-foreground: #ffffff;
+  --secondary: #f5f5f5; /* canvas-soft-2 */
+  --secondary-foreground: #171717;
+  --muted: #f5f5f5;
+  --muted-foreground: #888888; /* mute */
+  --accent: #f5f5f5;
+  --accent-foreground: #171717;
+  --destructive: #ee0000; /* error */
+  --border: #ebebeb; /* hairline */
+  --input: #ebebeb;
+  --ring: #a1a1a1; /* hairline-strong */
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  ::selection {
+    background: #171717;
+    color: #f2f2f2;
+  }
+}

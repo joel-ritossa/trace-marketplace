@@ -1,0 +1,65 @@
+name: trace-marketplace
+
+# Supabase (Postgres, auth, storage) runs on the host via `supabase start`;
+# containers reach it at host.docker.internal. Ports come from .env and must
+# match supabase/config.toml.
+
+x-backend-env: &backend-env
+  DATABASE_URL: postgresql://postgres:postgres@host.docker.internal:${SUPABASE_DB_PORT:-55322}/postgres
+  REDIS_URL: redis://redis:6379/0
+  SUPABASE_URL: http://host.docker.internal:${SUPABASE_API_PORT:-55321}
+
+services:
+  redis:
+    image: redis:7-alpine
+    # Published on 56379 to avoid colliding with other local Redis instances;
+    # in-network services use redis:6379.
+    ports:
+      - "56379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build: services/api
+    ports:
+      - "8000:8000"
+    environment:
+      <<: *backend-env
+      WEB_ORIGIN: http://localhost:${WEB_PORT:-3000}
+      # This compose file is the local dev stack, so the dev surface is on.
+      DEV_ROUTES: "true"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  worker:
+    build: services/api
+    command: ["taskiq", "worker", "app.worker:broker"]
+    environment: *backend-env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-http://127.0.0.1:55321}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    environment:
+      SUPABASE_INTERNAL_URL: http://host.docker.internal:${SUPABASE_API_PORT:-55321}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - api

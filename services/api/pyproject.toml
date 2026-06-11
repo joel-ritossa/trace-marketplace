@@ -1,0 +1,26 @@
+[project]
+name = "trace-api"
+version = "0.1.0"
+description = "Trace Marketplace API and worker"
+requires-python = ">=3.12"
+dependencies = [
+    "asyncpg>=0.31.0",
+    "fastapi>=0.136.3",
+    "pydantic-settings>=2.14.1",
+    "pyjwt[crypto]>=2.13.0",
+    "taskiq>=0.12.4",
+    "taskiq-redis>=1.2.2",
+    "uvicorn[standard]>=0.49.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "ruff>=0.15.16",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]

@@ -1,0 +1,8 @@
+{
+  "name": "trace-marketplace",
+  "private": true,
+  "scripts": {
+    "dev:web": "pnpm --filter web dev"
+  },
+  "packageManager": "pnpm@10.24.0"
+}

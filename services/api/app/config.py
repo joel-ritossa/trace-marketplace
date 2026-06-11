@@ -1,0 +1,46 @@
+from pathlib import Path
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _env_files() -> tuple[str, ...]:
+    """Locate .env/.env.local upward from cwd (repo root when run from a subdir).
+
+    Real environment variables always take precedence over file values, and
+    `.env.local` over `.env`. In containers/cloud no files exist and only the
+    injected environment applies.
+    """
+    for directory in (Path.cwd(), *Path.cwd().parents):
+        if (directory / ".env").exists() or (directory / ".env.local").exists():
+            return (str(directory / ".env"), str(directory / ".env.local"))
+    return (".env", ".env.local")
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=_env_files(), extra="ignore")
+
+    # Required: no localhost fallbacks, so a misconfigured deployment fails
+    # loudly instead of silently pointing at a local stack.
+    database_url: str
+    redis_url: str
+    supabase_url: str
+    web_origin: str = "http://localhost:3000"
+    # Mounts /v1/dev/* (worker ping etc.). Off by default so a deployment
+    # that forgets to set it gets the safe outcome; local .env opts in.
+    dev_routes: bool = False
+
+    @property
+    def supabase_jwks_url(self) -> str:
+        return f"{self.supabase_url}/auth/v1/.well-known/jwks.json"
+
+    @property
+    def web_origins(self) -> list[str]:
+        # Browsers treat localhost and 127.0.0.1 as distinct origins; accept
+        # both spellings so CORS doesn't depend on which one the user typed.
+        origins = {self.web_origin}
+        for a, b in (("//localhost", "//127.0.0.1"), ("//127.0.0.1", "//localhost")):
+            origins.add(self.web_origin.replace(a, b))
+        return sorted(origins)
+
+
+settings = Settings()

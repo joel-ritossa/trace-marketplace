@@ -29,6 +29,7 @@
 - Python (`services/api`, one codebase with API and worker entrypoints): uv for packaging, ruff for lint + format, pytest. Type hints everywhere; Pydantic models at every boundary (requests, responses, task payloads).
 - TypeScript (`apps/web`): pnpm, strict `tsconfig`, Next.js App Router. API types derive from the FastAPI OpenAPI schema — never hand-write duplicates.
 - UI follows `DESIGN.md` (Vercel-derived system + the Trace Marketplace Adaptation section, which wins on conflict). Use its tokens; do not invent colors, radii, or type scales.
+- Components come from shadcn/ui (`pnpm dlx shadcn add <name>` into `src/components/ui/`), themed via the CSS variables in `globals.css`, which resolve to DESIGN.md tokens — DESIGN.md decides how things look, shadcn decides how they behave. Icons are `lucide-react`; no ad hoc SVG files. App surfaces are light-only (the `.dark` class is never set).
 - All tunables (size limits, rate limits, retry counts) are env vars with local-demo defaults, documented in a single `.env.example`.
 
 ### Code Organization
@@ -58,6 +59,7 @@
 ### Process
 
 - Implement in `spec/stage-1/5_build-order.md` slice order. A slice is done when its "done when" passes on a fresh `docker compose up`; do not start the next slice on top of a broken one.
+- Every slice gets a buildlog directory at `buildlog/stage-1/slice-N/` with a `README.md`: write the implementation plan before coding, record drift from the plan (what changed and why) during implementation, and close with an outcome section verifying the done-when. Follow-up passes on a finished slice (audits, fix rounds) get their own file in the same directory. The buildlog is a record, not a spec — the spec stays in `spec/`.
 
 ## Product Direction
 
