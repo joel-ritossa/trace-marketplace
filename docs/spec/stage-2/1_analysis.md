@@ -59,13 +59,14 @@ Pure functions over normalized rows. No model calls. Runs on every trace. New fi
 | `loop_kind` | text, nullable | `exact_repeat \| cycle \| stagnation` |
 | `recovered_from_error` | bool | Error span followed by successful retry then normal completion |
 | `truncation_suspected` | bool | Final LLM span finish_reason `length` / output cut at max tokens |
-| `llm_call_count`, `tool_call_count` | int | Per-kind span counts |
+| `llm_call_count` | int | llm-kind span count |
+| `tool_call_count` | int | Tool actions: tool-kind spans, or message-embedded tool calls when the trace has none (see loop detection) |
 
 All nullable (fail open). **Promotion is hit-rate gated:** per-field hit rates are measured on the dev dataset before the promotion list is locked at build; low-hit-rate fields are dropped, not kept as schema noise.
 
 ### Loop detection
 
-Per tool span, compute an action signature `(tool_name, hash(normalized_args))` and a result hash; run three strategies:
+Per tool action — tool-kind spans when the trace has any, else `tool_call` parts embedded in LLM output messages (results paired back by call id; the shape real Claude Code traces ship) — compute an action signature `(tool_name, hash(normalized_args))` and a result hash; run three strategies:
 
 1. **Exact repeat** — same signature ≥ N consecutive times.
 2. **Cycle** — repeating n-gram of signatures, period ≤ 4, ≥ 2 repetitions.

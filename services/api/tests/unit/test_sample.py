@@ -68,6 +68,54 @@ def test_absent_fields_are_null_or_empty() -> None:
     assert sample.tool_calls == []
 
 
+def test_embedded_tool_calls_reach_the_sample() -> None:
+    # Claude Code shape: no tool spans, calls embedded in LLM output messages.
+    spans = [
+        make_span(
+            0,
+            kind="llm",
+            attributes={
+                "gen_ai.output.messages": json.dumps(
+                    [
+                        {
+                            "role": "assistant",
+                            "parts": [
+                                {
+                                    "type": "tool_call",
+                                    "id": "call_1",
+                                    "name": "search",
+                                    "arguments": {"q": "x"},
+                                }
+                            ],
+                        }
+                    ]
+                )
+            },
+        ),
+        make_span(
+            1,
+            kind="llm",
+            attributes={
+                "gen_ai.input.messages": json.dumps(
+                    [
+                        {
+                            "role": "user",
+                            "parts": [
+                                {"type": "tool_call_response", "id": "call_1", "result": "hit"}
+                            ],
+                        }
+                    ]
+                )
+            },
+        ),
+    ]
+    sample = trace_to_sample(make_trace(spans))
+    assert len(sample.tool_calls) == 1
+    assert sample.tool_calls[0].name == "search"
+    assert sample.tool_calls[0].arguments == '{"q": "x"}'
+    assert sample.tool_calls[0].result == "hit"
+
+
 def test_fixture_sample() -> None:
     sample = trace_to_sample(load_fixture_trace("agent-session"))
     assert sample.user_input == "What's the weather in Paris? Use the docs if needed."

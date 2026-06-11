@@ -11,7 +11,7 @@ Shared by the renderer (judge prompt surface) and the trace→sample adapter
 """
 
 import json
-from typing import Any
+from typing import Any, NamedTuple
 
 from app.analysis.trace_input import SpanInput
 
@@ -53,7 +53,7 @@ _SUMMARY_MAX_ATTRS = 8
 _SUMMARY_VALUE_CAP = 120
 # Scan ceiling for flattened indexed attributes (gen_ai.prompt.N.*,
 # retrieval.documents.N.*) — a guard against pathological payloads.
-_MAX_INDEXED_ATTRS = 64
+MAX_INDEXED_ATTRS = 64
 
 
 def _first_str(attributes: dict[str, Any], keys: tuple[str, ...]) -> str | None:
@@ -77,7 +77,9 @@ def _parse_json_messages(value: Any) -> list[dict[str, Any]] | None:
     return None
 
 
-def _compact(value: Any) -> str:
+def compact_text(value: Any) -> str:
+    """Canonical one-line text for an extracted value: strings pass through,
+    everything else compact-dumps with sorted keys."""
     if isinstance(value, str):
         return value
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
@@ -91,11 +93,11 @@ def _part_text(part: Any) -> str | None:
     kind = part.get("type")
     if kind == "tool_call":
         name = part.get("name", "?")
-        return f"[tool_call {name}({_compact(part.get('arguments'))})]"
+        return f"[tool_call {name}({compact_text(part.get('arguments'))})]"
     if kind == "tool_call_response":
-        return f"[tool_result {_compact(part.get('response', part.get('result')))}]"
+        return f"[tool_result {compact_text(part.get('response', part.get('result')))}]"
     content = part.get("content", part.get("text"))
-    return _compact(content) if content is not None else None
+    return compact_text(content) if content is not None else None
 
 
 def message_text(message: dict[str, Any]) -> str | None:
@@ -121,7 +123,7 @@ def _messages_text(value: Any) -> str | None:
 def _flattened_messages_text(attributes: dict[str, Any], prefix: str) -> str | None:
     """Traceloop legacy: gen_ai.prompt.0.role / gen_ai.prompt.0.content …"""
     lines = []
-    for i in range(_MAX_INDEXED_ATTRS):
+    for i in range(MAX_INDEXED_ATTRS):
         content = attributes.get(f"{prefix}.{i}.content")
         if not isinstance(content, str) or not content:
             break
@@ -186,7 +188,7 @@ def first_user_message(spans: list[SpanInput]) -> str | None:
         text = _user_text_from_messages(span.attributes.get("gen_ai.input.messages"))
         if text:
             return text
-        for i in range(_MAX_INDEXED_ATTRS):
+        for i in range(MAX_INDEXED_ATTRS):
             if span.attributes.get(f"gen_ai.prompt.{i}.role") == "user":
                 content = span.attributes.get(f"gen_ai.prompt.{i}.content")
                 if isinstance(content, str) and content:
@@ -210,11 +212,88 @@ def attribute_summary(span: SpanInput) -> str | None:
     return "; ".join(items) if items else None
 
 
+class ToolAction(NamedTuple):
+    """One tool invocation: the unit loop detection and `tool_call_count`
+    operate over (1_analysis.md loop detection)."""
+
+    name: str
+    arguments: Any  # str | dict | None — normalization is the caller's job
+    result: str | None
+
+
+def tool_actions(spans: list[SpanInput]) -> list[ToolAction]:
+    """Chronological tool actions: tool-kind spans when the trace has any,
+    else tool_call parts embedded in LLM output messages (the Claude Code
+    shape), with results paired back by call id."""
+    tool_spans = [s for s in spans if s.kind == "tool"]
+    if tool_spans:
+        return [
+            ToolAction(s.tool_name or s.name, input_text(s), output_text(s)) for s in tool_spans
+        ]
+    return _embedded_tool_actions(spans)
+
+
+def _embedded_tool_actions(spans: list[SpanInput]) -> list[ToolAction]:
+    # New calls live only in output messages; input messages replay history
+    # (counting them would multiply every call). Responses live in later
+    # spans' input messages, keyed by call id.
+    calls: list[tuple[str | None, str, Any]] = []
+    results: dict[str, str] = {}
+    for span in spans:
+        if span.kind != "llm":
+            continue
+        structured_calls = False
+        for message in _parse_json_messages(span.attributes.get("gen_ai.output.messages")) or []:
+            for part in _dict_parts(message):
+                if part.get("type") == "tool_call":
+                    calls.append((part.get("id"), part.get("name", "?"), part.get("arguments")))
+                    structured_calls = True
+        for message in _parse_json_messages(span.attributes.get("gen_ai.input.messages")) or []:
+            for part in _dict_parts(message):
+                if part.get("type") != "tool_call_response" or not isinstance(part.get("id"), str):
+                    continue
+                payload = part.get("response", part.get("result"))
+                # Absent payload → no result hash (fail open), not "null".
+                if payload is not None:
+                    results.setdefault(part["id"], compact_text(payload))
+        # Flattened completions are an alternative encoding of the same
+        # calls, not additional ones — never count both for one span.
+        if not structured_calls:
+            calls.extend(_flattened_tool_calls(span.attributes))
+    return [
+        ToolAction(name, args, results.get(call_id) if call_id else None)
+        for call_id, name, args in calls
+    ]
+
+
+def _dict_parts(message: dict[str, Any]) -> list[dict[str, Any]]:
+    parts = message.get("parts")
+    if not isinstance(parts, list):
+        return []
+    return [p for p in parts if isinstance(p, dict)]
+
+
+def _flattened_tool_calls(attributes: dict[str, Any]) -> list[tuple[None, str, Any]]:
+    """Traceloop legacy: gen_ai.completion.N.tool_calls.M.{name,arguments}.
+    No call ids in this format, so results stay unpaired (fail open)."""
+    calls: list[tuple[None, str, Any]] = []
+    for i in range(MAX_INDEXED_ATTRS):
+        prefix = f"gen_ai.completion.{i}"
+        if not any(key.startswith(prefix + ".") for key in attributes):
+            break
+        for j in range(MAX_INDEXED_ATTRS):
+            name = attributes.get(f"{prefix}.tool_calls.{j}.name")
+            if not isinstance(name, str) or not name:
+                break
+            calls.append((None, name, attributes.get(f"{prefix}.tool_calls.{j}.arguments")))
+    return calls
+
+
 def retrieved_contexts(span: SpanInput) -> list[str]:
     """Document contents from a retriever span: OpenInference indexed
     documents, else the span's output text as one context."""
     contexts = []
-    for i in range(_MAX_INDEXED_ATTRS):
+    for i in range(MAX_INDEXED_ATTRS):
         content = span.attributes.get(f"retrieval.documents.{i}.document.content")
         if not isinstance(content, str) or not content:
             break

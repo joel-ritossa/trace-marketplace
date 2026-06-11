@@ -13,7 +13,8 @@ from dataclasses import dataclass
 from pydantic import BaseModel
 
 from app.analysis.config import AnalysisSettings
-from app.analysis.models import AnalyzerRun
+from app.analysis.models import AnalyzerRun, SignalsResult
+from app.analysis.signals import SIGNALS_VERSION, run_signals
 from app.analysis.trace_input import TraceInput
 
 AnalyzerFn = Callable[[TraceInput, AnalysisSettings], Awaitable[BaseModel | None]]
@@ -68,4 +69,7 @@ async def _run_stub(trace: TraceInput, settings: AnalysisSettings) -> StubResult
 
 ANALYZERS: dict[str, AnalyzerSpec] = {
     "stub": AnalyzerSpec(name="stub", version="1", result_model=StubResult, run=_run_stub),
+    "signals": AnalyzerSpec(
+        name="signals", version=SIGNALS_VERSION, result_model=SignalsResult, run=run_signals
+    ),
 }

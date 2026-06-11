@@ -24,6 +24,10 @@ class AnalysisSettings(BaseSettings):
     render_tool_field_cap_chars: int = 2_000
     render_conversation_cap_chars: int = 8_000
 
+    # Loop detection: exact-repeat / stagnation threshold (1_analysis.md,
+    # N = 3 default). Cycle parameters are spec-fixed constants.
+    loop_n: int = 3
+
 
 class RendererConfig(BaseModel):
     """Rendering tunables. Part of the renderer's determinism contract:

@@ -5,9 +5,10 @@ files fan out per trace) and needs no platform env; DB mode loads normalized
 rows by trace id. Results are `AnalyzerRun` envelopes / `RenderedTrace`
 models dumped as JSON to stdout or --out.
 
-    python -m app.cli.analyze run --analyzer stub fixtures/agent-session.json
+    python -m app.cli.analyze run --analyzer signals fixtures/agent-session.json
     python -m app.cli.analyze run --analyzer all --trace-id <uuid> --out out/
     python -m app.cli.analyze render devdata/*.json --out out/
+    python -m app.cli.analyze signals-report devdata/*.json
 """
 
 import argparse
@@ -22,10 +23,12 @@ from app.analysis import (
     ANALYZERS,
     AnalysisSettings,
     RendererConfig,
+    SignalsResult,
     TraceInput,
     render_trace,
     run_analyzer,
 )
+from app.analysis.signals import run_signals
 
 
 def _load_fixture(path: Path) -> list[tuple[str, TraceInput]]:
@@ -97,10 +100,33 @@ async def _cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
-def _add_input_args(parser: argparse.ArgumentParser) -> None:
+async def _cmd_signals_report(args: argparse.Namespace) -> int:
+    """Per-field hit rates over a trace set — the B1 promotion-list evidence
+    (1_analysis.md: promotion is hit-rate gated). Counts only, no content.
+    Calls the analyzer directly: the report needs the typed result, not the
+    persistence envelope `run_analyzer` produces."""
+    settings = AnalysisSettings()
+    results: list[SignalsResult] = []
+    for _, trace in await _load(args):
+        results.append(await run_signals(trace, settings))
+    total = len(results)
+    print(f"traces: {total}")
+    print(f"{'field':<24} {'non-null':>14} {'truthy':>14}")
+    for field in SignalsResult.model_fields:
+        values = [getattr(r, field) for r in results]
+        non_null = sum(v is not None for v in values)
+        truthy = sum(bool(v) for v in values if v is not None)
+        rate = f"{non_null}/{total} ({non_null / total:4.0%})" if total else "0/0"
+        truthy_rate = f"{truthy}/{total} ({truthy / total:4.0%})" if total else "0/0"
+        print(f"{field:<24} {rate:>14} {truthy_rate:>14}")
+    return 0
+
+
+def _add_input_args(parser: argparse.ArgumentParser, out: bool = True) -> None:
     parser.add_argument("paths", nargs="*", help="OTLP JSON fixture files")
     parser.add_argument("--trace-id", help="load one trace from the local DB instead of files")
-    parser.add_argument("--out", help="write JSON files to this directory instead of stdout")
+    if out:
+        parser.add_argument("--out", help="write JSON files to this directory instead of stdout")
 
 
 def main() -> None:
@@ -115,6 +141,12 @@ def main() -> None:
     render_parser = subparsers.add_parser("render", help="dump trace renderings")
     _add_input_args(render_parser)
     render_parser.set_defaults(handler=_cmd_render)
+
+    report_parser = subparsers.add_parser(
+        "signals-report", help="per-field signal hit rates over a trace set"
+    )
+    _add_input_args(report_parser, out=False)
+    report_parser.set_defaults(handler=_cmd_signals_report)
 
     args = parser.parse_args()
     if bool(args.paths) == bool(args.trace_id):

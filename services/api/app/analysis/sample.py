@@ -31,18 +31,23 @@ def trace_to_sample(trace: TraceInput) -> TraceSample:
                 break
 
     contexts: list[str] = []
-    tool_calls: list[ToolCall] = []
     for span in trace.spans:
         if span.kind == "retriever":
             contexts.extend(content.retrieved_contexts(span))
-        elif span.kind == "tool":
-            tool_calls.append(
-                ToolCall(
-                    name=span.tool_name or span.name,
-                    arguments=content.input_text(span),
-                    result=content.output_text(span),
-                )
-            )
+
+    # Same action stream as the signals analyzer (tool spans, else
+    # message-embedded calls) — one source of truth for "the trace's tool
+    # calls", so family 3 sees them on Claude Code-shaped traces too.
+    tool_calls = [
+        ToolCall(
+            name=action.name,
+            arguments=content.compact_text(action.arguments)
+            if action.arguments is not None
+            else None,
+            result=action.result,
+        )
+        for action in content.tool_actions(trace.spans)
+    ]
 
     return TraceSample(
         user_input=content.first_user_message(trace.spans),

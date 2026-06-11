@@ -25,7 +25,7 @@ Identical to stage 1 (`docs/buildlog/stage-1/README.md`), with two stage-2 notes
 | Slice | Scope | Status |
 |---|---|---|
 | [B0](B0/000_implementation.md) | Analyzer contract, trace rendering, offline runner | Done (2026-06-11): implemented, verified, audited |
-| B1 | Deterministic signals + hit-rate report | Not started |
+| [B1](B1/000_implementation.md) | Deterministic signals + hit-rate report | Done (2026-06-11): implemented, verified, audited |
 | B2 | Outcome judge (composed calls, voting, routing function) | Not started |
 | B3 | Quality metrics (critics + RAGAS) | Not started |
 | B4 | Validation (benchmark converter + agreement script) | Not started |

@@ -28,11 +28,12 @@ def make_span(
     attributes: dict[str, Any] | None = None,
     events: list[dict[str, Any]] | None = None,
     tool_name: str | None = None,
+    name: str | None = None,
 ) -> SpanInput:
     return SpanInput(
         source_span_id=f"{i:016x}",
         source_parent_span_id=None,
-        name=f"span-{i}",
+        name=name or f"span-{i}",
         kind=kind,
         started_at=_T0 + timedelta(seconds=i),
         ended_at=_T0 + timedelta(seconds=i + 1),

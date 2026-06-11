@@ -14,6 +14,7 @@ Signals and analyzers cut from the stage-2 judging base (`.archive/stage-2-plann
 | `estimated_cost` | Tokens × per-model price table | Non-required; price table is config maintenance | Same model-metadata table as above; consumer demand for cost filtering |
 | Semantic loop layer | Output-similarity confirmation for "hidden" cycles the signature-based strategies miss (per the unsupervised cycle-detection literature) | Requires embeddings — non-deterministic, against the rule-based base principle | Reframed as a derived-field analyzer (non-determinism is allowed in field *derivation*) with demonstrated misses from the deterministic strategies |
 | Per-model breakdowns | Per-model token/latency aggregates within a trace | No identified consumer query | Demand |
+| HIL-learned stagnation suppression | Stagnation detection flags ack-style tools whose result is constant by design (B1 found Claude Code's `TodoWrite` returning the identical ack for 8 distinct writes) — learn per-tool suppression from HIL outcomes instead of guessing a filter | Any static heuristic is guesswork: an ignore-list needs maintenance, and "identical results across distinct args" is exactly what stagnation *means* for genuine stuck loops (repeated empty searches). The false positive costs at most a review item, which routing already absorbs | Accumulated review resolutions (A3) showing a tool's stagnation-driven flags consistently overruled by humans — that record is the training signal for a suppression list |
 
 ## Deferred judge mechanics (family 2)
 

@@ -1,0 +1,9 @@
+{
+  "has_retry_loop": false,
+  "loop_kind": null,
+  "recovered_from_error": false,
+  "truncation_suspected": null,
+  "llm_call_count": 1,
+  "tool_call_count": 1,
+  "failure_suspected": true
+}
