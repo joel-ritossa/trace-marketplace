@@ -1,0 +1,30 @@
+[project]
+name = "trace-sync"
+version = "0.1.0"
+description = "Trace Marketplace sync CLI: upload local trace files via the upload API"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = ["httpx>=0.28.1"]
+
+[project.urls]
+Repository = "https://github.com/worktrial-joel-ritossa-dot/trace-marketplace"
+
+[project.scripts]
+trace-sync = "trace_sync.main:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "ruff>=0.15.16",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.28,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]

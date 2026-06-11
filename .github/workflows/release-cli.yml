@@ -1,0 +1,39 @@
+name: Release CLI
+
+# Publishes apps/cli to PyPI via Trusted Publishing (OIDC, no stored tokens).
+# Trigger: push a tag like cli-v0.1.0 whose version matches pyproject.toml.
+
+on:
+  push:
+    tags: ["cli-v*"]
+
+permissions:
+  id-token: write # OIDC token for PyPI Trusted Publishing
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Check tag matches package version
+        working-directory: apps/cli
+        run: |
+          version=$(uv version --short)
+          [ "cli-v$version" = "$GITHUB_REF_NAME" ] || {
+            echo "tag $GITHUB_REF_NAME != pyproject version $version" >&2
+            exit 1
+          }
+
+      - name: Run tests
+        working-directory: apps/cli
+        run: uv run pytest
+
+      - name: Build and publish to PyPI
+        working-directory: apps/cli
+        run: |
+          uv build
+          uv publish
