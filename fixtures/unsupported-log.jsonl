@@ -1,0 +1,2 @@
+{"event":"log","level":"info","msg":"service started"}
+{"event":"log","level":"warn","msg":"queue depth rising"}

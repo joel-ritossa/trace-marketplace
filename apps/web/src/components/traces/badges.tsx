@@ -1,12 +1,13 @@
-import { BookMarked, Globe, Lock } from "lucide-react";
 import type {
-  AnalysisState,
-  Outcome,
-  Provenance,
-  SkipReason,
-  TraceVisibility,
+    AnalysisState,
+    Outcome,
+    Provenance,
+    SkipReason,
+    TraceVisibility,
 } from "@/lib/api/traces";
 import { cn } from "@/lib/utils";
+import { BookMarked, CircleHelp, Globe, Lock } from "lucide-react";
+import Link from "next/link";
 
 /** Visibility is always visible (4_pages.md): every trace rendering carries one. */
 export function VisibilityBadge({ visibility }: { visibility: TraceVisibility }) {
@@ -28,7 +29,7 @@ export function LibraryBadge() {
   return (
     <span className="inline-flex items-center gap-1 rounded-full bg-status-ok-soft px-2 py-0.5 text-xs font-medium text-status-ok">
       <BookMarked className="size-3" />
-      in your library
+      saved
     </span>
   );
 }
@@ -107,6 +108,23 @@ export function AnalysisStateBadge({
   // Quiet placeholder, visually distinct from a verdict: also covers
   // complete-but-no-verdict (the judge failed open on every field).
   return <span className="text-xs text-muted-foreground/60">not analyzed</span>;
+}
+
+/** The needs-review indicator (4_pages.md /traces delta): links straight to
+ *  the open review item. Owner-only data — non-owner rows never carry an id.
+ *  Advisory framing: review improves labels, it gates nothing. */
+export function NeedsReviewLink({ itemId }: { itemId: string }) {
+  return (
+    <Link
+      href={`/review/${itemId}`}
+      onClick={(e) => e.stopPropagation()}
+      className="inline-flex items-center gap-1 text-xs text-link-deep hover:underline"
+      title="The judge was uncertain — review to improve this trace's labels"
+    >
+      <CircleHelp className="size-3" />
+      review
+    </Link>
+  );
 }
 
 /** The one list-level analysis rendering (table cells and cards): outcome

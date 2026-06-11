@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { AccountMenu } from "@/components/shell/account-menu";
-import { NavLinks } from "@/components/shell/nav-links";
+import { Sidebar } from "@/components/shell/sidebar";
+import { TopBar } from "@/components/shell/top-bar";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createClient();
@@ -14,17 +14,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-canvas-soft">
-      <header className="flex h-16 items-center justify-between border-b bg-background px-6">
-        <div className="flex items-center gap-6">
-          <span className="text-sm font-semibold tracking-tight">Trace Marketplace</span>
-          <NavLinks />
-        </div>
-        <div className="flex items-center gap-4">
-          <AccountMenu email={user.email ?? "?"} />
-        </div>
-      </header>
-      <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-10">{children}</main>
+    <div className="flex min-h-screen bg-canvas-soft">
+      <Sidebar />
+      <div className="flex min-w-0 flex-1 flex-col">
+        <TopBar email={user.email ?? "?"} />
+        {/* Pages opt into a measure (max-w-6xl lists, max-w-2xl settings);
+            inspection surfaces get the full width by default. */}
+        <main className="w-full flex-1 px-6 py-8">{children}</main>
+      </div>
     </div>
   );
 }

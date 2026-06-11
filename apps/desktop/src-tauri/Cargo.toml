@@ -1,0 +1,33 @@
+[package]
+name = "desktop"
+version = "0.1.0"
+description = "Trace Marketplace desktop tray app: folder sync, notifications, review"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# tray-icon + image-png: the JS-side TrayIcon needs the feature and a PNG decoder.
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-opener = "2"
+tauri-plugin-store = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-dialog = "2"
+# Community fork of tauri-plugin-notification: with default-features off it
+# drives macOS's UNUserNotificationCenter directly, which (unlike the official
+# plugin's notify-rust backend) delivers click callbacks on desktop.
+tauri-plugin-notifications = { version = "0.4", default-features = false }
+tauri-plugin-http = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+

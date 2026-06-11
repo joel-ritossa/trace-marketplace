@@ -24,7 +24,7 @@ cp .env.example .env
 docker compose up --build      # web :3000, api :8000, redis, worker, scheduler
 ```
 
-Open http://localhost:3000, sign up, and upload a trace file (OTLP JSON) from the Upload page; it is validated, preserved raw, parsed into traces and spans by the worker, and downloadable byte-identical. My Traces lists what was parsed; each trace opens an inspector with the span tree and per-span attributes/events. From there, list a trace on the Marketplace (with the ownership confirmation), where any signed-in user can search, inspect, acquire it ($0), and download the raw payload from their Library.
+Open http://localhost:3000, sign up, and upload trace files (OTLP JSON) from the Uploads page; each is validated, preserved raw, parsed into traces and spans by the worker, and downloadable byte-identical. Traces lists what was parsed; each trace opens an inspector with the span tree and per-span attributes/events. From there, list a trace on the marketplace (with the ownership confirmation), where any signed-in user can browse, inspect, acquire it ($0), and download the raw payload from their Library.
 
 Every ingested trace is also analyzed by the worker: deterministic signals (retry loops, error recovery, call counts) always run, and an LLM judge labels outcome / failure mode / task category when a provider key is configured (`OPENAI_API_KEY` etc. in `.env` — see `.env.example`). Keyless mode is honest, not broken: traces show `analysis skipped — judge not configured`, never a fake pending. The trace detail page carries the full Analysis section (labels, judge reasoning, signals, audit trail); list surfaces show the outcome badge.
 
@@ -48,7 +48,11 @@ TRACE_API_KEY=tmk_… uv run trace-sync watch ~/agent-logs   # stay alive, uploa
 
 The CLI is stateless — the server's per-user content hash dedupe makes re-syncing a directory a no-op (`already synced`). Per-file ingestion results print as they land (`uploaded (complete, 3 traces)` / `failed: <reason>`); failures that happen while nobody watches are visible on **/uploads**. Exit codes: 0 all synced/skipped, 1 some file failed, 2 couldn't run (bad key, unreachable API, no files).
 
-Want real data of your own? `make my-sessions` converts your local Codex / Claude Code / Cursor session logs into uploadable OTLP under git-ignored `devdata/agent-sessions/` — see `docs/demos/cli-sync.md` for the full walkthrough.
+Want real data of your own? Raw Codex / Claude Code / Cursor session logs upload directly — the server detects the schema and converts each session into per-turn traces. `make link-sessions` symlinks your local session directories into git-ignored `devdata/sessions-src/`; see `docs/demos/cli-sync.md` for the full walkthrough.
+
+## Desktop app
+
+`apps/desktop` is a lightweight Tauri tray app wrapping the same loop for people who'd rather not keep a terminal open: it watches folders (auto-detecting Codex/Claude Code/Cursor session dirs), uploads through the same API, fires native notifications for review requests, and resolves review items in-app. Users install the `.dmg` from the latest `desktop-v*` GitHub Release (pointed at production, no local stack needed); building from source requires a Rust toolchain. Install and release docs: `apps/desktop/README.md`.
 
 ## Develop (outside Docker)
 

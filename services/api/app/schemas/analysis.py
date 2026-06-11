@@ -66,6 +66,6 @@ class TraceAnalysisResponse(BaseModel):
     reasoning: str | None = None
     signals: AnalysisSignals | None = None
     metric_scores: dict[str, float | bool] | None = None
-    # Always null until A3 wires review items.
+    # Owner-only (A3 decision 8): null for non-owners and when nothing is open.
     open_review_item_id: str | None = None
     audit: AnalysisAudit

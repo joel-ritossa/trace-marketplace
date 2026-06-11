@@ -1,0 +1,336 @@
+{
+  "traces": [
+    {
+      "source_trace_id": "a045eb232619b6f2d27162a2577112c8",
+      "name": "cursor: Fix the failing CI build",
+      "status": "ok",
+      "started_at": "2026-01-15T11:59:53+00:00",
+      "ended_at": "2026-01-15T11:59:58+00:00",
+      "duration_ms": 5000,
+      "span_count": 6,
+      "error_count": 0,
+      "provider": null,
+      "model": null,
+      "service_name": "cursor-cli",
+      "tool_names": [
+        "Grep",
+        "Read",
+        "Shell"
+      ],
+      "error_types": [],
+      "total_tokens": null,
+      "spans": [
+        {
+          "source_span_id": "0ed02fd82b31a1af",
+          "source_parent_span_id": null,
+          "name": "cursor: Fix the failing CI build",
+          "kind": "agent",
+          "started_at": "2026-01-15T11:59:53+00:00",
+          "ended_at": "2026-01-15T11:59:58+00:00",
+          "duration_ms": 5000,
+          "status": "ok",
+          "status_message": null,
+          "error_type": null,
+          "provider": null,
+          "model": null,
+          "tool_name": null,
+          "input_tokens": null,
+          "output_tokens": null,
+          "total_tokens": null,
+          "attributes": {
+            "gen_ai.operation.name": "invoke_agent",
+            "gen_ai.agent.name": "cursor",
+            "session.id": "cursor",
+            "turn.index": 0,
+            "converted.synthesized_root": true,
+            "converted.synthesized_timestamps": true
+          },
+          "events": [],
+          "raw_attributes": {
+            "gen_ai.operation.name": "invoke_agent",
+            "gen_ai.agent.name": "cursor",
+            "session.id": "cursor",
+            "turn.index": 0,
+            "converted.synthesized_root": true,
+            "converted.synthesized_timestamps": true
+          },
+          "raw_events": [],
+          "raw_status_message": null
+        },
+        {
+          "source_span_id": "78fc06b47bca09ce",
+          "source_parent_span_id": "0ed02fd82b31a1af",
+          "name": "assistant turn",
+          "kind": "llm",
+          "started_at": "2026-01-15T11:59:53+00:00",
+          "ended_at": "2026-01-15T11:59:54+00:00",
+          "duration_ms": 1000,
+          "status": "ok",
+          "status_message": null,
+          "error_type": null,
+          "provider": null,
+          "model": null,
+          "tool_name": null,
+          "input_tokens": null,
+          "output_tokens": null,
+          "total_tokens": null,
+          "attributes": {
+            "gen_ai.operation.name": "chat",
+            "input.value": "<system-context>Workspace: /Users/dev/app</system-context>\n<user_query>Fix the failing CI build</user_query>",
+            "output.value": "Checking the CI config."
+          },
+          "events": [],
+          "raw_attributes": {
+            "gen_ai.operation.name": "chat",
+            "input.value": "<system-context>Workspace: /Users/dev/app</system-context>\n<user_query>Fix the failing CI build</user_query>",
+            "output.value": "Checking the CI config."
+          },
+          "raw_events": [],
+          "raw_status_message": null
+        },
+        {
+          "source_span_id": "811f23a076c8a45c",
+          "source_parent_span_id": "0ed02fd82b31a1af",
+          "name": "Read",
+          "kind": "tool",
+          "started_at": "2026-01-15T11:59:54+00:00",
+          "ended_at": "2026-01-15T11:59:55+00:00",
+          "duration_ms": 1000,
+          "status": "ok",
+          "status_message": null,
+          "error_type": null,
+          "provider": null,
+          "model": null,
+          "tool_name": "Read",
+          "input_tokens": null,
+          "output_tokens": null,
+          "total_tokens": null,
+          "attributes": {
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.tool.name": "Read",
+            "gen_ai.tool.call.arguments": "{\"path\": \".github/workflows/ci.yml\"}"
+          },
+          "events": [],
+          "raw_attributes": {
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.tool.name": "Read",
+            "gen_ai.tool.call.arguments": "{\"path\": \".github/workflows/ci.yml\"}"
+          },
+          "raw_events": [],
+          "raw_status_message": null
+        },
+        {
+          "source_span_id": "b1e7e28574878d67",
+          "source_parent_span_id": "0ed02fd82b31a1af",
+          "name": "Grep",
+          "kind": "tool",
+          "started_at": "2026-01-15T11:59:55+00:00",
+          "ended_at": "2026-01-15T11:59:56+00:00",
+          "duration_ms": 1000,
+          "status": "ok",
+          "status_message": null,
+          "error_type": null,
+          "provider": null,
+          "model": null,
+          "tool_name": "Grep",
+          "input_tokens": null,
+          "output_tokens": null,
+          "total_tokens": null,
+          "attributes": {
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.tool.name": "Grep",
+            "gen_ai.tool.call.arguments": "{\"pattern\": \"node-version\"}"
+          },
+          "events": [],
+          "raw_attributes": {
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.tool.name": "Grep",
+            "gen_ai.tool.call.arguments": "{\"pattern\": \"node-version\"}"
+          },
+          "raw_events": [],
+          "raw_status_message": null
+        },
+        {
+          "source_span_id": "3ff771068d27b61a",
+          "source_parent_span_id": "0ed02fd82b31a1af",
+          "name": "Shell",
+          "kind": "tool",
+          "started_at": "2026-01-15T11:59:56+00:00",
+          "ended_at": "2026-01-15T11:59:57+00:00",
+          "duration_ms": 1000,
+          "status": "ok",
+          "status_message": null,
+          "error_type": null,
+          "provider": null,
+          "model": null,
+          "tool_name": "Shell",
+          "input_tokens": null,
+          "output_tokens": null,
+          "total_tokens": null,
+          "attributes": {
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.tool.name": "Shell",
+            "gen_ai.tool.call.arguments": "{\"command\": \"pnpm lint\"}"
+          },
+          "events": [],
+          "raw_attributes": {
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.tool.name": "Shell",
+            "gen_ai.tool.call.arguments": "{\"command\": \"pnpm lint\"}"
+          },
+          "raw_events": [],
+          "raw_status_message": null
+        },
+        {
+          "source_span_id": "222d846405e6bae9",
+          "source_parent_span_id": "0ed02fd82b31a1af",
+          "name": "assistant turn",
+          "kind": "llm",
+          "started_at": "2026-01-15T11:59:57+00:00",
+          "ended_at": "2026-01-15T11:59:58+00:00",
+          "duration_ms": 1000,
+          "status": "ok",
+          "status_message": null,
+          "error_type": null,
+          "provider": null,
+          "model": null,
+          "tool_name": null,
+          "input_tokens": null,
+          "output_tokens": null,
+          "total_tokens": null,
+          "attributes": {
+            "gen_ai.operation.name": "chat",
+            "output.value": "The pipeline pinned Node 18; bumped it to 20 and lint passes."
+          },
+          "events": [],
+          "raw_attributes": {
+            "gen_ai.operation.name": "chat",
+            "output.value": "The pipeline pinned Node 18; bumped it to 20 and lint passes."
+          },
+          "raw_events": [],
+          "raw_status_message": null
+        }
+      ]
+    },
+    {
+      "source_trace_id": "5c8bc850cc81dbbea4f2d2b73019ffb0",
+      "name": "cursor: Also update the README badge",
+      "status": "ok",
+      "started_at": "2026-01-15T11:59:58+00:00",
+      "ended_at": "2026-01-15T12:00:00+00:00",
+      "duration_ms": 2000,
+      "span_count": 3,
+      "error_count": 0,
+      "provider": null,
+      "model": null,
+      "service_name": "cursor-cli",
+      "tool_names": [
+        "StrReplace"
+      ],
+      "error_types": [],
+      "total_tokens": null,
+      "spans": [
+        {
+          "source_span_id": "33ed1bb8fc26c007",
+          "source_parent_span_id": "671fa3649fb5488c",
+          "name": "assistant turn",
+          "kind": "llm",
+          "started_at": "2026-01-15T11:59:58+00:00",
+          "ended_at": "2026-01-15T11:59:59+00:00",
+          "duration_ms": 1000,
+          "status": "ok",
+          "status_message": null,
+          "error_type": null,
+          "provider": null,
+          "model": null,
+          "tool_name": null,
+          "input_tokens": null,
+          "output_tokens": null,
+          "total_tokens": null,
+          "attributes": {
+            "gen_ai.operation.name": "chat",
+            "input.value": "<user_query>Also update the README badge</user_query>",
+            "output.value": "Badge updated."
+          },
+          "events": [],
+          "raw_attributes": {
+            "gen_ai.operation.name": "chat",
+            "input.value": "<user_query>Also update the README badge</user_query>",
+            "output.value": "Badge updated."
+          },
+          "raw_events": [],
+          "raw_status_message": null
+        },
+        {
+          "source_span_id": "671fa3649fb5488c",
+          "source_parent_span_id": null,
+          "name": "cursor: Also update the README badge",
+          "kind": "agent",
+          "started_at": "2026-01-15T11:59:58+00:00",
+          "ended_at": "2026-01-15T12:00:00+00:00",
+          "duration_ms": 2000,
+          "status": "ok",
+          "status_message": null,
+          "error_type": null,
+          "provider": null,
+          "model": null,
+          "tool_name": null,
+          "input_tokens": null,
+          "output_tokens": null,
+          "total_tokens": null,
+          "attributes": {
+            "gen_ai.operation.name": "invoke_agent",
+            "gen_ai.agent.name": "cursor",
+            "session.id": "cursor",
+            "turn.index": 1,
+            "converted.synthesized_root": true,
+            "converted.synthesized_timestamps": true
+          },
+          "events": [],
+          "raw_attributes": {
+            "gen_ai.operation.name": "invoke_agent",
+            "gen_ai.agent.name": "cursor",
+            "session.id": "cursor",
+            "turn.index": 1,
+            "converted.synthesized_root": true,
+            "converted.synthesized_timestamps": true
+          },
+          "raw_events": [],
+          "raw_status_message": null
+        },
+        {
+          "source_span_id": "bfad579cd80981b7",
+          "source_parent_span_id": "671fa3649fb5488c",
+          "name": "StrReplace",
+          "kind": "tool",
+          "started_at": "2026-01-15T11:59:59+00:00",
+          "ended_at": "2026-01-15T12:00:00+00:00",
+          "duration_ms": 1000,
+          "status": "ok",
+          "status_message": null,
+          "error_type": null,
+          "provider": null,
+          "model": null,
+          "tool_name": "StrReplace",
+          "input_tokens": null,
+          "output_tokens": null,
+          "total_tokens": null,
+          "attributes": {
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.tool.name": "StrReplace",
+            "gen_ai.tool.call.arguments": "{\"path\": \"README.md\"}"
+          },
+          "events": [],
+          "raw_attributes": {
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.tool.name": "StrReplace",
+            "gen_ai.tool.call.arguments": "{\"path\": \"README.md\"}"
+          },
+          "raw_events": [],
+          "raw_status_message": null
+        }
+      ]
+    }
+  ],
+  "parse_warnings": null
+}

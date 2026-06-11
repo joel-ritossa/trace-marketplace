@@ -1,0 +1,127 @@
+{
+  "uploads": [
+    {
+      "fixture": "demo-weather-agent.json",
+      "tags": ["weather", "tool-use", "demo"],
+      "description": "Synthetic weather-assistant session with full conversation content: user question → LLM tool call → get_weather result → grounded answer, token counts on every model call.",
+      "analysis": {
+        "outcome": "success",
+        "outcome_confidence": 0.92,
+        "failure_mode": null,
+        "failure_mode_confidence": null,
+        "task_category": "retrieval_qa",
+        "task_category_confidence": 0.86
+      },
+      "review": null
+    },
+    {
+      "fixture": "demo-web-search-failure.json",
+      "tags": ["failure", "timeout", "demo"],
+      "description": "Synthetic failing run with full conversation content: a web_search tool call times out (TimeoutError) and the agent reports the failure to the user.",
+      "analysis": {
+        "outcome": "failure",
+        "outcome_confidence": 0.55,
+        "failure_mode": "system_failure",
+        "failure_mode_confidence": 0.61,
+        "task_category": "web_research",
+        "task_category_confidence": 0.58
+      },
+      "review": {
+        "reasons": [
+          {
+            "code": "low_outcome_confidence",
+            "message": "Outcome confidence 0.55 is below the review threshold 0.70."
+          },
+          {
+            "code": "low_task_category_confidence",
+            "message": "Task-category confidence 0.58 is below the review threshold 0.70."
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "minimal.json",
+      "tags": ["minimal", "demo"],
+      "description": "Single-span minimal OTLP trace — the smallest valid payload.",
+      "analysis": {
+        "outcome": "success",
+        "outcome_confidence": 0.97,
+        "failure_mode": null,
+        "failure_mode_confidence": null,
+        "task_category": "other",
+        "task_category_confidence": 0.74
+      },
+      "review": null
+    },
+    {
+      "fixture": "malformed-spans.json",
+      "tags": ["partial-parse", "demo"],
+      "description": "Mixed-quality payload: valid spans ingest, malformed ones are skipped and counted in parse warnings.",
+      "analysis": {
+        "outcome": "indeterminate",
+        "outcome_confidence": 0.4,
+        "failure_mode": null,
+        "failure_mode_confidence": null,
+        "task_category": "data_analysis",
+        "task_category_confidence": 0.66
+      },
+      "review": {
+        "reasons": [
+          {
+            "code": "outcome_indeterminate",
+            "message": "The judge could not determine an outcome (abstention or split vote)."
+          },
+          {
+            "code": "low_outcome_confidence",
+            "message": "Outcome confidence 0.40 is below the review threshold 0.70."
+          }
+        ]
+      }
+    }
+  ],
+  "contributor": {
+    "email": "demo-contributor@example.com",
+    "uploads": [
+      {
+        "fixture": "retrieval-qa.json",
+        "tags": ["retrieval", "qa", "demo"],
+        "description": "Synthetic retrieval-QA session: a city-guide lookup feeds a grounded chat answer about a rainy day in Paris.",
+        "analysis": {
+          "outcome": "success",
+          "outcome_confidence": 0.91,
+          "failure_mode": null,
+          "failure_mode_confidence": null,
+          "task_category": "retrieval_qa",
+          "task_category_confidence": 0.89
+        },
+        "review": null
+      },
+      {
+        "fixture": "redaction-seeded.json",
+        "tags": ["redaction", "demo"],
+        "description": "Synthetic session seeded with PII-shaped values — shows the redaction pipeline: acquirers download the scrubbed artifact.",
+        "analysis": {
+          "outcome": "success",
+          "outcome_confidence": 0.84,
+          "failure_mode": null,
+          "failure_mode_confidence": null,
+          "task_category": "customer_ops",
+          "task_category_confidence": 0.77
+        },
+        "review": null
+      }
+    ]
+  },
+  "subscriptions": [
+    {
+      "name": "Failure watch",
+      "query": { "outcome": "failure" },
+      "matches": ["demo-web-search-failure.json"]
+    },
+    {
+      "name": "High-confidence successes",
+      "query": { "outcome": "success", "outcome_confidence_gte": 0.9 },
+      "matches": ["demo-weather-agent.json", "minimal.json"]
+    }
+  ]
+}

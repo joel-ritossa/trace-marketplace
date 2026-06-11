@@ -1,6 +1,6 @@
 # trace-sync
 
-Upload local trace files (OTLP JSON) to a [Trace Marketplace](https://github.com/worktrial-joel-ritossa-dot/trace-marketplace) instance from the terminal.
+Upload local trace files to a [Trace Marketplace](https://github.com/worktrial-joel-ritossa-dot/trace-marketplace) instance from the terminal: OTLP JSON, or raw coding-agent session logs (Codex rollouts, Claude Code / Cursor transcripts) that the server converts into per-turn traces.
 
 ```sh
 pipx install trace-sync          # or: uvx trace-sync …
@@ -17,10 +17,15 @@ TRACE_API_URL=https://your-marketplace.example TRACE_API_KEY=tmk_… \
 
 # same, then stay alive and upload files as they appear or change
 trace-sync watch ./traces
+
+# sync your agent's own session logs, last 24 h only
+trace-sync sync ~/.codex/sessions --since-hours 24
 ```
 
 Config is two env vars (`TRACE_API_URL`, `TRACE_API_KEY`), overridable with
-`--api-url` / `--api-key`. Uploads are private by default.
+`--api-url` / `--api-key`. Discovery covers `*.json` and `*.jsonl`
+(recursive); `--since-hours N` restricts to recently modified files.
+Uploads are private by default.
 
 ## Behavior
 

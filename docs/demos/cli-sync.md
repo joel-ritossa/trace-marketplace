@@ -11,28 +11,28 @@ With the stack running (`supabase start` + `docker compose up`) and a user
 signed in at http://localhost:3000 (or your `WEB_PORT`):
 
 ```sh
-# 1. Convert your own local coding-agent sessions (Codex, Claude Code,
-#    Cursor) from the past 24 h into OTLP files under git-ignored
-#    devdata/agent-sessions/. Sources are read through symlinks the script
-#    keeps in git-ignored devdata/sessions-src/ → ~/.codex, ~/.claude,
-#    ~/.cursor, so re-running always converts your latest sessions.
-tools/my_sessions.sh                            # = make my-sessions; --hours 0 for all history
+# 1. Symlink your local coding-agent session logs (Codex, Claude Code,
+#    Cursor) into git-ignored devdata/sessions-src/ → ~/.codex, ~/.claude,
+#    ~/.cursor. No conversion step: the raw JSONL uploads as-is and the
+#    server turns each session into per-turn traces (8_session-ingestion.md).
+make link-sessions
 
 # 2. Mint a key: Settings → API keys → Create key. The plaintext is shown
 #    exactly once, with a copyable CLI command. (make seed-dev also prints
 #    a reusable key for the demo contributor account.)
 
-# 3. Open /uploads in the browser, then sync from the terminal:
+# 3. Open /uploads in the browser, then sync the last day's sessions:
 cd apps/cli
-TRACE_API_KEY=tmk_…  uv run trace-sync sync ../../devdata/agent-sessions
+TRACE_API_KEY=tmk_…  uv run trace-sync sync ../../devdata/sessions-src --since-hours 24
 ```
 
 4. Watch both sides at once: the terminal prints one line per file
    (`uploaded (complete, 1 trace)`), and `/uploads` rows appear and flip
    `processing → complete` **without a refresh** (Supabase Realtime as an
-   invalidation signal). Your sessions land on My Traces with scannable
+   invalidation signal). Your sessions land on Traces with scannable
    names ("cursor: run an implementation plan for A1"), models, token
-   counts, and tool spans.
+   counts, and tool spans — one trace per user turn, stamped with a
+   `session.id` for grouping.
 
 5. Re-run the same sync — every line prints `already synced`, exit 0. The
    CLI keeps no state; the server's per-user sha256 dedupe is the source of
@@ -54,10 +54,10 @@ echo '{"resourceSpans": []}' > /tmp/drop/bad.json       # → failed: Payload co
 7. Revoke the key on Settings — the next CLI run dies immediately with
    `API key rejected` (exit 2).
 
-Converted personal sessions contain real prompt/tool content: they stay
-git-ignored on disk and **private** in the app (CLI uploads are private by
-default; nothing here lists them). The LLM-analysis opt-out for private
-traces lives on the same Settings page.
+Personal sessions contain real prompt/tool content: the symlinks stay
+git-ignored on disk and uploads stay **private** in the app (CLI uploads are
+private by default; nothing here lists them). The LLM-analysis opt-out for
+private traces lives on the same Settings page.
 
 ## What was solved
 
@@ -82,13 +82,18 @@ failures surface when no one is looking at a progress bar.
 - **Backpressure is normal operation.** A big first sync hits the tight
   per-user upload bucket; the CLI honors `Retry-After` and keeps going
   instead of erroring (`client.py`). One bad file never stops the run.
+- **Uploads pipeline through the server's queue.** The CLI enqueues every
+  file first (POSTs are quick), then drains the in-flight set as ingestion
+  completes server-side (`run.py:sync_batch`) — N files cost N uploads plus
+  concurrent ingestion, not N sequential ingest waits.
 - **Failures stay honest.** A failed CLI upload never becomes a trace and
   would otherwise be invisible; `/uploads` shows status + error verbatim,
   updating live via an invalidation-only Realtime hook
   (`apps/web/src/lib/realtime.ts`) — events trigger an API refetch, the
   socket never becomes a second data path.
-- **The converter dogfoods the format pipeline.** `make my-sessions`
-  (`tools/agent_sessions_to_otlp.py`) emits plain GenAI-semconv OTLP —
-  the same fallback chains the importer and renderer use on foreign data
-  (kinds, models, tokens, tool calls, error status) — so your own sessions
-  exercise ingestion, inspection, and (stage 2) analysis end to end.
+- **The server speaks your agent's native format.** Raw session JSONL is
+  detected and converted at ingestion (`app/importers/sessions/`,
+  8_session-ingestion.md) into per-turn GenAI-semconv OTLP through the one
+  normalize path; unsupported schemas reject with a readable reason at
+  upload. The CLI stays a dumb byte mover — your own sessions exercise
+  detection, conversion, ingestion, inspection, and analysis end to end.

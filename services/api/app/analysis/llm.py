@@ -20,6 +20,11 @@ from pydantic import BaseModel, ValidationError
 
 from app.env import env_files
 
+# Spec requires temperature > 0 where self-consistency votes are sampled
+# (judge, critics); not a knob. Models that reject the param (litellm drops
+# it) sample at their default temperature, which is also > 0.
+SAMPLING_TEMPERATURE = 0.7
+
 _env_loaded = False
 
 # Only provider credentials get exported — the rest of the env files
@@ -142,6 +147,30 @@ async def complete(
             if attempt == _PARSE_RETRIES:
                 raise MalformedResponse(_fold_meta(metas)) from None
     raise AssertionError("unreachable")
+
+
+async def embed(model: str, text: str) -> tuple[list[float], CallMeta]:
+    """One embedding call (similar-behavior proposal). Same error
+    classification as `complete`: provider errors retrying cannot fix raise
+    PermanentAnalysisError; everything else propagates as transient. No
+    parse-retry — an embedding response is never malformed-but-200."""
+    import litellm
+
+    _load_env_files()
+    litellm.suppress_debug_info = True
+
+    started = time.perf_counter()
+    try:
+        response = await litellm.aembedding(model=model, input=[text])
+    except (
+        litellm.AuthenticationError,
+        litellm.PermissionDeniedError,
+        litellm.NotFoundError,
+        litellm.BadRequestError,  # includes over-window inputs
+        litellm.UnprocessableEntityError,
+    ) as exc:
+        raise PermanentAnalysisError(str(exc)) from exc
+    return list(response.data[0]["embedding"]), _call_meta(response, started)
 
 
 def _call_meta(response, started: float) -> CallMeta:

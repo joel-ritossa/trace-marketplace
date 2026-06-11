@@ -35,6 +35,7 @@ from app.clients import db
 from app.config import settings
 from app.queries import analysis as analysis_q
 from app.queries import dead_letters, uploads
+from app.queries import notifications as notifications_q
 
 logger = logging.getLogger(__name__)
 
@@ -165,3 +166,9 @@ class RetryDlqMiddleware(TaskiqMiddleware):
             subject_id,
             f"Ingestion failed after {attempts} attempts: {exception}",
         )
+        # The other upload_failed emission site (A3 decision 5); no-ops for
+        # web uploads. Best-effort — the dead letter is already written.
+        try:
+            await notifications_q.upload_failed(pool, subject_id)
+        except Exception:
+            logger.exception("upload_failed notification for %s not delivered", subject_id)

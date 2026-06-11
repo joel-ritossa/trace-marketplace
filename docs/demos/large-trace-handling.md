@@ -13,7 +13,7 @@ With the stack running (`supabase start` + `docker compose up`):
 python3 tools/make_large_trace.py --spans 5000
 
 # 2. Sign up / sign in at http://localhost:3000, then upload
-#    devdata/large-trace.json from the Upload page.
+#    devdata/large-trace.json from the Uploads page.
 ```
 
 3. Watch the upload reach **complete** in under a second, then follow the

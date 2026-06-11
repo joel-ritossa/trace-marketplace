@@ -40,12 +40,14 @@ The literal click-through that defines done:
 
 Designed-for but explicitly out of the base build: task bounties, desktop notifications, similar-trace subscriptions, on-demand enrichment, behavioral novelty scoring (rare-data discovery), few-shot exemplars / evaluator training, judge model selection, session stitching, `estimated_cost`, meta-judge over vote reasonings, hierarchical task categories. SFT/trajectory/pairs export formats are future-work narrative only.
 
+Built this round on top of the base: similar-trace subscriptions, shipped as the similar-behavior extension (agreed 2026-06-11; design in [`docs/proposals/similar-behavior.md`](../../proposals/similar-behavior.md)) — per-trace embeddings on analysis, a similar-traces endpoint + modal, and behavior-anchored subscription matching.
+
 ## Locked Decisions
 
 | Decision | Resolution |
 |---|---|
 | Capture | Separate sync CLI; watch mode is base scope, not an extension. Stateless — server-side sha256 dedupe is the source of truth. |
-| Search & matching | Deterministic/rule-based everywhere. Non-determinism only in field *derivation*; rules match on derived fields like any column. No embedding search. |
+| Search & matching | Deterministic/rule-based everywhere. Non-determinism only in field *derivation*; rules match on derived fields like any column. No embedding search in the base build; the similar-behavior extension (agreed 2026-06-11) adds an explicit embedding-anchored subscription predicate and a similar-traces lookup — derivation stays non-deterministic, matching against a stored vector stays deterministic. |
 | Rare data | Base mechanism: rarity is filterable — sparse label combinations (`task_category` × `failure_mode`, signals, metric predicates) are discoverable and subscribable like any query. *Behavioral* rarity is the designed-for extension ([behavioral novelty](../../extensions/behavioral-novelty.md)); it ranks within a result set and never changes matching. |
 | Label model | Ternary `outcome` (`success \| failure \| indeterminate`); `failure_mode` from the AgentRx 10-category taxonomy; `task_category` closed enum; per-field confidence + provenance. |
 | Confidence | Vote share from N sampled judge runs; capped at 0.5 on signals/judge disagreement; 1.0 on human resolution. |

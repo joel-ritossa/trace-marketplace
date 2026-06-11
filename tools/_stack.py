@@ -36,6 +36,7 @@ class StackError(RuntimeError):
 
 
 _RATE_LIMIT_RETRIES = 5
+_CONNECTION_RETRIES = 3
 
 
 def _request(
@@ -46,7 +47,10 @@ def _request(
     body: bytes | None = None,
 ) -> tuple[int, bytes]:
     # Scripts hammer the API harder than a human; honor 429 Retry-After
-    # instead of surfacing the limiter as a failure.
+    # instead of surfacing the limiter as a failure. Dropped connections
+    # (e.g. an API container restarting mid-run) also retry briefly — every
+    # caller's writes are idempotent or dedup-guarded server-side.
+    drops = 0
     for attempt in range(_RATE_LIMIT_RETRIES + 1):
         req = urllib.request.Request(url, method=method, data=body, headers=headers or {})
         try:
@@ -57,8 +61,14 @@ def _request(
                 time.sleep(min(int(err.headers.get("Retry-After", 1)), 10))
                 continue
             return err.code, err.read()
-        except urllib.error.URLError as err:
-            raise StackError(f"cannot reach {url}: {err.reason} — is the stack running?") from err
+        except (urllib.error.URLError, ConnectionError, TimeoutError) as err:
+            drops += 1
+            if drops > _CONNECTION_RETRIES:
+                reason = getattr(err, "reason", err)
+                raise StackError(
+                    f"cannot reach {url}: {reason} — is the stack running?"
+                ) from err
+            time.sleep(2)
     raise AssertionError("unreachable")
 
 
@@ -82,6 +92,92 @@ def allow_email(env: dict[str, str], entry: str) -> None:
     )
     if status not in (200, 201):
         raise StackError(f"allowlist insert failed for {entry}: {status} {body.decode()[:200]}")
+
+
+def rest(
+    env: dict[str, str],
+    method: str,
+    path: str,
+    *,
+    json_body: dict | list | None = None,
+) -> tuple[int, dict | list | None]:
+    """Service-role PostgREST request (bypasses RLS). `path` is the part
+    after /rest/v1, e.g. 'notifications?user_id=eq.<id>'."""
+    supabase = env.get("SUPABASE_URL", "http://127.0.0.1:55321")
+    key = env.get("SUPABASE_SERVICE_ROLE_KEY")
+    if not key:
+        raise StackError("SUPABASE_SERVICE_ROLE_KEY not set (copy .env.example to .env)")
+    status, raw = _request(
+        f"{supabase}/rest/v1/{path}",
+        method=method,
+        headers={
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+        },
+        body=json.dumps(json_body).encode() if json_body is not None else None,
+    )
+    try:
+        return status, json.loads(raw)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return status, None
+
+
+def admin_sign_in(env: dict[str, str], email: str) -> tuple[str, str]:
+    """Mint a session for `email` via the admin magic-link flow: allowlist,
+    get-or-create the user pre-confirmed, generate_link, verify the token
+    hash. Never touches an existing account's password — safe against real
+    accounts on production. Returns (access_token, user_id)."""
+    supabase = env.get("SUPABASE_URL", "http://127.0.0.1:55321")
+    key = env.get("SUPABASE_SERVICE_ROLE_KEY")
+    if not key:
+        raise StackError("SUPABASE_SERVICE_ROLE_KEY not set (copy .env.example to .env)")
+    allow_email(env, email)
+    headers = {
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+    }
+
+    # Create first (422 = already exists): generate_link for a missing user
+    # silently issues a *signup* link instead of failing, which then breaks
+    # token verification.
+    status, body = _request(
+        f"{supabase}/auth/v1/admin/users",
+        method="POST",
+        headers=headers,
+        body=json.dumps({"email": email, "email_confirm": True}).encode(),
+    )
+    if status not in (200, 201, 422):
+        raise StackError(f"user create failed for {email}: {status} {body.decode()[:200]}")
+
+    status, body = _request(
+        f"{supabase}/auth/v1/admin/generate_link",
+        method="POST",
+        headers=headers,
+        body=json.dumps({"type": "magiclink", "email": email}).encode(),
+    )
+    if status != 200:
+        raise StackError(f"generate_link failed for {email}: {status} {body.decode()[:200]}")
+    data = json.loads(body)
+    # GoTrue returns hashed_token at the top level; some versions nest it.
+    token_hash = data.get("hashed_token") or data.get("properties", {}).get("hashed_token")
+    if not token_hash:
+        raise StackError(f"generate_link returned no hashed_token for {email}")
+    status, body = _request(
+        f"{supabase}/auth/v1/verify",
+        method="POST",
+        headers={"apikey": key, "Content-Type": "application/json"},
+        body=json.dumps(
+            # The token's own type (an unconfirmed account can still get a
+            # signup-type token); verifying with the wrong type 403s.
+            {"type": data.get("verification_type", "magiclink"), "token_hash": token_hash}
+        ).encode(),
+    )
+    if status != 200:
+        raise StackError(f"magic-link verify failed for {email}: {status} {body.decode()[:200]}")
+    session = json.loads(body)
+    return session["access_token"], session["user"]["id"]
 
 
 def sign_in(env: dict[str, str], email: str, password: str) -> str:

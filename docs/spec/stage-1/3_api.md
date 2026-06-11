@@ -26,7 +26,7 @@ No other fields. There is no upload-time name/tags/description (trace-level, set
 { "upload_id": "…", "status": "received", "sha256": "…" }
 ```
 
-Failure cases: `411 length_required` (no `Content-Length`; required so the size check runs before the body is consumed), `413 file_too_large` (limit 25 MB, env-configurable), `422 invalid_request` (missing/extra parts), `422 invalid_json`, `422 unsupported_format`, `409 duplicate_upload` (details include the existing `upload_id`), `429 rate_limited`.
+Failure cases: `411 length_required` (no `Content-Length`; required so the size check runs before the body is consumed), `413 file_too_large` (limit 25 MB, env-configurable), `422 invalid_request` (missing/extra parts), `422 unsupported_format` (A6 amendment: subsumes the former `invalid_json` — bytes that are neither OTLP JSON nor a supported session-JSONL schema), `409 duplicate_upload` (details include the existing `upload_id`), `429 rate_limited`.
 
 ### GET /v1/uploads
 

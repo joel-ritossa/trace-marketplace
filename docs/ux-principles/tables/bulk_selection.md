@@ -69,7 +69,7 @@ principle:
     surface as calm copy, not hide behind scary warnings.
   examples:
     positive:
-      - "'8 acquired - 2 already in your library' with rows updated in place"
+      - "'8 acquired - 2 already saved' with rows updated in place"
     negative:
       - "'Bulk acquire failed' because 1 of 10 traces was delisted"
   validation:

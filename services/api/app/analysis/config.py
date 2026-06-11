@@ -6,9 +6,10 @@ require DB/Redis/Supabase variables. All values are local-demo defaults,
 overridable via `ANALYSIS_*` env vars documented in `.env.example`.
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.analysis.models import METRICS
 from app.env import env_files
 
 # Budget env var speaks tokens (spec language); rendering counts chars. The
@@ -39,6 +40,40 @@ class AnalysisSettings(BaseSettings):
     judge_votes: int = Field(3, ge=1)
     judge_consensus: float = Field(0.5, ge=0.5, lt=1)
     confidence_threshold: float = 0.7
+
+    # Family 3 (1_analysis.md): which metrics a run executes — the
+    # default-on set is the full locked catalog. Critics share the judge's
+    # model; their self-consistency knob defaults to 1 (cost; metrics never
+    # route to HIL). Unknown names fail at settings load, not mid-analysis.
+    metrics: str = ",".join(METRICS)
+    critic_votes: int = Field(1, ge=1)
+
+    # Similar behavior (docs/proposals/similar-behavior.md): one embedding
+    # per trace over the judge rendering, re-truncated middle-out to this
+    # budget before the call. Default leaves real headroom under the
+    # model's 8192-token window: the ~4 chars/token heuristic undercounts
+    # tokens for JSON-heavy tool content, and an over-window input is a
+    # permanent (unretryable) failure. The vector dimension is fixed by the
+    # trace_embeddings migration (1536); a model swap is a migration +
+    # re-embed, not a config flip.
+    embedding_model: str = "openai/text-embedding-3-small"
+    embedding_budget_tokens: int = Field(6_000, ge=100)
+
+    @field_validator("metrics")
+    @classmethod
+    def _known_metrics(cls, value: str) -> str:
+        # Order-preserving dedupe: a repeated name would run (and pay for)
+        # the metric twice — analyzer_results has no per-analyzer unique key.
+        names = list(dict.fromkeys(name.strip() for name in value.split(",") if name.strip()))
+        unknown = [name for name in names if name not in METRICS]
+        if unknown:
+            known = ", ".join(METRICS)
+            raise ValueError(f"unknown metrics {unknown} (known: {known})")
+        return ",".join(names)
+
+    @property
+    def metric_names(self) -> list[str]:
+        return [name for name in self.metrics.split(",") if name]
 
 
 class RendererConfig(BaseModel):

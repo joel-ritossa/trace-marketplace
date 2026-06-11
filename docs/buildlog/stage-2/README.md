@@ -29,6 +29,7 @@ Identical to stage 1 (`docs/buildlog/stage-1/README.md`), with two stage-2 notes
 | [B2](B2/000_implementation.md) | Outcome judge (composed calls, voting, routing function) | Done (2026-06-11): implemented, verified, audited |
 | B3 | Quality metrics (critics + RAGAS) | Not started |
 | B4 | Validation (benchmark converter + agreement script) | Not started |
+| [B5](B5/000_implementation.md) | Metrics validation (HaluBench converter + metrics-agreement) | Done (2026-06-11): implemented, verified |
 
 ### Stream A — Platform
 
@@ -37,7 +38,7 @@ Identical to stage 1 (`docs/buildlog/stage-1/README.md`), with two stage-2 notes
 | [A1](A1/000_implementation.md) | Machine door: API keys, sync CLI, /uploads, /settings | Done (2026-06-11): implemented, verified, CLI e2e test + demo, audited |
 | [A2](A2/000_implementation.md) | Analysis plumbing: tables, analyze_trace job, states, Analysis section | Done (2026-06-11): implemented, verified (incl. live-judge run), audited |
 | A3 | HIL loop: notifications, review queue, resolve, label badges | Not started |
-| A4 | Discovery at scale: filter extension, subscriptions, bulk actions | Not started (blocked on stage-1 slice 3) |
+| [A4](A4/000_implementation.md) | Discovery at scale: filter extension, subscriptions, bulk actions | Done (2026-06-11): implemented, verified, audited ([001](A4/001_audit.md)) |
 | [A5](A5/000_implementation.md) | Redaction: importer scrub, span_raw, read/download boundaries | Done (2026-06-11): implemented, verified |
 
 ### Integration

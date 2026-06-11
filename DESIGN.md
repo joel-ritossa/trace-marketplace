@@ -771,7 +771,7 @@ The base file's semantic tokens are the source; this maps them to domain states.
 | `parse_warnings`, retrying, rate-limited notices | `{colors.warning}` / `{colors.warning-soft}` / `{colors.warning-deep}` |
 | Visibility `private` | `badge-secondary` chrome (gray pill) |
 | Visibility `listed` | `{colors.link-bg-soft}` pill with `{colors.link-deep}` text |
-| "In your library" (acquired) | `status-ok-soft` pill with `status-ok` deep text |
+| "saved" (acquired) | `status-ok-soft` pill with `status-ok` deep text |
 
 ## Span-Kind Palette
 
@@ -794,8 +794,18 @@ These six are the only chromatic accents on app surfaces (plus the status palett
 - Span tree rows: `{typography.body-sm}` name + `{typography.caption-mono}` metadata, `{spacing.xs} {spacing.sm}` cell padding, `{colors.hairline}` row dividers (per `ex-data-table-cell`). Tree indentation is `{spacing.md}` per depth level with a hairline guide line.
 - Selected tree row: `{colors.canvas-soft-2}` fill + `{colors.primary}` left-edge indicator (per `ex-app-shell-row`). Hover: `{colors.canvas-soft}`.
 - Span detail panel: `{colors.canvas}` card at Level 1 elevation; raw `attributes` / `events` JSON in `code-editor-mockup` chrome scaled down (`{typography.code}`, `{rounded.sm}`).
-- Marketplace/library result cards: `card-marketing` chrome at Level 2 max — metadata-dense cards stay calm; status and kind communicate through badges, not card color.
+- Trace list rows (all list surfaces — my traces, marketplace, library, feeds): one dense row spec per `ex-data-table-cell` — `{typography.body-sm}` name + `{typography.caption-mono}` metadata, `{colors.hairline}` row dividers, status and labels through badges only, never row fills. No `card-marketing` result cards on app surfaces.
 - Duration bars (span timing visualization): `{colors.hairline}` track with `{colors.body}` fill; error spans fill `{colors.error}`.
+
+## App Shell (Sidebar)
+
+The app shell is a fixed left sidebar plus a slim top bar (per `docs/proposals/ui-redesign.md`):
+
+- Sidebar surface: `{colors.canvas}` with a `{colors.hairline}` right border; group labels in `{typography.caption}` `{colors.mute}`, uppercase tracking.
+- Items: `{typography.body-sm}`, `{rounded.sm}`; active = `{colors.canvas-soft-2}` fill + 2px `{colors.primary}` left-edge indicator (the `ex-app-shell-row` pattern); hover = `{colors.canvas-soft}`. Icons are lucide at 16px, `{colors.mute}`, inheriting ink when active.
+- Collapses to an icon rail on narrow viewports — labels hide, icons keep their slots.
+- Top bar: `{colors.canvas}` with `{colors.hairline}` bottom border; breadcrumb in `{typography.body-sm}` with `{colors.mute}` separators.
+- Brand mark: the one sanctioned non-lucide SVG — a geometric span-waterfall mark drawn in `currentColor` so it inherits both schemes; also the favicon.
 
 ## Voice
 

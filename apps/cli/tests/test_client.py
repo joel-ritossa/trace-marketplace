@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from trace_sync import client as client_mod
-from trace_sync.client import FatalError, SyncClient
+from trace_sync.client import FatalError, PendingUpload, SyncClient
 
 
 def make_client(handler) -> SyncClient:
@@ -30,8 +30,7 @@ def trace_file(tmp_path):
     return path
 
 
-def test_upload_complete(trace_file, monkeypatch):
-    monkeypatch.setattr(client_mod, "POLL_INTERVAL_SECONDS", 0.0)
+def test_enqueue_then_check_to_complete(trace_file):
     statuses = iter(["processing", "complete"])
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -46,12 +45,17 @@ def test_upload_complete(trace_file, monkeypatch):
             },
         )
 
-    outcome = make_client(handler).upload(trace_file)
+    client = make_client(handler)
+    pending = client.enqueue(trace_file)
+    assert isinstance(pending, PendingUpload)
+    assert pending.upload_id == "u1"
+    assert client.check(pending) is None  # still processing
+    outcome = client.check(pending)
     assert outcome.kind == "uploaded"
     assert outcome.detail == "uploaded (complete, 3 traces)"
 
 
-def test_upload_ingestion_failed(trace_file):
+def test_ingestion_failed(trace_file):
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "POST":
             return httpx.Response(201, json={"upload_id": "u1", "status": "received"})
@@ -60,16 +64,18 @@ def test_upload_ingestion_failed(trace_file):
             json={"status": "failed", "trace_ids": [], "error_message": "No spans found."},
         )
 
-    outcome = make_client(handler).upload(trace_file)
+    client = make_client(handler)
+    outcome = client.check(client.enqueue(trace_file))
     assert outcome.kind == "failed"
     assert outcome.detail == "failed: No spans found."  # verbatim error_message
+    assert not outcome.retryable  # ingestion failure: never re-offered
 
 
 def test_duplicate_is_skipped(trace_file):
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(409, json=error_body("duplicate_upload", "Already uploaded."))
 
-    outcome = make_client(handler).upload(trace_file)
+    outcome = make_client(handler).enqueue(trace_file)
     assert outcome.kind == "skipped"
     assert outcome.detail == "already synced"
 
@@ -78,7 +84,7 @@ def test_rejection_is_failed_with_message(trace_file):
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(422, json=error_body("invalid_json", "File is not valid JSON."))
 
-    outcome = make_client(handler).upload(trace_file)
+    outcome = make_client(handler).enqueue(trace_file)
     assert outcome.kind == "failed"
     assert outcome.detail == "failed: File is not valid JSON."
     assert not outcome.retryable  # server rejection: never re-offered
@@ -99,7 +105,8 @@ def test_429_honors_retry_after_then_succeeds(trace_file, monkeypatch):
             return httpx.Response(201, json={"upload_id": "u1", "status": "received"})
         return httpx.Response(200, json={"status": "complete", "trace_ids": ["t1"]})
 
-    outcome = make_client(handler).upload(trace_file)
+    client = make_client(handler)
+    outcome = client.check(client.enqueue(trace_file))
     assert outcome.kind == "uploaded"
     assert 7.0 in sleeps
 
@@ -108,20 +115,24 @@ def test_network_error_is_per_file_failure(trace_file):
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("connection refused")
 
-    outcome = make_client(handler).upload(trace_file)
+    outcome = make_client(handler).enqueue(trace_file)
     assert outcome.kind == "failed"
     assert outcome.retryable  # transport failure: watch may re-offer
 
 
-def test_ingestion_failure_is_not_retryable(trace_file):
+def test_poll_deadline_is_a_failure(trace_file):
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "POST":
             return httpx.Response(201, json={"upload_id": "u1", "status": "received"})
-        return httpx.Response(
-            200, json={"status": "failed", "trace_ids": [], "error_message": "No spans found."}
-        )
+        return httpx.Response(200, json={"status": "processing", "trace_ids": []})
 
-    assert not make_client(handler).upload(trace_file).retryable
+    client = make_client(handler)
+    pending = client.enqueue(trace_file)
+    pending.deadline = 0.0  # already past
+    outcome = client.check(pending)
+    assert outcome.kind == "failed"
+    assert "not finished" in outcome.detail
+    assert "u1" in outcome.detail
 
 
 def test_preflight_rejects_bad_key():

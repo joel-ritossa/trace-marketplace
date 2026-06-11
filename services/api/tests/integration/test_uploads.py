@@ -63,10 +63,11 @@ async def test_duplicate_rejected(api: httpx.AsyncClient) -> None:
     assert error["details"]["upload_id"] == first.json()["upload_id"]
 
 
-async def test_invalid_json_rejected(api: httpx.AsyncClient) -> None:
+async def test_unparseable_bytes_rejected(api: httpx.AsyncClient) -> None:
+    # A6 amendment: non-JSON bytes are just one more undetectable format.
     res = await upload_file(api, b"this is not json {")
     assert res.status_code == 422
-    assert res.json()["error"]["code"] == "invalid_json"
+    assert res.json()["error"]["code"] == "unsupported_format"
 
 
 async def test_unsupported_format_rejected(api: httpx.AsyncClient) -> None:

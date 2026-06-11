@@ -60,8 +60,8 @@ export async function apiSend(path: string, init?: RequestInit): Promise<void> {
 
 // Authenticated binary download (downloads need the bearer header, so a plain
 // <a href> can't be used). Triggers a browser save via a temporary object URL.
-export async function apiDownload(path: string, filename: string): Promise<void> {
-  const res = await authedRequest(path);
+export async function apiDownload(path: string, filename: string, init?: RequestInit): Promise<void> {
+  const res = await authedRequest(path, init);
   const url = URL.createObjectURL(await res.blob());
   const anchor = document.createElement("a");
   anchor.href = url;

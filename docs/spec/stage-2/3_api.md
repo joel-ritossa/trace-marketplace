@@ -67,7 +67,7 @@ Owner or listed. The full analysis view for the trace-detail Analysis section:
 
 ### Review items
 
-- `GET /v1/review-items` — the caller's open items (own traces only), oldest first, `limit`/`offset`; each row: trace summary, `question_type`, `context` (machine verdict + confidence + routing reasons), `created_at`, and the trace's `upload_id` (for per-upload grouping). `status` param to include resolved.
+- `GET /v1/review-items` — the caller's open items (own traces only), newest first, `limit`/`offset`; each row: trace summary, `question_type`, `context` (machine verdict + confidence + routing reasons), `created_at`, and the trace's `upload_id` (for per-upload grouping). `status` param to include resolved.
 - `GET /v1/review-items/{id}` — one item; resolved items include `answer`, `resolved_at`, `resolved_by`.
 - `POST /v1/review-items/{id}/resolve` — body is a partial answer: any of `outcome`, `failure_mode`, `task_category`. App-validates values against the taxonomies. Writes answered fields to `trace_analysis` with provenance `human` (or `human_confirmed` when matching the machine value) and confidence 1.0; marks the item `resolved`. `409 already_resolved` on a resolved item.
 - `POST /v1/traces/{trace_id}/review-items` — owner-initiated relabel: creates (or returns the existing) open item with empty routing reasons. Owner only.
@@ -81,7 +81,7 @@ Owner or listed. The full analysis view for the trace-detail Analysis section:
 - `GET /v1/subscriptions/{id}/results` — executes the stored query live against listed traces (same shape as `GET /v1/traces`), each card annotated `new_since_last_seen`.
 - `POST /v1/subscriptions/{id}/seen` — sets `last_seen_at` to now.
 
-**Matching is event-driven, two triggers:** (a) a trace becomes listed; (b) `analyze_trace` completes on a listed trace. On either, the worker evaluates which subscriptions newly match, inserts `subscription_matches` rows (unique pair = dedupe), and creates one `subscription_match` notification per new match. No cron sweep. Subscriptions never match private traces.
+**Matching is event-driven, two triggers:** (a) a trace becomes listed; (b) `analyze_trace` completes on a listed trace. On either, the worker evaluates which subscriptions newly match, inserts `subscription_matches` rows (unique pair = dedupe), and upserts one **digested** `subscription_match` notification per subscription — at most one unread digest per (user, subscription), its match count incrementing as first-matches land (the flood-control law; same mechanics as the per-upload review digest). No cron sweep. Subscriptions never match private traces.
 
 Listing a trace whose LLM analysis was skipped for `owner_opt_out` (single or bulk visibility change) also enqueues an `analyze_trace` re-run; the resulting fields reach subscriptions through trigger (b). Listing is the consent act and covers analysis ([1_analysis.md](1_analysis.md) Runtime).
 
@@ -91,7 +91,7 @@ All bulk endpoints take `trace_ids[]` (max 100 per call) and return itemized res
 
 - `POST /v1/traces/acquire` — bulk acquire; per-trace semantics identical to the stage-1 single acquire (idempotent, $0, listed-only, non-owner). Itemized statuses: `acquired | already_acquired | not_listed | own_trace | not_found`.
 - `POST /v1/traces/visibility` — bulk list/unlist; owner-only per trace. Body: `{ "trace_ids": […], "visibility": "listed", "confirm_ownership": true }`; `confirm_ownership` required when listing (batched consent — one confirmation covering the named selection), `422 confirmation_required` otherwise. Itemized: `updated | not_found`.
-- `POST /v1/traces/download` — bulk download; every trace must be owner-or-acquired, else `403 acquisition_required` listing the offending ids. Streams a zip: each payload under its original filename (id-suffixed on collision) plus one **`labels.jsonl`** — one line per trace: `trace_id`, `outcome`, `failure_mode`, `task_category` (each with confidence + provenance), `metric_scores`, promoted signals, `analyzer versions`. Unanalyzed traces get a line with `trace_id` and nulls. Works for a single id — this is also the labeled-download path for one trace. Payload selection per trace follows the redaction boundary ([7_redaction.md](7_redaction.md)): owner → raw object, acquirer → scrubbed artifact; the stage-1 single download applies the same rule.
+- `POST /v1/traces/download` — bulk download; every trace must be owner-or-acquired, else `403 acquisition_required` listing the offending ids. Streams a zip: each payload under its original filename (suffixed with the storage-object hash on collision) plus one **`labels.jsonl`** — one line per trace: `trace_id`, `outcome`, `failure_mode`, `task_category` (each with confidence + provenance), `metric_scores`, promoted signals, `analyzer versions`. Unanalyzed traces get a line with `trace_id` and nulls. Works for a single id — this is also the labeled-download path for one trace. Payload selection per trace follows the redaction boundary ([7_redaction.md](7_redaction.md)): owner → raw object, acquirer → scrubbed artifact; the stage-1 single download applies the same rule.
 
 ## Conventions
 

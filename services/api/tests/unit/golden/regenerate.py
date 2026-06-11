@@ -12,6 +12,7 @@ from app.redaction import OFFLINE_SALT
 from tests.unit.analysis_factories import load_fixture_trace
 from tests.unit.test_importer_golden import FIXTURES, FIXTURES_DIR, GOLDEN_DIR, result_to_dict
 from tests.unit.test_renderer_golden import GOLDEN_CONFIG, RENDER_FIXTURES
+from tests.unit.test_session_golden import SESSIONS, convert_session
 from tests.unit.test_signals_golden import SIGNALS_FIXTURES, SIGNALS_SETTINGS
 
 
@@ -21,6 +22,12 @@ def main() -> None:
         out = result_to_dict(otlp.import_payload(payload, redaction_salt=OFFLINE_SALT))
         path = GOLDEN_DIR / f"{name}.expected.json"
         path.write_text(json.dumps(out, indent=2) + "\n")
+        print(f"wrote {path.relative_to(Path.cwd())}")
+
+    for name in sorted(SESSIONS):
+        out = result_to_dict(convert_session(name))
+        path = GOLDEN_DIR / f"{name}.expected.json"
+        path.write_text(json.dumps(out, indent=2, ensure_ascii=False) + "\n")
         print(f"wrote {path.relative_to(Path.cwd())}")
 
     for name in RENDER_FIXTURES:

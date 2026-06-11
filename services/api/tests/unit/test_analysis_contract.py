@@ -9,6 +9,7 @@ from app.analysis import (
     AnalyzerRun,
     JudgeVerdict,
     JudgeVote,
+    MetricCall,
     MetricResult,
     SignalsResult,
     TraceInput,
@@ -59,6 +60,11 @@ async def test_stub_is_deterministic() -> None:
         ),
         MetricResult(metric="faithfulness", value=0.8, reason="grounded"),
         MetricResult(metric="hallucination", value=False),
+        MetricResult(
+            metric="goal_accuracy",
+            value=1.0,
+            calls=[MetricCall(latency_ms=5, input_tokens=10, output_tokens=2, cost_usd=0.001)],
+        ),
     ],
 )
 def test_result_models_dump_jsonb_safe(model) -> None:

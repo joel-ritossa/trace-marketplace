@@ -1,0 +1,672 @@
+/* DESIGN.md token values (mirroring apps/web globals.css light/dark ladders),
+   resolved via prefers-color-scheme — the desktop app has no theme selector. */
+:root {
+  --radius: 8px;
+  --background: #ffffff;
+  --canvas-soft: #fafafa;
+  --canvas-soft-2: #f5f5f5;
+  --foreground: #171717;
+  --muted-foreground: #888888;
+  --border: #ebebeb;
+  --ring: #a1a1a1;
+  --primary: #171717;
+  --primary-foreground: #ffffff;
+  --link: #0070f3;
+  --link-deep: #0761d1;
+  --status-ok: #29bc9b;
+  --status-ok-soft: #aaffec;
+  --warning-deep: #ab570a;
+  --warning-soft: #ffefcf;
+  --error-deep: #c50000;
+  --error-soft: #f7d4d6;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --canvas-soft: #000000;
+    --canvas-soft-2: #1a1a1a;
+    --foreground: #ededed;
+    --muted-foreground: #a1a1a1;
+    --border: #2e2e2e;
+    --ring: #6e6e6e;
+    --primary: #ededed;
+    --primary-foreground: #0a0a0a;
+    --link: #52a8ff;
+    --link-deep: #52a8ff;
+    --status-ok: #29bc9b;
+    --status-ok-soft: #0f3d33;
+    --warning-deep: #f5a623;
+    --warning-soft: #341c00;
+    --error-deep: #ff6166;
+    --error-soft: #3c1618;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--foreground);
+  background: var(--canvas-soft);
+  -webkit-font-smoothing: antialiased;
+}
+
+code,
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+/* ---- shell ---- */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--background);
+}
+
+.topbar .brand {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.topbar .who {
+  margin-left: auto;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.tabs {
+  display: flex;
+  gap: 2px;
+}
+
+.tab {
+  appearance: none;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  color: var(--muted-foreground);
+  padding: 5px 10px;
+  border-radius: calc(var(--radius) * 0.8);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tab:hover {
+  background: var(--canvas-soft-2);
+  color: var(--foreground);
+}
+
+.tab[data-active="true"] {
+  background: var(--canvas-soft-2);
+  color: var(--foreground);
+  font-weight: 500;
+}
+
+.tab .count {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--error-deep);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+}
+
+.page {
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Fill the window instead of growing with content: the .fill card flexes to
+   the remaining height and its .fill log scrolls internally. */
+.page.fill {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Full-width pages (review resolve): evidence + form get the room, like the
+   web's review/[itemId] (4_pages.md). */
+.page.wide {
+  max-width: none;
+  flex: 1;
+  min-height: 0;
+}
+
+.card.fill {
+  flex: 1;
+  min-height: 0;
+}
+
+h1 {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+h2 {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted-foreground);
+  margin: 0;
+}
+
+p {
+  margin: 0;
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+.error-text {
+  font-size: 13px;
+  color: var(--error-deep);
+}
+
+/* ---- primitives ---- */
+
+.card {
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.btn {
+  appearance: none;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 5px 12px;
+  border-radius: calc(var(--radius) * 0.8);
+  border: 1px solid var(--primary);
+  background: var(--primary);
+  color: var(--primary-foreground);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.btn.outline {
+  background: var(--background);
+  border-color: var(--border);
+  color: var(--foreground);
+}
+
+.btn.outline:hover:not(:disabled) {
+  background: var(--canvas-soft-2);
+}
+
+.btn.small {
+  font-size: 12px;
+  padding: 3px 9px;
+}
+
+.input,
+select.input {
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 9px;
+  border-radius: calc(var(--radius) * 0.8);
+  border: 1px solid var(--border);
+  background: var(--background);
+  color: var(--foreground);
+  width: 100%;
+}
+
+.input:focus {
+  outline: 2px solid var(--ring);
+  outline-offset: -1px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.field > label {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.spread {
+  justify-content: space-between;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+}
+
+.list > * + * {
+  border-top: 1px solid var(--border);
+}
+
+.badge {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+
+.badge.ok {
+  background: var(--status-ok-soft);
+  color: var(--foreground);
+}
+
+.badge.warn {
+  background: var(--warning-soft);
+  color: var(--warning-deep);
+}
+
+.badge.err {
+  background: var(--error-soft);
+  color: var(--error-deep);
+}
+
+.badge.muted {
+  background: var(--canvas-soft-2);
+  color: var(--muted-foreground);
+}
+
+a,
+.link-btn {
+  color: var(--link);
+  text-decoration: none;
+}
+
+.link-btn {
+  appearance: none;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.link-btn:hover {
+  color: var(--link-deep);
+  text-decoration: underline;
+}
+
+/* ---- watch log ---- */
+
+.log {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.7;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--canvas-soft-2);
+  border-radius: calc(var(--radius) * 0.8);
+  padding: 8px 10px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.log.fill {
+  flex: 1;
+  max-height: none;
+  min-height: 120px;
+}
+
+.log .log-time {
+  color: var(--muted-foreground);
+  margin-right: 8px;
+}
+
+.log .ok {
+  color: var(--status-ok);
+}
+
+.log .err {
+  color: var(--error-deep);
+}
+
+.log .dim {
+  color: var(--muted-foreground);
+}
+
+/* ---- login ---- */
+
+.login {
+  margin: auto;
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ---- choice grid (outcome picker) ---- */
+
+.choices {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.choice {
+  appearance: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 8px;
+  border-radius: calc(var(--radius) * 0.8);
+  border: 1px solid var(--border);
+  background: var(--background);
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+
+.choice:hover {
+  background: var(--canvas-soft-2);
+  color: var(--foreground);
+}
+
+.choice[data-selected="true"] {
+  border-color: var(--foreground);
+  background: var(--foreground);
+  color: var(--background);
+}
+
+/* ---- review resolve page ---- */
+
+.back-link {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+.back-link:hover {
+  color: var(--foreground);
+  text-decoration: none;
+}
+
+/* Evidence beside the context + form column; stacks when the window is
+   narrow. The evidence pane scrolls internally instead of growing the page. */
+.resolve-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 16px;
+  align-items: start;
+  flex: 1;
+  min-height: 0;
+}
+
+@media (max-width: 800px) {
+  .resolve-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .resolve-grid .evidence {
+    max-height: 320px;
+  }
+}
+
+.resolve-side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.evidence {
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  overflow-y: auto;
+  align-self: stretch;
+  min-height: 160px;
+  max-height: calc(100vh - 180px);
+}
+
+.label-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+}
+
+.label-list dt {
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+
+.label-list dd {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.label-list .confidence {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted-foreground);
+  margin-left: 5px;
+}
+
+/* ---- conversation view ---- */
+
+.convo {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.convo-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.convo-text.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+}
+
+.convo-message {
+  display: flex;
+  flex-direction: column;
+  max-width: 92%;
+  align-self: flex-start;
+}
+
+.convo-message[data-user="true"] {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+
+.convo-role {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  margin: 0 2px 4px;
+}
+
+.convo-bubble {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--background);
+  padding: 8px 12px;
+}
+
+.convo-message[data-user="true"] .convo-bubble {
+  background: var(--canvas-soft-2);
+}
+
+.convo-tool {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) * 0.8);
+  background: var(--canvas-soft);
+}
+
+.convo-tool[data-error="true"] {
+  border-color: var(--error-deep);
+  background: var(--error-soft);
+}
+
+.convo-system {
+  border: 1px dashed var(--border);
+  border-radius: calc(var(--radius) * 0.8);
+}
+
+.convo-tool-head {
+  appearance: none;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.convo-chevron {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+
+.convo-tool-name {
+  flex-shrink: 0;
+  font-weight: 500;
+}
+
+.convo-tool-error {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--error-deep);
+}
+
+.convo-tool-preview {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+}
+
+.convo-tool-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding: 8px 10px;
+}
+
+.convo-section-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted-foreground);
+  margin: 0 0 4px;
+}
+
+.unread-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--link-deep);
+  flex-shrink: 0;
+}
+
+.verdict-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px 16px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.verdict-grid dt {
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+
+.verdict-grid dd {
+  margin: 2px 0 0;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.verdict-grid .confidence {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted-foreground);
+  margin-left: 5px;
+}

@@ -20,6 +20,13 @@ class Settings(BaseSettings):
 
     upload_max_bytes: int = 25 * 1024 * 1024
 
+    # Logging (app/obs.py): JSON lines on stdout plus an in-process ring
+    # buffer of recent records; log_file adds a JSON-lines file sink (the
+    # compose stack points each service at ./logs/<service>.log).
+    log_level: str = "INFO"
+    log_buffer_records: int = 1000
+    log_file: str | None = None
+
     # Rate limits (6_architecture.md). Token buckets in Redis; tuned for a
     # local demo, env-overridable for anything else.
     rate_limit_global_rate: float = 100  # req/s

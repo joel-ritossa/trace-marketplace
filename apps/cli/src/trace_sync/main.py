@@ -39,6 +39,12 @@ def _parser() -> argparse.ArgumentParser:
             default=os.environ.get("TRACE_API_KEY"),
             help="API key minted in /settings (env TRACE_API_KEY)",
         )
+        cmd.add_argument(
+            "--since-hours",
+            type=float,
+            default=None,
+            help="only consider files modified in the last N hours (default: all)",
+        )
     return parser
 
 
@@ -62,7 +68,7 @@ def main() -> None:
     try:
         client.preflight()
         run = run_watch if args.command == "watch" else run_sync
-        sys.exit(run(client, args.paths))
+        sys.exit(run(client, args.paths, args.since_hours))
     except FatalError as exc:
         print(str(exc), file=sys.stderr)
         sys.exit(EXIT_UNRUNNABLE)

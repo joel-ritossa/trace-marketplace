@@ -282,11 +282,18 @@ async def test_caller_supplied_signals_drive_cap(patch_llm) -> None:
 
 
 async def test_transient_vote_error_settles_siblings_then_propagates(patch_llm) -> None:
-    fake = patch_llm({_OutcomeVote: [ov("success"), RuntimeError("rate limited"), ov("success")]})
+    fake = patch_llm(
+        {
+            _OutcomeVote: [ov("success"), RuntimeError("rate limited"), ov("success")],
+            _CategoryVote: [cv("coding")] * 3,
+        }
+    )
     with pytest.raises(RuntimeError, match="rate limited"):
         await run_judge(judge_trace(), SETTINGS)
-    # All three votes ran to completion — no orphaned sibling tasks.
+    # All votes ran to completion — no orphaned sibling tasks, in either the
+    # erroring outcome batch or the concurrent category batch.
     assert len(fake.messages_for(_OutcomeVote)) == 3
+    assert len(fake.messages_for(_CategoryVote)) == 3
 
 
 def test_settings_reject_invalid_voting_config() -> None:

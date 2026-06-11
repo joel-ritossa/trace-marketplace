@@ -35,7 +35,7 @@ principle:
     Action prominence on a trace must follow the API's is_owner / acquired /
     can_download flags. Owner sees manage actions; non-owner-not-acquired sees
     Acquire as primary; acquired sees Download as primary plus an
-    "in your library" badge. Never render an action the flags do not permit
+    "saved" badge. Never render an action the flags do not permit
     as if it were available.
   rationale: >
     The UI never enforces access itself (spec rule) but it must *communicate*

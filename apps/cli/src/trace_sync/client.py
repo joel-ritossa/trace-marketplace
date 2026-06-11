@@ -11,7 +11,6 @@ from pathlib import Path
 
 import httpx
 
-POLL_INTERVAL_SECONDS = 1.0
 POLL_TIMEOUT_SECONDS = 120.0
 RETRY_AFTER_CAP_SECONDS = 60.0
 _PREFLIGHT_PROBE_ID = "00000000-0000-0000-0000-000000000000"
@@ -30,6 +29,15 @@ class FileOutcome:
     # Server rejections and ingestion failures stay non-retryable — a
     # permanently bad file must not loop.
     retryable: bool = False
+
+
+@dataclass
+class PendingUpload:
+    """An accepted upload whose ingestion hasn't reached a terminal state."""
+
+    path: Path
+    upload_id: str
+    deadline: float  # time.monotonic() cutoff for status polling
 
 
 class SyncClient:
@@ -56,7 +64,9 @@ class SyncClient:
         if res.status_code == 401:
             raise FatalError(f"API key rejected: {_error_message(res)}")
 
-    def upload(self, path: Path) -> FileOutcome:
+    def enqueue(self, path: Path) -> FileOutcome | PendingUpload:
+        """POST the file; ingestion runs server-side off the queue, so this
+        returns as soon as the upload is accepted (5_cli.md: pipelined)."""
         try:
             data = path.read_bytes()
         except OSError as exc:
@@ -71,36 +81,37 @@ class SyncClient:
             return FileOutcome("failed", f"failed: {exc}", retryable=True)
 
         if res.status_code == 201:
-            return self._await_terminal(res.json()["upload_id"])
+            return PendingUpload(
+                path, res.json()["upload_id"], time.monotonic() + POLL_TIMEOUT_SECONDS
+            )
         if res.status_code == 409 and _error_code(res) == "duplicate_upload":
             return FileOutcome("skipped", "already synced")
         return FileOutcome("failed", f"failed: {_error_message(res)}")
 
-    def _await_terminal(self, upload_id: str) -> FileOutcome:
-        """Poll until ingestion lands (5_cli.md: bounded timeout)."""
-        deadline = time.monotonic() + POLL_TIMEOUT_SECONDS
-        while time.monotonic() < deadline:
-            try:
-                res = self._request("GET", f"/v1/uploads/{upload_id}")
-            except httpx.HTTPError as exc:
-                # The upload itself landed; a retry dedupes to "already
-                # synced" rather than leaving the file silently dropped.
-                return FileOutcome("failed", f"failed: status poll error: {exc}", retryable=True)
-            if res.status_code != 200:
-                return FileOutcome("failed", f"failed: status poll: {_error_message(res)}")
-            body = res.json()
-            if body["status"] == "complete":
-                count = len(body["trace_ids"])
-                plural = "" if count == 1 else "s"
-                return FileOutcome("uploaded", f"uploaded (complete, {count} trace{plural})")
-            if body["status"] == "failed":
-                return FileOutcome("failed", f"failed: {body['error_message']}")
-            time.sleep(POLL_INTERVAL_SECONDS)
-        return FileOutcome(
-            "failed",
-            f"failed: ingestion not finished after {POLL_TIMEOUT_SECONDS:.0f}s "
-            f"(check /uploads for upload {upload_id})",
-        )
+    def check(self, pending: PendingUpload) -> FileOutcome | None:
+        """One status poll: a terminal outcome, or None while still ingesting."""
+        if time.monotonic() >= pending.deadline:
+            return FileOutcome(
+                "failed",
+                f"failed: ingestion not finished after {POLL_TIMEOUT_SECONDS:.0f}s "
+                f"(check /uploads for upload {pending.upload_id})",
+            )
+        try:
+            res = self._request("GET", f"/v1/uploads/{pending.upload_id}")
+        except httpx.HTTPError as exc:
+            # The upload itself landed; a retry dedupes to "already
+            # synced" rather than leaving the file silently dropped.
+            return FileOutcome("failed", f"failed: status poll error: {exc}", retryable=True)
+        if res.status_code != 200:
+            return FileOutcome("failed", f"failed: status poll: {_error_message(res)}")
+        body = res.json()
+        if body["status"] == "complete":
+            count = len(body["trace_ids"])
+            plural = "" if count == 1 else "s"
+            return FileOutcome("uploaded", f"uploaded (complete, {count} trace{plural})")
+        if body["status"] == "failed":
+            return FileOutcome("failed", f"failed: {body['error_message']}")
+        return None
 
     def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
         """One request, sleeping out 429s (Retry-After honored, capped)."""

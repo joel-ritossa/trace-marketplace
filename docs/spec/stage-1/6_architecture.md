@@ -59,6 +59,8 @@ This makes retries, requeues, and duplicate deliveries safe by construction. It 
 
 *(Amended at stage-2 A2.)* The rewrite runs under **stable trace identity**: trace rows are upserted keyed on unique `(upload_id, source_trace_id)` — all normalized columns rewritten, spans deleted and re-inserted per trace, traces absent from the re-imported payload deleted. `traces.id` survives a re-ingest, so rows hung off it (acquisitions, `trace_analysis` incl. human-provenance labels, review items) are never cascade-destroyed by a rewrite. The invariant's substance is unchanged: normalized content remains a pure function of the payload.
 
+*(Amended at stage-2 A6, `docs/spec/stage-2/8_session-ingestion.md`.)* Identity widens to unique `(owner_id, source_trace_id)`: a later upload by the same owner carrying the same source trace id **adopts** the existing row (`upload_id` moves to the newest upload; all content rewritten under the new upload's redaction salt). Session logs have deterministic per-turn ids, so re-syncing a grown log updates its turns in place and appends the new ones — never duplicates. One rule for every format: an OTLP re-upload sharing a trace id updates that trace too. A superseded upload may be left referencing zero traces; it stays `complete` and honest about owning none.
+
 `complete` is terminal for ingestion: the claim (`mark_processing`) and the failure write (`mark_failed`) are guarded in SQL (`where status <> 'complete'`), so a stale duplicate delivery can neither redo completed work nor overwrite `complete` with `failed` after a concurrent run succeeded. Only an explicit operator requeue or upload deletion moves a terminal upload. *(Amended during the slice-2 reliability sweep.)*
 
 ## Lost-Job Recovery

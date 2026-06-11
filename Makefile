@@ -34,16 +34,14 @@ dev-dataset:
 
 .PHONY: dev-dataset
 
-# Convert your own local Codex / Claude Code / Cursor sessions (past 24 h
-# by default) into uploadable OTLP JSON under git-ignored
-# devdata/agent-sessions/. Sources are read via symlinks the script
-# maintains in devdata/sessions-src/, so each run picks up the latest
-# sessions.
-# Options: make my-sessions ARGS="--source cursor --hours 0 --count 20"
-my-sessions:
-	tools/my_sessions.sh $(ARGS)
+# Symlink your local Codex / Claude Code / Cursor session logs into
+# git-ignored devdata/sessions-src/ so trace-sync can upload them raw —
+# the server detects the schema and converts per turn (8_session-ingestion.md):
+#   TRACE_API_KEY=tmk_… trace-sync sync devdata/sessions-src --since-hours 24
+link-sessions:
+	tools/link_sessions.sh
 
-.PHONY: my-sessions
+.PHONY: link-sessions
 
 # Populate the marketplace: fixtures uploaded + listed by a demo contributor.
 seed:
@@ -54,8 +52,27 @@ seed:
 seed-dev:
 	python3 tools/seed_dev.py
 
+# Seed a full live demo for one account (listed+labeled traces, review
+# queue, notifications, subscriptions with matches). WIPE=1 deletes the
+# account's existing data first (clean re-seed):
+#   make seed-demo EMAIL=user@example.com [STACK=production] [WIPE=1]
+seed-demo:
+ifndef EMAIL
+	$(error usage: make seed-demo EMAIL=<email> [STACK=production] [WIPE=1])
+endif
+	python3 tools/seed_demo.py $(EMAIL) --stack $(or $(STACK),local) $(if $(WIPE),--wipe)
+
+# Wipe one account's data (traces, uploads, subscriptions, acquisitions,
+# notifications) without re-seeding; the account itself stays:
+#   make wipe-demo EMAIL=user@example.com [STACK=production]
+wipe-demo:
+ifndef EMAIL
+	$(error usage: make wipe-demo EMAIL=<email> [STACK=production])
+endif
+	python3 tools/seed_demo.py $(EMAIL) --stack $(or $(STACK),local) --wipe-only
+
 # Run the full Stage 1 demo script end to end against the live stack.
 smoke:
 	python3 tools/smoke.py
 
-.PHONY: seed seed-dev smoke
+.PHONY: seed seed-dev seed-demo wipe-demo smoke

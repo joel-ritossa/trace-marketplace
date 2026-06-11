@@ -1,0 +1,213 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "demo-agent-service"
+            }
+          }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {
+            "name": "demo.agent",
+            "version": "0.1.0"
+          },
+          "spans": [
+            {
+              "traceId": "55555555555555555555555555555555",
+              "spanId": "c000000000000001",
+              "name": "invoke_agent demo-agent",
+              "kind": 1,
+              "startTimeUnixNano": "1768471500000000000",
+              "endTimeUnixNano": "1768471504000000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "invoke_agent"
+                  }
+                },
+                {
+                  "key": "gen_ai.agent.name",
+                  "value": {
+                    "stringValue": "demo-agent"
+                  }
+                },
+                {
+                  "key": "input.value",
+                  "value": {
+                    "stringValue": "What's the weather in Paris this weekend? Should I pack an umbrella?"
+                  }
+                },
+                {
+                  "key": "output.value",
+                  "value": {
+                    "stringValue": "Expect showers on Saturday (11–18°C, ~6 mm of rain), clearing to partly cloudy on Sunday (12–21°C). Yes — pack an umbrella for Saturday; Sunday should stay mostly dry."
+                  }
+                }
+              ],
+              "status": {
+                "code": 1
+              }
+            },
+            {
+              "traceId": "55555555555555555555555555555555",
+              "spanId": "c000000000000002",
+              "name": "chat gpt-5",
+              "kind": 3,
+              "startTimeUnixNano": "1768471500100000000",
+              "endTimeUnixNano": "1768471501200000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chat"
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "openai"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.model",
+                  "value": {
+                    "stringValue": "gpt-5"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": "412"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": "36"
+                  }
+                },
+                {
+                  "key": "gen_ai.input.messages",
+                  "value": {
+                    "stringValue": "[{\"role\": \"system\", \"parts\": [{\"type\": \"text\", \"content\": \"You are a helpful travel-weather assistant. Use the get_weather tool for forecasts.\"}]}, {\"role\": \"user\", \"parts\": [{\"type\": \"text\", \"content\": \"What's the weather in Paris this weekend? Should I pack an umbrella?\"}]}]"
+                  }
+                },
+                {
+                  "key": "gen_ai.output.messages",
+                  "value": {
+                    "stringValue": "[{\"role\": \"assistant\", \"parts\": [{\"type\": \"tool_call\", \"id\": \"call_001\", \"name\": \"get_weather\", \"arguments\": {\"city\": \"Paris\", \"days\": 3}}]}]"
+                  }
+                }
+              ],
+              "parentSpanId": "c000000000000001",
+              "status": {
+                "code": 1
+              }
+            },
+            {
+              "traceId": "55555555555555555555555555555555",
+              "spanId": "c000000000000003",
+              "name": "execute_tool get_weather",
+              "kind": 3,
+              "startTimeUnixNano": "1768471501300000000",
+              "endTimeUnixNano": "1768471502400000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "execute_tool"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.name",
+                  "value": {
+                    "stringValue": "get_weather"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.call.arguments",
+                  "value": {
+                    "stringValue": "{\"city\": \"Paris\", \"days\": 3}"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.call.result",
+                  "value": {
+                    "stringValue": "{\"saturday\": {\"high_c\": 18, \"low_c\": 11, \"precip_mm\": 6.2, \"summary\": \"showers\"}, \"sunday\": {\"high_c\": 21, \"low_c\": 12, \"precip_mm\": 0.4, \"summary\": \"partly cloudy\"}}"
+                  }
+                }
+              ],
+              "parentSpanId": "c000000000000001",
+              "status": {
+                "code": 1
+              }
+            },
+            {
+              "traceId": "55555555555555555555555555555555",
+              "spanId": "c000000000000004",
+              "name": "chat gpt-5",
+              "kind": 3,
+              "startTimeUnixNano": "1768471502500000000",
+              "endTimeUnixNano": "1768471503900000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chat"
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "openai"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.model",
+                  "value": {
+                    "stringValue": "gpt-5"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": "538"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": "120"
+                  }
+                },
+                {
+                  "key": "gen_ai.input.messages",
+                  "value": {
+                    "stringValue": "[{\"role\": \"system\", \"parts\": [{\"type\": \"text\", \"content\": \"You are a helpful travel-weather assistant. Use the get_weather tool for forecasts.\"}]}, {\"role\": \"user\", \"parts\": [{\"type\": \"text\", \"content\": \"What's the weather in Paris this weekend? Should I pack an umbrella?\"}]}, {\"role\": \"assistant\", \"parts\": [{\"type\": \"tool_call\", \"id\": \"call_001\", \"name\": \"get_weather\", \"arguments\": {\"city\": \"Paris\", \"days\": 3}}]}, {\"role\": \"tool\", \"parts\": [{\"type\": \"tool_call_response\", \"id\": \"call_001\", \"response\": {\"saturday\": {\"high_c\": 18, \"low_c\": 11, \"precip_mm\": 6.2, \"summary\": \"showers\"}, \"sunday\": {\"high_c\": 21, \"low_c\": 12, \"precip_mm\": 0.4, \"summary\": \"partly cloudy\"}}}]}]"
+                  }
+                },
+                {
+                  "key": "gen_ai.output.messages",
+                  "value": {
+                    "stringValue": "[{\"role\": \"assistant\", \"parts\": [{\"type\": \"text\", \"content\": \"Expect showers on Saturday (11–18°C, ~6 mm of rain), clearing to partly cloudy on Sunday (12–21°C). Yes — pack an umbrella for Saturday; Sunday should stay mostly dry.\"}]}]"
+                  }
+                }
+              ],
+              "parentSpanId": "c000000000000001",
+              "status": {
+                "code": 1
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -28,6 +28,9 @@ locals {
   backend_secrets = [
     { name = "DATABASE_URL", valueFrom = aws_ssm_parameter.database_url.arn },
     { name = "SUPABASE_SERVICE_ROLE_KEY", valueFrom = aws_ssm_parameter.supabase_service_role_key.arn },
+    { name = "OPENAI_API_KEY", valueFrom = aws_ssm_parameter.llm_api_keys["openai-api-key"].arn },
+    { name = "ANTHROPIC_API_KEY", valueFrom = aws_ssm_parameter.llm_api_keys["anthropic-api-key"].arn },
+    { name = "OPENROUTER_API_KEY", valueFrom = aws_ssm_parameter.llm_api_keys["openrouter-api-key"].arn },
   ]
 }
 

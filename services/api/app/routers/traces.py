@@ -1,6 +1,5 @@
 import logging
 import re
-from datetime import datetime
 from typing import Annotated
 
 import asyncpg
@@ -12,6 +11,7 @@ from app.clients import db, storage
 from app.errors import ApiError
 from app.queries import acquisitions as acquisitions_q
 from app.queries import analysis as analysis_q
+from app.queries import embeddings as embeddings_q
 from app.queries import spans as spans_q
 from app.queries import traces as traces_q
 from app.schemas.analysis import (
@@ -25,79 +25,107 @@ from app.schemas.analysis import (
 from app.schemas.span import SpanDetailResponse, SpanListItem, SpanListResponse
 from app.schemas.trace import (
     AcquireResponse,
+    MetricKeysResponse,
+    SimilarTraceItem,
+    SimilarTracesResponse,
     TraceDetailResponse,
     TraceListItem,
+    TraceListParams,
     TraceListResponse,
-    TraceScope,
-    TraceSort,
     TraceUpdateRequest,
 )
+from app.worker.tasks import analyze_trace, match_trace
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/traces")
 
 
+# Declared before the /{trace_id} routes so the static path wins.
+@router.get("/metric-keys", response_model=MetricKeysResponse)
+async def list_metric_keys(user: CurrentUser) -> MetricKeysResponse:
+    return MetricKeysResponse(keys=await traces_q.metric_keys(db.pool(), user.id))
+
+
 @router.get("", response_model=TraceListResponse)
 async def list_traces(
     user: CurrentUser,
-    scope: TraceScope = "mine",
-    q: str | None = Query(default=None, max_length=200),
-    provider: str | None = None,
-    model: str | None = None,
-    tool: str | None = None,
-    has_errors: bool = False,
-    date_from: Annotated[datetime | None, Query(alias="from")] = None,
-    date_to: Annotated[datetime | None, Query(alias="to")] = None,
-    sort: TraceSort = "created_at",
-    limit: int = Query(default=50, ge=1, le=100),
-    offset: int = Query(default=0, ge=0),
+    params: Annotated[TraceListParams, Query()],
 ) -> TraceListResponse:
-    rows, total = await traces_q.list_visible(
+    rows, total, excluded = await traces_q.list_visible(
         db.pool(),
         user.id,
-        scope=scope,
-        q=q,
-        provider=provider,
-        model=model,
-        tool=tool,
-        has_errors=has_errors,
-        date_from=date_from,
-        date_to=date_to,
-        sort=sort,
-        limit=limit,
-        offset=offset,
+        scope=params.scope,
+        filters=params,
+        sort=params.sort,
+        limit=params.limit,
+        offset=params.offset,
     )
     return TraceListResponse(
-        traces=[
-            TraceListItem(
-                trace_id=str(r["id"]),
-                name=r["name"],
-                status=r["status"],
-                started_at=r["started_at"],
-                duration_ms=r["duration_ms"],
-                span_count=r["span_count"],
-                error_count=r["error_count"],
-                provider=r["provider"],
-                model=r["model"],
-                created_at=r["created_at"],
-                visibility=r["visibility"],
-                tags=list(r["tags"]),
-                description=r["description"],
-                listed_at=r["listed_at"],
-                owner_display_name=r["owner_display_name"],
-                is_owner=r["is_owner"],
-                acquired=r["acquired"],
-                acquired_at=r["acquired_at"],
-                outcome=r["outcome"],
-                outcome_confidence=r["outcome_confidence"],
-                outcome_provenance=r["outcome_provenance"],
-                analysis_state=analysis_q.derive_state(r["llm_status"], r["analysis_failed"]),
-            )
-            for r in rows
-        ],
+        traces=[list_item(r) for r in rows],
         total=total,
+        excluded_unanalyzed=excluded,
     )
+
+
+def list_item(r: asyncpg.Record) -> TraceListItem:
+    """One row→card mapping for every list surface (traces list + the
+    subscription feed)."""
+    return TraceListItem(
+        trace_id=str(r["id"]),
+        name=r["name"],
+        status=r["status"],
+        started_at=r["started_at"],
+        duration_ms=r["duration_ms"],
+        span_count=r["span_count"],
+        error_count=r["error_count"],
+        provider=r["provider"],
+        model=r["model"],
+        created_at=r["created_at"],
+        visibility=r["visibility"],
+        tags=list(r["tags"]),
+        description=r["description"],
+        listed_at=r["listed_at"],
+        owner_display_name=r["owner_display_name"],
+        is_owner=r["is_owner"],
+        acquired=r["acquired"],
+        acquired_at=r["acquired_at"],
+        outcome=r["outcome"],
+        outcome_confidence=r["outcome_confidence"],
+        outcome_provenance=r["outcome_provenance"],
+        analysis_state=analysis_q.derive_state(r["llm_status"], r["analysis_failed"]),
+        has_open_review_item=r["open_review_item_id"] is not None,
+        open_review_item_id=(
+            str(r["open_review_item_id"]) if r["open_review_item_id"] is not None else None
+        ),
+    )
+
+
+async def schedule_listing_hooks(trace_ids: list[str]) -> None:
+    """What follows a visibility flip to listed (A4 decision 7): an
+    owner_opt_out-skipped trace re-enqueues analyze_trace — listing is the
+    consent act and covers analysis; matching arrives via the
+    analysis-complete trigger so subscriptions only see fully-analyzed
+    traces. Everything else fires the match task directly (trigger a).
+    Best-effort: the listing is already committed; a lost kick costs a
+    notification, not correctness."""
+    if not trace_ids:
+        return
+    rows = await db.pool().fetch(
+        """
+        select t.id, ta.llm_skip_reason
+        from traces t
+        left join trace_analysis ta on ta.trace_id = t.id
+        where t.id = any($1::uuid[]) and t.visibility = 'listed'
+        """,
+        trace_ids,
+    )
+    for r in rows:
+        task = analyze_trace if r["llm_skip_reason"] == "owner_opt_out" else match_trace
+        try:
+            await task.kiq(str(r["id"]))
+        except Exception:
+            logger.exception("failed to enqueue %s for trace %s", task.task_name, r["id"])
 
 
 @router.get("/{trace_id}", response_model=TraceDetailResponse)
@@ -145,6 +173,8 @@ async def update_trace(
     updated = await traces_q.update_owned(db.pool(), trace_id, user.id, **kwargs)
     if updated is None:  # deleted out from under us
         raise ApiError("not_found", "Trace not found.", status=404)
+    if body.visibility == "listed":
+        await schedule_listing_hooks([trace_id])
     # Re-read through the visibility path for the relationship flags.
     return _detail(await _visible_or_404(trace_id, user))
 
@@ -204,7 +234,7 @@ async def acquire_trace(trace_id: str, user: CurrentUser, response: Response) ->
 async def get_trace_analysis(trace_id: str, user: CurrentUser) -> TraceAnalysisResponse:
     """The full analysis view for the trace-detail Analysis section
     (3_api.md). Owner or listed — same visibility rule as the trace."""
-    await _visible_or_404(trace_id, user)
+    trace = await _visible_or_404(trace_id, user)
     pool = db.pool()
     ta = await analysis_q.fetch_analysis(pool, trace_id)
     dead_letter = await analysis_q.fetch_open_dead_letter(pool, trace_id)
@@ -267,8 +297,40 @@ async def get_trace_analysis(trace_id: str, user: CurrentUser) -> TraceAnalysisR
         reasoning=reasoning,
         signals=signals,
         metric_scores=metric_scores,
-        open_review_item_id=None,  # A3 wires review items
+        # Owner-only (A3 decision 8): a consumer reading a listed trace's
+        # analysis never sees the owner's review backlog.
+        open_review_item_id=(
+            str(trace["open_review_item_id"])
+            if trace["is_owner"] and trace["open_review_item_id"] is not None
+            else None
+        ),
         audit=AnalysisAudit(analyzers=analyzers),
+    )
+
+
+@router.get("/{trace_id}/similar", response_model=SimilarTracesResponse)
+async def similar_traces(
+    trace_id: str,
+    user: CurrentUser,
+    limit: int = Query(default=10, ge=1, le=50),
+    min_similarity: float | None = Query(default=None, ge=0, le=1),
+) -> SimilarTracesResponse:
+    """Cosine nearest neighbors over the caller's visible traces
+    (docs/proposals/similar-behavior.md). The anchor must itself be visible;
+    an unembedded anchor returns anchor_embedded=false rather than 404 —
+    "not analyzed yet" is a state, not an absence."""
+    await _visible_or_404(trace_id, user)
+    if not await embeddings_q.exists(db.pool(), trace_id):
+        return SimilarTracesResponse(anchor_embedded=False, items=[])
+    rows, total_above = await embeddings_q.similar_traces(
+        db.pool(), user.id, trace_id, limit=limit, min_similarity=min_similarity
+    )
+    return SimilarTracesResponse(
+        anchor_embedded=True,
+        items=[
+            SimilarTraceItem(**list_item(r).model_dump(), similarity=r["similarity"]) for r in rows
+        ],
+        total_above=total_above,
     )
 
 
@@ -376,6 +438,10 @@ def _detail(row: asyncpg.Record) -> TraceDetailResponse:
         outcome_confidence=row["outcome_confidence"],
         outcome_provenance=row["outcome_provenance"],
         analysis_state=analysis_q.derive_state(row["llm_status"], row["analysis_failed"]),
+        has_open_review_item=row["open_review_item_id"] is not None,
+        open_review_item_id=(
+            str(row["open_review_item_id"]) if row["open_review_item_id"] is not None else None
+        ),
     )
 
 

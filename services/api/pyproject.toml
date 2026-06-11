@@ -13,11 +13,17 @@ dependencies = [
     "pydantic-settings>=2.14.1",
     "pyjwt[crypto]>=2.13.0",
     "python-multipart>=0.0.32",
+    "ragas==0.4.3",
     "redis>=7.4.1",
     "taskiq>=0.12.4",
     "taskiq-redis>=1.2.2",
     "uvicorn[standard]>=0.49.0",
 ]
+
+[tool.uv]
+# ragas 0.4.3 declares unbounded langchain deps but imports modules removed
+# in langchain 1.x; constrain to the 0.3-era packages it was built against.
+constraint-dependencies = ["langchain<1", "langchain-community<0.4", "langchain-core<1"]
 
 [dependency-groups]
 dev = [

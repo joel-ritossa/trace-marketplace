@@ -60,6 +60,20 @@ async def test_cli_sync_end_to_end(api_key: str, db, tmp_path: Path):
     assert "synced 0 · skipped 1 · failed 0" in res.stdout
 
 
+async def test_cli_syncs_raw_session_jsonl(api_key: str, tmp_path: Path):
+    """The no-conversion path (8_session-ingestion.md): a raw Codex rollout
+    syncs as-is and lands as one trace per turn."""
+    fixture = Path(__file__).resolve().parents[4] / "fixtures" / "codex-session.jsonl"
+    rollout = tmp_path / "rollout.jsonl"
+    # Unique trailing comment line (skipped by the tolerant JSONL parser)
+    # defeats per-user dedupe across test runs.
+    rollout.write_bytes(fixture.read_bytes() + f"# {uuid.uuid4().hex}\n".encode())
+
+    res = run_cli(api_key, rollout)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert f"{rollout} → uploaded (complete, 2 traces)" in res.stdout
+
+
 async def test_cli_surfaces_ingestion_failure_verbatim(api_key: str, tmp_path: Path):
     bad = tmp_path / "bad.json"
     bad.write_bytes(json.dumps({"resourceSpans": [], "_m": uuid.uuid4().hex}).encode())

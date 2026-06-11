@@ -23,9 +23,26 @@ resource "aws_ssm_parameter" "supabase_service_role_key" {
   }
 }
 
+# LLM provider keys for the analysis judge/critics (worker). Same
+# out-of-band value flow as above.
+resource "aws_ssm_parameter" "llm_api_keys" {
+  for_each = toset(["openai-api-key", "anthropic-api-key", "openrouter-api-key"])
+
+  name  = "/${var.project}/${each.value}"
+  type  = "SecureString"
+  value = "REPLACE_ME"
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
 locals {
-  secret_parameter_arns = [
-    aws_ssm_parameter.database_url.arn,
-    aws_ssm_parameter.supabase_service_role_key.arn,
-  ]
+  secret_parameter_arns = concat(
+    [
+      aws_ssm_parameter.database_url.arn,
+      aws_ssm_parameter.supabase_service_role_key.arn,
+    ],
+    [for p in aws_ssm_parameter.llm_api_keys : p.arn],
+  )
 }

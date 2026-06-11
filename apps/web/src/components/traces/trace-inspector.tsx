@@ -1,116 +1,68 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Download } from "lucide-react";
-import type { TraceSpan } from "@evilmartians/agent-prism-types";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ArrowLeft, ChevronDown } from "lucide-react";
 
-import { DetailsView } from "@/components/agent-prism/DetailsView/DetailsView";
-import { TreeView } from "@/components/agent-prism/TreeView";
 import { AnalysisSection } from "@/components/traces/analysis-section";
 import { TraceOutcome, VisibilityBadge } from "@/components/traces/badges";
-import { buildSpanTree, defaultExpandedIds, withDetail } from "@/components/traces/span-tree";
-import { TraceActions } from "@/components/traces/trace-actions";
+import { TraceHeaderActions, TraceMetaEditor } from "@/components/traces/trace-actions";
+import { TraceEvidence } from "@/components/traces/trace-evidence";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api/client";
-import {
-  downloadTrace,
-  getSpan,
-  getTrace,
-  listAllSpans,
-  type SpanDetail,
-  type TraceDetail,
-} from "@/lib/api/traces";
+import { getTrace, type TraceDetail } from "@/lib/api/traces";
 import { formatDuration } from "@/lib/format";
+import { useRealtimeRefetch } from "@/lib/realtime";
 import { cn } from "@/lib/utils";
 
 type LoadState =
-  | { phase: "loading"; spansLoaded: number; spansTotal: number | null }
+  | { phase: "loading" }
   | { phase: "not-found" }
   | { phase: "error"; message: string }
-  | { phase: "ready"; trace: TraceDetail; roots: TraceSpan[] };
-
-function flatten(roots: TraceSpan[]): Map<string, TraceSpan> {
-  const map = new Map<string, TraceSpan>();
-  const stack = [...roots];
-  while (stack.length > 0) {
-    const node = stack.pop()!;
-    map.set(node.id, node);
-    stack.push(...(node.children ?? []));
-  }
-  return map;
-}
+  | { phase: "ready"; trace: TraceDetail };
 
 export function TraceInspector({ traceId }: { traceId: string }) {
-  const [state, setState] = useState<LoadState>({
-    phase: "loading",
-    spansLoaded: 0,
-    spansTotal: null,
-  });
-  const [expandedIds, setExpandedIds] = useState<string[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [details, setDetails] = useState<Map<string, SpanDetail>>(new Map());
-  const [downloading, setDownloading] = useState(false);
-  const [downloadError, setDownloadError] = useState(false);
+  const [state, setState] = useState<LoadState>({ phase: "loading" });
+  const [overviewOpen, setOverviewOpen] = useState(true);
+  const loadTicket = useRef(0);
 
-  useEffect(() => {
-    let cancelled = false;
-    Promise.all([
-      getTrace(traceId),
-      listAllSpans(traceId, (loaded, total) => {
-        if (!cancelled) {
-          setState((prev) =>
-            prev.phase === "loading" ? { phase: "loading", spansLoaded: loaded, spansTotal: total } : prev,
-          );
-        }
-      }),
-    ])
-      .then(([trace, spans]) => {
-        if (cancelled) return;
-        const roots = buildSpanTree(spans);
-        setExpandedIds(defaultExpandedIds(roots));
-        setState({ phase: "ready", trace, roots });
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        if (err instanceof ApiError && err.status === 404) {
-          setState({ phase: "not-found" });
-        } else {
-          setState({
-            phase: "error",
-            message: err instanceof ApiError ? err.message : "Could not load the trace.",
-          });
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
+  const load = useCallback(async () => {
+    const ticket = ++loadTicket.current;
+    try {
+      const trace = await getTrace(traceId);
+      if (ticket === loadTicket.current) setState({ phase: "ready", trace });
+    } catch (err) {
+      if (ticket !== loadTicket.current) return;
+      if (err instanceof ApiError && err.status === 404) {
+        setState({ phase: "not-found" });
+      } else {
+        // A failed background refetch must not blank a rendered trace.
+        setState((prev) =>
+          prev.phase === "ready"
+            ? prev
+            : {
+                phase: "error",
+                message: err instanceof ApiError ? err.message : "Could not load the trace.",
+              },
+        );
+      }
+    }
   }, [traceId]);
 
-  // Fetch full attributes/events lazily, when a span is first selected.
-  async function onSpanSelect(span: TraceSpan) {
-    setSelectedId(span.id);
-    if (details.has(span.id)) return;
-    try {
-      const detail = await getSpan(traceId, span.id);
-      setDetails((prev) => new Map(prev).set(span.id, detail));
-    } catch {
-      // Panel falls back to the light fields; reselecting retries.
-    }
-  }
+  useEffect(() => {
+    void load();
+  }, [load]);
 
-  const nodeById = useMemo(
-    () => (state.phase === "ready" ? flatten(state.roots) : new Map<string, TraceSpan>()),
-    [state],
-  );
+  // Live invalidation: metadata/visibility edits land via "traces", an
+  // analysis verdict (header outcome badge) via "trace_analysis".
+  useRealtimeRefetch("traces", load);
+  useRealtimeRefetch("trace_analysis", load);
 
   if (state.phase === "loading") {
     return (
       <p className="flex items-center gap-2 text-sm text-muted-foreground">
         <span className="size-3 animate-spin rounded-full border-2 border-border border-t-foreground" />
-        {state.spansTotal !== null && state.spansTotal > state.spansLoaded
-          ? `Loading spans… ${state.spansLoaded.toLocaleString()} of ${state.spansTotal.toLocaleString()}`
-          : "Loading trace…"}
+        Loading trace…
       </p>
     );
   }
@@ -135,27 +87,10 @@ export function TraceInspector({ traceId }: { traceId: string }) {
     return <p className="text-sm text-error-deep">{state.message}</p>;
   }
 
-  const { trace, roots } = state;
+  const { trace } = state;
 
   function onTraceChange(updated: TraceDetail) {
     setState((prev) => (prev.phase === "ready" ? { ...prev, trace: updated } : prev));
-  }
-
-  const selectedNode = selectedId ? nodeById.get(selectedId) : undefined;
-  const selectedDetail = selectedId ? details.get(selectedId) : undefined;
-  const panelSpan =
-    selectedNode && selectedDetail ? withDetail(selectedNode, selectedDetail) : selectedNode;
-
-  async function onDownload() {
-    setDownloading(true);
-    setDownloadError(false);
-    try {
-      await downloadTrace(trace.trace_id, `${trace.name.replaceAll("/", "_")}.json`);
-    } catch {
-      setDownloadError(true);
-    } finally {
-      setDownloading(false);
-    }
   }
 
   const meta: [string, string][] = [
@@ -173,103 +108,86 @@ export function TraceInspector({ traceId }: { traceId: string }) {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <Link
-          href="/traces"
-          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+      {/* Header strip (4_pages.md trace-detail layout): identity + the one
+          actions cluster, sticky under the top bar. */}
+      <div className="sticky top-14 z-10 -mx-6 -mt-8 border-b bg-canvas-soft/95 px-6 py-3 backdrop-blur">
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          <h1 className="flex min-w-0 items-center gap-2.5 text-lg font-semibold tracking-tight">
+            <span
+              className={cn(
+                "size-2.5 shrink-0 rounded-full",
+                trace.status === "error" ? "bg-error-deep" : "bg-status-ok",
+              )}
+              title={trace.status === "error" ? "Trace contains errors" : "Trace OK"}
+            />
+            <span className="truncate">{trace.name}</span>
+            <VisibilityBadge visibility={trace.visibility} />
+            <TraceOutcome trace={trace} />
+          </h1>
+          <TraceHeaderActions trace={trace} onChange={onTraceChange} />
+        </div>
+      </div>
+
+      {/* Overview region: metadata + analysis, collapsible so the evidence
+          can take the screen. */}
+      <section>
+        <button
+          type="button"
+          onClick={() => setOverviewOpen((open) => !open)}
+          className="flex items-center gap-1.5 text-sm font-semibold transition-colors hover:text-muted-foreground"
+          aria-expanded={overviewOpen}
         >
-          <ArrowLeft className="size-3" /> Traces
-        </Link>
-        <div className="mt-2 flex flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0">
-            <h1 className="flex items-center gap-2.5 text-2xl font-semibold tracking-tight">
-              <span
-                className={cn(
-                  "size-2.5 shrink-0 rounded-full",
-                  trace.status === "error" ? "bg-error-deep" : "bg-status-ok",
-                )}
-                title={trace.status === "error" ? "Trace contains errors" : "Trace OK"}
-              />
-              <span className="truncate">{trace.name}</span>
-              <VisibilityBadge visibility={trace.visibility} />
-              <TraceOutcome trace={trace} />
-            </h1>
-            {trace.error_types.length > 0 && (
-              <p className="mt-1 text-sm text-error-deep">
-                Error types: {trace.error_types.join(", ")}
-              </p>
-            )}
-            {!trace.is_owner && trace.description && (
-              <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{trace.description}</p>
-            )}
-            {!trace.is_owner && trace.tags.length > 0 && (
-              <div className="mt-1.5 flex flex-wrap gap-1">
-                {trace.tags.map((tag) => (
-                  <span
-                    key={tag}
-                    className="rounded-full bg-secondary px-2 py-0.5 text-xs text-muted-foreground"
-                  >
-                    {tag}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-          <div className="flex flex-col items-end gap-1">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!trace.can_download || downloading}
-              onClick={onDownload}
-              title={trace.can_download ? undefined : "Acquire this trace to download it"}
-            >
-              <Download /> Download raw
-            </Button>
-            {!trace.can_download && (
-              <p className="text-xs text-muted-foreground">Acquire to download</p>
-            )}
-            {downloadError && (
-              <p className="text-xs text-error-deep">Download failed — try again.</p>
-            )}
-          </div>
-        </div>
-        <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-2 rounded-lg border bg-background px-4 py-3 text-sm sm:grid-cols-4">
-          {meta.map(([label, value]) => (
-            <div key={label}>
-              <dt className="text-xs text-muted-foreground">{label}</dt>
-              <dd className="truncate font-mono text-xs" title={value}>
-                {value}
-              </dd>
-            </div>
-          ))}
-        </dl>
-      </div>
-
-      <TraceActions trace={trace} onChange={onTraceChange} />
-
-      <AnalysisSection traceId={trace.trace_id} isOwner={trace.is_owner} />
-
-      <div className="grid h-[calc(100vh-22rem)] min-h-96 grid-cols-1 gap-4 lg:grid-cols-5">
-        <div className="overflow-y-auto rounded-lg border bg-background py-2 lg:col-span-3">
-          <TreeView
-            spans={roots}
-            selectedSpan={panelSpan}
-            onSpanSelect={onSpanSelect}
-            expandedSpansIds={expandedIds}
-            onExpandSpansIdsChange={setExpandedIds}
-            spanCardViewOptions={{ expandButton: "inside" }}
+          <ChevronDown
+            className={cn("size-4 transition-transform", !overviewOpen && "-rotate-90")}
           />
-        </div>
-        <div className="overflow-y-auto rounded-lg border bg-background lg:col-span-2">
-          {panelSpan ? (
-            <DetailsView key={panelSpan.id} data={panelSpan} className="border-0" />
-          ) : (
-            <p className="p-4 text-sm text-muted-foreground">
-              Select a span to inspect its attributes and events.
-            </p>
-          )}
-        </div>
-      </div>
+          Overview
+        </button>
+        {overviewOpen && (
+          <div className="mt-3 grid items-start gap-4 xl:grid-cols-2">
+            <div className="flex flex-col gap-4">
+              <dl className="grid grid-cols-2 gap-x-6 gap-y-2 rounded-lg border bg-background px-4 py-3 text-sm sm:grid-cols-3">
+                {meta.map(([label, value]) => (
+                  <div key={label}>
+                    <dt className="text-xs text-muted-foreground">{label}</dt>
+                    <dd className="truncate font-mono text-xs" title={value}>
+                      {value}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+              {trace.error_types.length > 0 && (
+                <p className="text-sm text-error-deep">
+                  Error types: {trace.error_types.join(", ")}
+                </p>
+              )}
+              {trace.is_owner ? (
+                <TraceMetaEditor trace={trace} onChange={onTraceChange} />
+              ) : (
+                <>
+                  {trace.description && (
+                    <p className="max-w-2xl text-sm text-muted-foreground">{trace.description}</p>
+                  )}
+                  {trace.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {trace.tags.map((tag) => (
+                        <span
+                          key={tag}
+                          className="rounded-full bg-secondary px-2 py-0.5 text-xs text-muted-foreground"
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+            <AnalysisSection traceId={trace.trace_id} isOwner={trace.is_owner} />
+          </div>
+        )}
+      </section>
+
+      <TraceEvidence key={trace.trace_id} traceId={trace.trace_id} />
     </div>
   );
 }

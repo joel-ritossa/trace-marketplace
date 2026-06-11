@@ -43,7 +43,7 @@ principle:
   examples:
     positive:
       - "Upload page polls GET /v1/uploads/{id} and shows 'processing' with status text until terminal"
-      - "Acquire button shows pending state, then flips to 'In your library'"
+      - "Acquire button shows pending state, then flips to 'saved'"
     negative:
       - "Infinite spinner with no status word during ingestion"
       - "Optimistically showing 'complete' before the poll confirms it"
@@ -64,7 +64,7 @@ principle:
     Toasts may supplement; they never carry the only evidence.
   rationale: >
     Toasts vanish; state changes persist. Acquire must visibly become
-    "in your library" on the page; visibility toggle must visibly flip the
+    "saved" on the page; visibility toggle must visibly flip the
     badge everywhere the trace renders.
   examples:
     positive:

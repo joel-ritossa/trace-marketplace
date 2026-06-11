@@ -1,0 +1,76 @@
+name: Release Desktop
+
+# Builds the Tauri desktop app pointed at production and attaches the
+# bundles to a GitHub Release. Trigger: push a tag like desktop-v0.1.0
+# whose version matches src-tauri/tauri.conf.json.
+#
+# Bundles are ad-hoc signed (tauri.conf.json signingIdentity "-" — required
+# for macOS notification-center registration) but not notarized: macOS
+# quarantines downloaded un-notarized apps, so the release notes carry the
+# `xattr -dr com.apple.quarantine` bypass.
+
+on:
+  push:
+    tags: ["desktop-v*"]
+
+permissions:
+  contents: write # create the release and upload assets
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check tag matches app version
+        run: |
+          version=$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)
+          [ "desktop-v$version" = "$GITHUB_REF_NAME" ] || {
+            echo "tag $GITHUB_REF_NAME != tauri.conf.json version $version" >&2
+            exit 1
+          }
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build and release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Connection defaults baked into the bundle (see
+          # apps/desktop/src/lib/settings.ts). Same repo variables the web
+          # deploy uses; the anon key is browser-public by design. The API
+          # shares the web domain (ALB routes /v1/* to it).
+          VITE_API_URL: ${{ vars.APP_URL }}
+          VITE_WEB_URL: ${{ vars.APP_URL }}
+          VITE_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+        with:
+          projectPath: apps/desktop
+          args: --target universal-apple-darwin
+          tagName: ${{ github.ref_name }}
+          releaseName: Trace Marketplace Desktop ${{ github.ref_name }}
+          releaseBody: |
+            Unsigned demo build pointed at production. After installing,
+            clear the macOS quarantine flag once:
+
+            ```sh
+            xattr -dr com.apple.quarantine "/Applications/Trace Marketplace.app"
+            ```
+
+            Sign in with your marketplace email/password (the email must be
+            allowlisted and the account registered via the web app).

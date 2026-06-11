@@ -1,18 +1,28 @@
 from pathlib import Path
 
 from trace_sync import run as run_mod
-from trace_sync.client import FileOutcome
+from trace_sync.client import FileOutcome, PendingUpload
 from trace_sync.run import EXIT_FAILURES, EXIT_OK, EXIT_UNRUNNABLE, run_sync, run_watch
 
 
 class FakeClient:
+    """Uploaded outcomes go through the pending/check path (as the real
+    client does); skips and POST-time failures return terminally from
+    enqueue."""
+
     def __init__(self, outcomes: dict[str, FileOutcome]) -> None:
         self._outcomes = outcomes
         self.calls: list[str] = []
 
-    def upload(self, path: Path) -> FileOutcome:
+    def enqueue(self, path: Path) -> FileOutcome | PendingUpload:
         self.calls.append(path.name)
-        return self._outcomes[path.name]
+        outcome = self._outcomes[path.name]
+        if outcome.kind == "uploaded":
+            return PendingUpload(path, f"id-{path.name}", deadline=float("inf"))
+        return outcome
+
+    def check(self, pending: PendingUpload) -> FileOutcome | None:
+        return self._outcomes[pending.path.name]
 
 
 def test_sync_lines_summary_and_exit_code(tmp_path, capsys):

@@ -4,6 +4,9 @@
 !.env.example
 !.env.*.example
 
+# Local log files (app/obs.py file sink; mounted into compose services)
+logs/
+
 # Python
 __pycache__/
 *.py[cod]

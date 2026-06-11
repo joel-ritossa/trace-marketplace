@@ -106,9 +106,18 @@ function findString(attributes: Record<string, unknown>, keys: string[]): string
   return undefined;
 }
 
+// Mirrors the backend's extraction chains (app/analysis/content.py): OTel
+// GenAI conventions first, then OpenInference/Traceloop fallbacks. Tool
+// spans carry their I/O in the tool-call attributes, not message lists.
+const TOOL_INPUT_KEYS = ["gen_ai.tool.call.arguments", "traceloop.entity.input", "input.value"];
+const TOOL_OUTPUT_KEYS = ["gen_ai.tool.call.result", "traceloop.entity.output", "output.value"];
+const INPUT_KEYS = ["gen_ai.input.messages", "input.value", "traceloop.entity.input"];
+const OUTPUT_KEYS = ["gen_ai.output.messages", "output.value", "traceloop.entity.output"];
+
 /** Merges a fetched span detail into its tree node for the detail panel:
  *  full attributes, raw JSON, and In/Out content where the span carries it. */
 export function withDetail(node: TraceSpan, detail: SpanDetail): TraceSpan {
+  const tool = node.type === "tool_execution";
   return {
     ...node,
     raw: JSON.stringify({ attributes: detail.attributes, events: detail.events }, null, 2),
@@ -116,7 +125,7 @@ export function withDetail(node: TraceSpan, detail: SpanDetail): TraceSpan {
       key,
       value: toAttributeValue(value),
     })),
-    input: findString(detail.attributes, ["gen_ai.input.messages", "input.value"]),
-    output: findString(detail.attributes, ["gen_ai.output.messages", "output.value"]),
+    input: findString(detail.attributes, tool ? TOOL_INPUT_KEYS : INPUT_KEYS),
+    output: findString(detail.attributes, tool ? TOOL_OUTPUT_KEYS : OUTPUT_KEYS),
   };
 }

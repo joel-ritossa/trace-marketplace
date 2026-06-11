@@ -37,13 +37,13 @@ The core inspection surface. Three sections:
 3. **Actions**, driven by the `is_owner` / `acquired` / `can_download` flags from the API:
    - Owner: edit tags/description; visibility toggle private ↔ listed with the ownership-confirmation checkbox; delete with confirm; download.
    - Non-owner, listed, not acquired: **Acquire** button (labeled as a free acquisition) → `POST /v1/traces/{id}/acquire`; download button shown disabled with "acquire to download".
-   - Non-owner, acquired: **Download** button → `GET /v1/traces/{id}/download`, plus an "in your library" badge.
+   - Non-owner, acquired: **Download** button → `GET /v1/traces/{id}/download`, plus an "saved" badge.
 
 States: loading, not found (covers no-access by design), error-status trace (error spans visually flagged in the tree), large trace (spans paginated/lazy-loaded past 500).
 
 ### /marketplace
 
-- Same result-card list as `/traces` but `scope=marketplace`, plus contributor display name, listed date, and an "in your library" badge on already-acquired cards.
+- Same result-card list as `/traces` but `scope=marketplace`, plus contributor display name, listed date, and an "saved" badge on already-acquired cards.
 - Search + filters (provider, model, tool, has-errors, date range).
 - Cards link to `/traces/[traceId]`; acquire and download happen there.
 - States: loading, empty marketplace, results, no-results-for-query.

@@ -25,7 +25,7 @@ New tables plus a minimal stage-1 contact surface. Same ground rules as stage 1:
 | `id` | uuid PK | |
 | `user_id` | uuid | References `profiles.id`. |
 | `type` | text | `review_request \| subscription_match \| upload_failed`. App-validated; new types are additive. |
-| `payload` | jsonb | Type-specific: `review_request` → upload_id + item count (digested per upload); `subscription_match` → subscription_id + trace_id; `upload_failed` → upload_id. Always enough to build the link target. |
+| `payload` | jsonb | Type-specific: `review_request` → upload_id + item count (digested per upload); `subscription_match` → subscription_id + name + match_count (digested per subscription; trace_id only while the count is 1, so a single match deep-links the trace); `upload_failed` → upload_id. Always enough to build the link target. |
 | `created_at` | timestamptz | |
 | `read_at` | timestamptz | Null = unread. |
 

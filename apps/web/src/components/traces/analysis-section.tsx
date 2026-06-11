@@ -1,9 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { CircleHelp, Tags } from "lucide-react";
 import { OutcomeBadge, SKIP_REASON_COPY } from "@/components/traces/badges";
+import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api/client";
+import { createReviewItem } from "@/lib/api/review";
+import { useRealtimeRefetch } from "@/lib/realtime";
 import {
   getTraceAnalysis,
   type LabelValue,
@@ -69,29 +74,44 @@ function LabelRow({ name, label }: { name: string; label: LabelValue | null }) {
  *  the four honest states — never a lie. */
 export function AnalysisSection({ traceId, isOwner }: { traceId: string; isOwner: boolean }) {
   const [state, setState] = useState<LoadState>({ phase: "loading" });
+  const loadTicket = useRef(0);
+
+  const load = useCallback(async () => {
+    const ticket = ++loadTicket.current;
+    try {
+      const analysis = await getTraceAnalysis(traceId);
+      if (ticket === loadTicket.current) setState({ phase: "ready", analysis });
+    } catch (err) {
+      if (ticket !== loadTicket.current) return;
+      // A failed background refetch must not blank a rendered analysis.
+      setState((prev) =>
+        prev.phase === "ready"
+          ? prev
+          : {
+              phase: "error",
+              message: err instanceof ApiError ? err.message : "Could not load the analysis.",
+            },
+      );
+    }
+  }, [traceId]);
 
   useEffect(() => {
-    let cancelled = false;
-    getTraceAnalysis(traceId)
-      .then((analysis) => {
-        if (!cancelled) setState({ phase: "ready", analysis });
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setState({
-            phase: "error",
-            message: err instanceof ApiError ? err.message : "Could not load the analysis.",
-          });
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [traceId]);
+    void load();
+  }, [load]);
+
+  // Live invalidation: the verdict row lands via "trace_analysis"; "traces"
+  // catches state flips the row itself can't signal (attempts, re-ingest).
+  useRealtimeRefetch("trace_analysis", load);
+  useRealtimeRefetch("traces", load);
 
   return (
     <section className="rounded-lg border bg-background px-4 py-3">
-      <h2 className="text-sm font-semibold">Analysis</h2>
+      <div className="flex items-center justify-between gap-4">
+        <h2 className="text-sm font-semibold">Analysis</h2>
+        {state.phase === "ready" && isOwner && (
+          <RelabelEntry traceId={traceId} analysis={state.analysis} />
+        )}
+      </div>
       <div className="mt-3">
         {state.phase === "loading" && (
           <p className="text-sm text-muted-foreground">Loading analysis…</p>
@@ -100,6 +120,53 @@ export function AnalysisSection({ traceId, isOwner }: { traceId: string; isOwner
         {state.phase === "ready" && <Body analysis={state.analysis} isOwner={isOwner} />}
       </div>
     </section>
+  );
+}
+
+/** Owner-initiated relabel entry (4_pages.md): routes to the resolve view —
+ *  an open item links straight there, otherwise one is self-created. Only
+ *  offered once analysis exists (the resolve path writes into its row). */
+function RelabelEntry({ traceId, analysis }: { traceId: string; analysis: TraceAnalysis }) {
+  const router = useRouter();
+  const [creating, setCreating] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  if (analysis.open_review_item_id !== null) {
+    return (
+      <Link
+        href={`/review/${analysis.open_review_item_id}`}
+        className="inline-flex items-center gap-1 text-xs text-link-deep hover:underline"
+      >
+        <CircleHelp className="size-3" /> open review item
+      </Link>
+    );
+  }
+  if (analysis.analysis_state !== "complete" && analysis.analysis_state !== "skipped") {
+    return null;
+  }
+  return (
+    <span className="inline-flex items-center gap-2">
+      {failed && <span className="text-xs text-error-deep">could not start — try again</span>}
+      <Button
+        size="sm"
+        variant="ghost"
+        disabled={creating}
+        className="h-7 px-2 text-xs text-muted-foreground"
+        onClick={async () => {
+          setCreating(true);
+          setFailed(false);
+          try {
+            const item = await createReviewItem(traceId);
+            router.push(`/review/${item.review_item_id}`);
+          } catch {
+            setFailed(true);
+            setCreating(false);
+          }
+        }}
+      >
+        <Tags data-slot="icon" /> Relabel
+      </Button>
+    </span>
   );
 }
 

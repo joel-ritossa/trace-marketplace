@@ -2,7 +2,8 @@
   "name": "trace-marketplace",
   "private": true,
   "scripts": {
-    "dev:web": "pnpm --filter web dev"
+    "dev:web": "pnpm --filter web dev",
+    "dev:desktop": "pnpm --filter desktop tauri dev"
   },
   "packageManager": "pnpm@10.24.0"
 }

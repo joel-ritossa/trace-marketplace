@@ -20,6 +20,9 @@ type AnalysisFields = {
   outcome_confidence: number | null;
   outcome_provenance: Provenance | null;
   analysis_state: AnalysisState;
+  // Owner-only (A3): always false/null on a non-owner's card.
+  has_open_review_item: boolean;
+  open_review_item_id: string | null;
 };
 
 export type TraceListItem = {
@@ -43,7 +46,13 @@ export type TraceListItem = {
   acquired_at: string | null;
 } & AnalysisFields;
 
-export type TraceList = { traces: TraceListItem[]; total: number };
+export type TraceList = {
+  traces: TraceListItem[];
+  total: number;
+  // Set when analysis predicates are active: traces matching the other
+  // filters that have no analysis row yet (the filter-exclusion note).
+  excluded_unanalyzed: number | null;
+};
 
 export type TraceDetail = {
   trace_id: string;
@@ -113,6 +122,9 @@ export type TraceAnalysis = {
   };
 };
 
+// The full filter vocabulary (schemas/trace.py TraceFilterQuery) — also the
+// subscription query language. Equality fields take comma-separated values
+// (OR within a field); metric entries are "<name>:<min>" or "<name>:true".
 export type TraceFilters = {
   q?: string;
   provider?: string;
@@ -121,7 +133,40 @@ export type TraceFilters = {
   has_errors?: boolean;
   from?: string;
   to?: string;
+  outcome?: string;
+  failure_mode?: string;
+  task_category?: string;
+  loop_kind?: string;
+  outcome_provenance?: string;
+  failure_mode_provenance?: string;
+  task_category_provenance?: string;
+  has_retry_loop?: boolean;
+  recovered_from_error?: boolean;
+  truncation_suspected?: boolean;
+  outcome_confidence_gte?: number;
+  task_category_confidence_gte?: number;
+  duration_ms_gte?: number;
+  total_tokens_gte?: number;
+  llm_call_count_gte?: number;
+  tool_call_count_gte?: number;
+  metric?: string[];
 };
+
+/** Filter params for a request or URL. Booleans: has_errors only filters
+ *  when true; the signal booleans filter on both values. */
+export function filterParams(filters: TraceFilters): URLSearchParams {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value === undefined || value === "") continue;
+    if (key === "has_errors" && value === false) continue;
+    if (Array.isArray(value)) {
+      for (const item of value) params.append(key, item);
+    } else {
+      params.set(key, String(value));
+    }
+  }
+  return params;
+}
 
 export type TraceUpdate = {
   visibility?: TraceVisibility;
@@ -179,15 +224,91 @@ export async function listTraces(
   limit = 25,
   offset = 0,
 ): Promise<TraceList> {
-  const params = new URLSearchParams({ scope, sort, limit: String(limit), offset: String(offset) });
-  for (const [key, value] of Object.entries(filters)) {
-    if (value !== undefined && value !== "" && value !== false) params.set(key, String(value));
-  }
+  const params = filterParams(filters);
+  params.set("scope", scope);
+  params.set("sort", sort);
+  params.set("limit", String(limit));
+  params.set("offset", String(offset));
   return apiFetch<TraceList>(`/v1/traces?${params}`);
+}
+
+export async function listMetricKeys(): Promise<string[]> {
+  const { keys } = await apiFetch<{ keys: string[] }>("/v1/traces/metric-keys");
+  return keys;
+}
+
+// Bulk operations (3_api.md): ≤100 ids, itemized results — partial success
+// is normal.
+
+export type BulkAcquireStatus =
+  | "acquired"
+  | "already_acquired"
+  | "not_listed"
+  | "own_trace"
+  | "not_found";
+
+export type BulkAcquireResult = { trace_id: string; status: BulkAcquireStatus }[];
+
+export async function bulkAcquire(traceIds: string[]): Promise<BulkAcquireResult> {
+  const { results } = await apiFetch<{ results: BulkAcquireResult }>("/v1/traces/acquire", {
+    method: "POST",
+    body: JSON.stringify({ trace_ids: traceIds }),
+  });
+  return results;
+}
+
+export type BulkVisibilityResult = { trace_id: string; status: "updated" | "not_found" }[];
+
+export async function bulkVisibility(
+  traceIds: string[],
+  visibility: TraceVisibility,
+  confirmOwnership = false,
+): Promise<BulkVisibilityResult> {
+  const { results } = await apiFetch<{ results: BulkVisibilityResult }>("/v1/traces/visibility", {
+    method: "POST",
+    body: JSON.stringify({
+      trace_ids: traceIds,
+      visibility,
+      confirm_ownership: confirmOwnership,
+    }),
+  });
+  return results;
+}
+
+export async function bulkDownload(traceIds: string[]): Promise<void> {
+  await apiDownload(`/v1/traces/download`, `traces-${traceIds.length}.zip`, {
+    method: "POST",
+    body: JSON.stringify({ trace_ids: traceIds }),
+  });
 }
 
 export async function getTrace(traceId: string): Promise<TraceDetail> {
   return apiFetch<TraceDetail>(`/v1/traces/${traceId}`);
+}
+
+// Similar behavior (docs/proposals/similar-behavior.md): cosine neighbors
+// over the embedding of the trace's analysis rendering.
+
+export type SimilarTraceItem = TraceListItem & { similarity: number };
+
+export type SimilarTraces = {
+  // False when the anchor has no embedding yet (analysis pending, keyless
+  // stack, or private without LLM consent).
+  anchor_embedded: boolean;
+  items: SimilarTraceItem[];
+  // Count of visible traces at/above min_similarity, when it was sent.
+  total_above: number | null;
+};
+
+export async function getSimilarTraces(
+  traceId: string,
+  opts: { limit?: number; minSimilarity?: number } = {},
+): Promise<SimilarTraces> {
+  const params = new URLSearchParams();
+  if (opts.limit !== undefined) params.set("limit", String(opts.limit));
+  if (opts.minSimilarity !== undefined) params.set("min_similarity", String(opts.minSimilarity));
+  const qs = params.size > 0 ? `?${params}` : "";
+  return apiFetch<SimilarTraces>(`/v1/traces/${traceId}/similar${qs}`);
 }
 
 export async function getTraceAnalysis(traceId: string): Promise<TraceAnalysis> {

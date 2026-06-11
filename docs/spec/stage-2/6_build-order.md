@@ -23,6 +23,7 @@ flowchart TD
         B2["B2 outcome judge"]
         B3["B3 quality metrics"]
         B4["B4 validation"]
+        B5["B5 metrics validation"]
     end
 
     subgraph SA["Stream A — Platform"]
@@ -40,6 +41,8 @@ flowchart TD
     B0 --> B1 --> B2
     B2 --> B3
     B2 --> B4
+    B3 --> B5
+    B4 --> B5
     B0 --> A2
     A1 --> A2 --> A3 --> A4
     B1 -. "real signals" .-> A2
@@ -70,6 +73,9 @@ flowchart TD
 **B4 — Validation** (needs B2 only; parallel with B3). Benchmark→OTLP converter (AgentRewardBench + AgentRx); agreement script.
 *Done when:* one command produces the agreement report; converter output ingests cleanly.
 
+**B5 — Metrics validation** (needs B3 + B4's harness). Family-3 counterpart of B4: HaluBench→OTLP converter (single-turn RAG QA with human hallucination labels); `metrics-agreement` runner folding critic agreement (confusion matrix, balanced accuracy) and score agreement (AUC, threshold) vs the labels sidecar; prompt iteration under the per-metric versioning convention.
+*Done when:* one command produces the metric agreement report from a converted slice; reported numbers recorded in the buildlog.
+
 ## Stream A — Platform
 
 **A1 — Machine door.** `api_keys` + dual-auth middleware (the one stage-1 code change) + `uploads.source`; `/settings` (keys, display name, private-trace LLM-analysis toggle — `profiles.allow_private_llm_analysis` migration); the sync CLI ([5_cli.md](5_cli.md)); `/uploads` page; pagination UI on `/traces` and `/uploads`.
@@ -83,6 +89,9 @@ flowchart TD
 
 **A4 — Discovery at scale** (needs stage-1 slice 3; consumes B3). Filter-language extension (analysis fields, min-bound predicates, `metric` param, `trace_analysis` join); subscriptions with event-driven matching + feed pages + "Save as subscription"; listing wires the opt-out re-run hook (visibility → listed re-enqueues `analyze_trace` for `owner_opt_out`-skipped traces before matching); bulk acquire / list-unlist (batched consent) / download (zip + `labels.jsonl`).
 *Done when:* demo-script steps 6–9 pass end to end.
+
+**A6 — Native session ingestion** ([8_session-ingestion.md](8_session-ingestion.md); needs A1 + A5, parallel with A2–A4). Session-JSONL importers (Codex, Claude Code/Cursor) behind shared format detection; per-turn trace conversion through the existing OTLP normalize path; `unsupported_format` at POST, permanent conversion failures at ingest; CLI `*.jsonl` discovery + `--since-hours`; the client-side converter retires.
+*Done when:* the done-when list in [8_session-ingestion.md](8_session-ingestion.md) passes against a fresh compose up.
 
 **A5 — Redaction** ([7_redaction.md](7_redaction.md); needs only stage-1 slice 2, parallel with A2–A4). Scrub step in the importer (`detect-secrets` + in-house PII recognizers, deterministic HMAC placeholders); `span_raw` table + `uploads` redaction columns with RLS; scrubbed payload artifact; owner/non-owner read and download boundaries; golden + determinism tests. Sequencing note: if A5 lands after analysis plumbing, already-analyzed traces are backfilled by re-ingest + re-analysis (delete-and-rewrite covers both).
 *Done when:* a fixture seeded with secrets/PII ingests with placeholders in `spans` and raw values in owner-only `span_raw`; a non-owner span view and acquirer download show placeholders while the owner sees originals; the negative-golden (id/hash-heavy) fixture shows zero replacements; re-ingest is byte-identical; redaction counts appear on the upload.

@@ -13,7 +13,6 @@ prompt changes bump it (2_data-model.md).
 
 import asyncio
 from collections import Counter
-from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -28,33 +27,25 @@ from app.analysis.models import (
     Outcome,
     SignalsResult,
 )
-from app.analysis.rendering import render_trace
+from app.analysis.prompts.judge import category, failure_mode, outcome
+from app.analysis.rendering import render_trace, rendering_text
 from app.analysis.routing import finalize_verdict
 from app.analysis.signals import run_signals
 from app.analysis.trace_input import TraceInput
 
-JUDGE_VERSION = "1"
+JUDGE_VERSION = "5"
 
-# Spec requires temperature > 0 (self-consistency needs sampling); not a
-# knob. Models that reject the param (litellm drops it) sample at their
-# default temperature, which is also > 0.
-_TEMPERATURE = 0.7
 _MAX_EVIDENCE_ERROR_SPANS = 10
-
-_PROMPT_DIR = Path(__file__).parent / "prompts"
 
 Call = Literal["outcome", "failure_mode", "category"]
 
-# Prompt files carry their own per-prompt versions; JUDGE_VERSION covers
-# the ensemble (prompts + composition + voting config). Decoupled so one
-# prompt can rev without renaming the other two.
-_PROMPT_FILES: dict[Call, str] = {
-    "outcome": "outcome_v1.md",
-    "failure_mode": "failure_mode_v1.md",
-    "category": "category_v1.md",
-}
+# Prompt modules carry their own per-prompt versions (prompts/ convention);
+# JUDGE_VERSION covers the ensemble (prompts + composition + voting
+# config). Decoupled so one prompt can rev without the other two.
 _PROMPTS: dict[Call, str] = {
-    call: (_PROMPT_DIR / name).read_text() for call, name in _PROMPT_FILES.items()
+    "outcome": outcome.V3,
+    "failure_mode": failure_mode.V4,
+    "category": category.V1,
 }
 
 # Recorded value for a fm/category vote whose response failed validation:
@@ -106,7 +97,7 @@ async def _one_vote(call: Call, user_text: str, settings: AnalysisSettings) -> J
     ]
     try:
         parsed, meta = await llm.complete(
-            settings.judge_model, messages, _SCHEMAS[call], _TEMPERATURE
+            settings.judge_model, messages, _SCHEMAS[call], llm.SAMPLING_TEMPERATURE
         )
     except llm.MalformedResponse as exc:
         return _malformed_vote(call, exc.meta)
@@ -207,10 +198,6 @@ def fold_category(votes: list[JudgeVote]) -> tuple[str | None, float | None]:
     return label, _self_report(votes, counts[label] / n)
 
 
-def _rendering_text(messages) -> str:
-    return "\n\n".join(f"{m.role}: {m.content}" for m in messages)
-
-
 def _evidence_block(loop_kind: str | None, trace: TraceInput) -> str:
     """Deterministic evidence for the failure-mode prompt only: loop kind +
     error-span skeletons (name, status, error type — never bodies)."""
@@ -247,29 +234,52 @@ async def run_judge(
         return None  # keyless: inapplicable, no fake output
 
     rendered = render_trace(trace, RendererConfig.from_settings(settings))
-    rendering = _rendering_text(rendered.messages)
+    rendering = rendering_text(rendered.messages)
     if signals is None:
         signals = await run_signals(trace, settings)
 
-    outcome_votes = await _collect_votes("outcome", rendering, settings)
+    # The category call depends only on the goal surface, never on the
+    # outcome fold — only the failure-mode call is gated on outcome. The
+    # outcome→failure-mode chain and the category votes therefore run
+    # concurrently (same calls, same prompts; latency, not composition).
+    async def outcome_chain() -> tuple[list[JudgeVote], list[JudgeVote]]:
+        outcome_votes = await _collect_votes("outcome", rendering, settings)
+        fm_votes: list[JudgeVote] = []
+        label, _, _ = fold_outcome(outcome_votes, settings.judge_consensus)
+        if label == "failure":
+            user_text = _evidence_block(signals.loop_kind, trace) + "Trace:\n" + rendering
+            fm_votes = await _collect_votes("failure_mode", user_text, settings)
+        return outcome_votes, fm_votes
+
+    async def category_votes() -> list[JudgeVote] | None:
+        user_message = content.first_user_message(trace.spans)
+        if not user_message and not trace.tool_names:
+            return None
+        return await _collect_votes(
+            "category", _category_text(user_message, trace.tool_names), settings
+        )
+
+    # Settle both branches before re-raising the first error (the
+    # _collect_votes convention): no orphaned sibling calls, and the
+    # original typed exception survives for the worker's classification.
+    results = await asyncio.gather(outcome_chain(), category_votes(), return_exceptions=True)
+    for result in results:
+        if isinstance(result, BaseException):
+            raise result
+    (outcome_votes, fm_votes), cat_votes = results  # type: ignore[misc]
+
     outcome, outcome_confidence, reasoning = fold_outcome(outcome_votes, settings.judge_consensus)
     votes = list(outcome_votes)
 
     failure_mode: str | None = None
     failure_mode_confidence: float | None = None
-    if outcome == "failure":
-        user_text = _evidence_block(signals.loop_kind, trace) + "Trace:\n" + rendering
-        fm_votes = await _collect_votes("failure_mode", user_text, settings)
+    if fm_votes:
         votes.extend(fm_votes)
         failure_mode, failure_mode_confidence = fold_failure_mode(fm_votes)
 
     task_category: str | None = None
     task_category_confidence: float | None = None
-    user_message = content.first_user_message(trace.spans)
-    if user_message or trace.tool_names:
-        cat_votes = await _collect_votes(
-            "category", _category_text(user_message, trace.tool_names), settings
-        )
+    if cat_votes is not None:
         votes.extend(cat_votes)
         task_category, task_category_confidence = fold_category(cat_votes)
 

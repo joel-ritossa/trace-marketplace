@@ -107,7 +107,7 @@ trace_id) do nothing` + fetch, so an unlist mid-flight can't race;
   `is_owner`/`acquired`/`can_download`: owner edit panel (tags, description,
   private↔listed toggle with the ownership-confirmation checkbox, delete
   with confirm, download); non-owner Acquire (labeled free) or Download +
-  "in your library" badge; disabled download with "acquire to download"
+  "saved" badge; disabled download with "acquire to download"
   when listed-not-acquired.
 - `/marketplace` — `scope=marketplace` cards with contributor display name,
   listed date, acquired badge; same search + filters; empty-marketplace and
@@ -198,5 +198,5 @@ Verification:
 4. Browser spot-check on the rebuilt stack: My Traces (badges, live search),
    owner detail panel (tags/description editor, unlist, delete, download),
    marketplace cards (contributor, listed date, tags, descriptions),
-   consumer detail (disabled download → acquire → "in your library" badge +
+   consumer detail (disabled download → acquire → "saved" badge +
    enabled download). ✓

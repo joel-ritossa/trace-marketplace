@@ -1,0 +1,235 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "demo-agent-service"
+            }
+          }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {
+            "name": "demo.agent",
+            "version": "0.1.0"
+          },
+          "spans": [
+            {
+              "traceId": "66666666666666666666666666666666",
+              "spanId": "d000000000000001",
+              "name": "invoke_agent demo-agent",
+              "kind": 1,
+              "startTimeUnixNano": "1768471800000000000",
+              "endTimeUnixNano": "1768471814000000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "invoke_agent"
+                  }
+                },
+                {
+                  "key": "gen_ai.agent.name",
+                  "value": {
+                    "stringValue": "demo-agent"
+                  }
+                },
+                {
+                  "key": "input.value",
+                  "value": {
+                    "stringValue": "Summarise this morning's coverage of the Mars sample-return launch."
+                  }
+                },
+                {
+                  "key": "output.value",
+                  "value": {
+                    "stringValue": "I couldn't pull this morning's coverage — the web search timed out before returning any results. Please try again in a moment, or I can answer from what I already know about the mission."
+                  }
+                }
+              ],
+              "status": {
+                "code": 2,
+                "message": "agent run failed"
+              }
+            },
+            {
+              "traceId": "66666666666666666666666666666666",
+              "spanId": "d000000000000002",
+              "name": "chat gpt-5",
+              "kind": 3,
+              "startTimeUnixNano": "1768471800100000000",
+              "endTimeUnixNano": "1768471801100000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chat"
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "openai"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.model",
+                  "value": {
+                    "stringValue": "gpt-5"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": "380"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": "28"
+                  }
+                },
+                {
+                  "key": "gen_ai.input.messages",
+                  "value": {
+                    "stringValue": "[{\"role\": \"system\", \"parts\": [{\"type\": \"text\", \"content\": \"You are a news-research assistant. Use the web_search tool for current coverage.\"}]}, {\"role\": \"user\", \"parts\": [{\"type\": \"text\", \"content\": \"Summarise this morning's coverage of the Mars sample-return launch.\"}]}]"
+                  }
+                },
+                {
+                  "key": "gen_ai.output.messages",
+                  "value": {
+                    "stringValue": "[{\"role\": \"assistant\", \"parts\": [{\"type\": \"tool_call\", \"id\": \"call_002\", \"name\": \"web_search\", \"arguments\": {\"query\": \"Mars sample-return launch coverage today\", \"recency_days\": 1}}]}]"
+                  }
+                }
+              ],
+              "parentSpanId": "d000000000000001",
+              "status": {
+                "code": 1
+              }
+            },
+            {
+              "traceId": "66666666666666666666666666666666",
+              "spanId": "d000000000000003",
+              "name": "execute_tool web_search",
+              "kind": 3,
+              "startTimeUnixNano": "1768471801200000000",
+              "endTimeUnixNano": "1768471811300000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "execute_tool"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.name",
+                  "value": {
+                    "stringValue": "web_search"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.call.arguments",
+                  "value": {
+                    "stringValue": "{\"query\": \"Mars sample-return launch coverage today\", \"recency_days\": 1}"
+                  }
+                }
+              ],
+              "parentSpanId": "d000000000000001",
+              "events": [
+                {
+                  "timeUnixNano": "1768471811289999872",
+                  "name": "exception",
+                  "attributes": [
+                    {
+                      "key": "exception.type",
+                      "value": {
+                        "stringValue": "TimeoutError"
+                      }
+                    },
+                    {
+                      "key": "exception.message",
+                      "value": {
+                        "stringValue": "web_search timed out after 10.0s"
+                      }
+                    },
+                    {
+                      "key": "exception.stacktrace",
+                      "value": {
+                        "stringValue": "Traceback (most recent call last):\n  File \"agent.py\", line 42, in run_tool\nTimeoutError: web_search timed out after 10.0s"
+                      }
+                    }
+                  ]
+                }
+              ],
+              "status": {
+                "code": 2,
+                "message": "tool timed out"
+              }
+            },
+            {
+              "traceId": "66666666666666666666666666666666",
+              "spanId": "d000000000000004",
+              "name": "chat gpt-5",
+              "kind": 3,
+              "startTimeUnixNano": "1768471811500000000",
+              "endTimeUnixNano": "1768471813600000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chat"
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "openai"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.model",
+                  "value": {
+                    "stringValue": "gpt-5"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": "425"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": "64"
+                  }
+                },
+                {
+                  "key": "gen_ai.input.messages",
+                  "value": {
+                    "stringValue": "[{\"role\": \"system\", \"parts\": [{\"type\": \"text\", \"content\": \"You are a news-research assistant. Use the web_search tool for current coverage.\"}]}, {\"role\": \"user\", \"parts\": [{\"type\": \"text\", \"content\": \"Summarise this morning's coverage of the Mars sample-return launch.\"}]}, {\"role\": \"assistant\", \"parts\": [{\"type\": \"tool_call\", \"id\": \"call_002\", \"name\": \"web_search\", \"arguments\": {\"query\": \"Mars sample-return launch coverage today\", \"recency_days\": 1}}]}, {\"role\": \"tool\", \"parts\": [{\"type\": \"tool_call_response\", \"id\": \"call_002\", \"response\": {\"error\": \"TimeoutError: web_search timed out after 10.0s\"}}]}]"
+                  }
+                },
+                {
+                  "key": "gen_ai.output.messages",
+                  "value": {
+                    "stringValue": "[{\"role\": \"assistant\", \"parts\": [{\"type\": \"text\", \"content\": \"I couldn't pull this morning's coverage — the web search timed out before returning any results. Please try again in a moment, or I can answer from what I already know about the mission.\"}]}]"
+                  }
+                }
+              ],
+              "parentSpanId": "d000000000000001",
+              "status": {
+                "code": 1
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

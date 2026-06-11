@@ -36,6 +36,19 @@ FAILURE_MODES = frozenset(
     }
 )
 
+# Family 3 catalog, locked at B3 (buildlog stage-2/B3): the default-on set
+# and the only valid `metric_scores` keys — the B3→A4 contract surface.
+# Critics yield booleans, the RAGAS-backed pair yields 0–1 floats.
+METRICS = (
+    "hallucination",
+    "helpfulness",
+    "harmfulness",
+    "coherence",
+    "relevancy",
+    "faithfulness",
+    "goal_accuracy",
+)
+
 # Locked at B2 against the dev dataset (buildlog stage-2/B2); additions are
 # additive text values, no contract break.
 TASK_CATEGORIES = frozenset(
@@ -102,6 +115,17 @@ class JudgeVerdict(BaseModel):
     rendering_truncated: bool = False
 
 
+class MetricCall(BaseModel):
+    """One LLM call made while computing a metric — the cost audit artifact
+    (JudgeVote's metadata shape without vote semantics; added in B3,
+    additive)."""
+
+    latency_ms: int | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cost_usd: float | None = None
+
+
 class MetricResult(BaseModel):
     """Family 3 output, one per applicable metric. Inapplicable metrics
     produce no result at all — never a garbage score."""
@@ -109,6 +133,18 @@ class MetricResult(BaseModel):
     metric: str
     value: float | bool
     reason: str | None = None
+    calls: list[MetricCall] = []
+
+
+class ListingResult(BaseModel):
+    """Listing-copy generator output (additive, post-B0): free-form
+    marketplace copy — tags + description — never labels. No closed
+    vocabulary, no confidence, no routing; the worker fill-if-empty
+    writes it into the owner-editable `traces` columns."""
+
+    description: str | None = None
+    tags: list[str] = []
+    calls: list[MetricCall] = []
 
 
 class RenderedMessage(BaseModel):

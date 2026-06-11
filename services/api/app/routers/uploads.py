@@ -1,5 +1,4 @@
 import hashlib
-import json
 import logging
 import re
 import secrets
@@ -8,12 +7,12 @@ import asyncpg
 from fastapi import APIRouter, Query, Request, Response
 from starlette.datastructures import UploadFile
 
+from app import importers, obs
 from app.auth import AuthUser, CurrentUser, UploadPrincipal
 from app.clients import db, storage
 from app.config import settings
 from app.dev import faults
 from app.errors import ApiError
-from app.importers import otlp
 from app.queries import traces, uploads
 from app.schemas.upload import (
     UploadCreatedResponse,
@@ -70,14 +69,12 @@ async def create_upload(request: Request, user: UploadPrincipal) -> UploadCreate
     if len(data) > settings.upload_max_bytes:
         raise _too_large()
 
-    try:
-        payload = json.loads(data)
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        raise ApiError("invalid_json", "File is not valid JSON.", status=422) from None
-    if not otlp.matches(payload):
+    source_format = importers.sniff_format(data)
+    if source_format is None:
         raise ApiError(
             "unsupported_format",
-            "Expected OTLP JSON with a top-level 'resourceSpans' array.",
+            "Expected OTLP JSON ('resourceSpans') or a supported agent-session "
+            "log (Codex, Claude Code, or Cursor JSONL).",
             status=422,
         )
 
@@ -99,7 +96,7 @@ async def create_upload(request: Request, user: UploadPrincipal) -> UploadCreate
             size_bytes=len(data),
             sha256=sha256,
             storage_path=path,
-            source_format=otlp.SOURCE_FORMAT,
+            source_format=source_format,
             # Inferred from auth type, never client-set (2_data-model.md).
             source="cli" if user.via == "api_key" else "web",
             # Minted once at creation, immutable: keys the deterministic
@@ -111,6 +108,7 @@ async def create_upload(request: Request, user: UploadPrincipal) -> UploadCreate
         existing = await uploads.find_by_hash(pool, user.id, sha256)
         raise _duplicate(str(existing["id"])) from None
 
+    obs.bind(upload_id=str(upload_id))
     if fault:
         await faults.arm(str(upload_id), fault)
 

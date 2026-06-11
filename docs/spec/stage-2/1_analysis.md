@@ -43,7 +43,7 @@ The stored scalar has defined semantics (consumers query on it):
 
 ## Derived-Field Principles
 
-- **Closed vocabularies only; no free-form tags.** Taxonomies are fixed in this spec. Evolution policy: values are text with app-level validation (no Postgres enums); additive change is free, rename is one UPDATE migration, removal is soft-retire. No analyzer re-runs for taxonomy changes.
+- **Closed vocabularies only; no free-form tags** — for derived *filter* fields. Taxonomies are fixed in this spec. Evolution policy: values are text with app-level validation (no Postgres enums); additive change is free, rename is one UPDATE migration, removal is soft-retire. No analyzer re-runs for taxonomy changes. (Generated listing copy is owner-editable prose, not a filter field — see [Listing Copy](#listing-copy-tags--description).)
 - **Analyzers fail open.** Instrumentation that doesn't match expected conventions yields null — never a guess. **Null never matches any predicate**, so malformed traces drop out of rules instead of polluting them. No `pending` placeholder value exists; `indeterminate` already covers judged-but-unknowable.
 - **One filter language across tiers:** deterministic fields (stage-1 columns, signals) and LLM-derived fields (labels, metric scores) compose in the same query.
 
@@ -142,6 +142,22 @@ Graded scores and boolean flags per trace — filterable derived fields, **never
 - **Self-consistency knob exists, default N=1** for critics (cost; critics never route to HIL).
 - Storage: one results row per metric run (`analyzer = "metric:<name>"`); promoted into the `metric_scores` jsonb map on `trace_analysis` — no migration per metric.
 
+## Listing Copy (Tags + Description)
+
+The `listing` analyzer drafts the marketplace listing's owner-editable copy — `traces.tags` and `traces.description` — so freshly ingested traces don't list bare. One LLM call over the judge rendering (judge model, no voting), run inside `analyze_trace`; never in ingestion itself, which stays a deterministic function of the raw payload.
+
+Rules:
+
+- **Fill-if-empty, never overwrite.** Generated copy is written only into empty fields (no tags / null description), enforced atomically in SQL so a concurrent owner edit always wins. Once set — by the owner or a previous run — re-analysis never regenerates it.
+- **Copy, not labels.** Free-form prose and tags with no closed vocabulary, no confidence, no provenance columns, no HIL routing. The closed-vocabulary principle above is untouched: subscriptions and filters match on the derived label fields, never on generated copy semantics.
+- **Gated like the judge:** skipped keyless and for private traces of opted-out owners. A malformed response fails open — no copy beats junk copy. One `analyzer_results` row (`analyzer = "listing"`) carries the audit output and call cost.
+
+### Caveats (why this is copy, not data)
+
+- **Non-deterministic.** The call samples at temperature > 0, and there is no voting fold: the same trace can yield different tags and phrasing on different runs. This is why generated tags can never be filter vocabulary — a predicate like `tag = "retry-loop"` would silently depend on which run a trace happened to get. Fill-if-empty makes the copy stable *once written*, but two identical traces may still carry different copy.
+- **Search-visible.** Tags and description feed `search_tsv` (tags at A weight), so generated copy shifts full-text relevance. Acceptable for listing copy; one more reason regeneration is off.
+- **Owner-attributable.** The copy lands in fields the marketplace presents as the contributor's own words. The owner can edit or clear it at any time from the trace detail page; nothing marks it as machine-written in the UI (the `listing` audit row is the provenance record).
+
 ## HIL Routing
 
 **Only the outcome judge creates review items.** Routing triggers, evaluated by the pure routing function:
@@ -182,7 +198,8 @@ Human resolutions are stored with provenance and immediately correct the trace's
 Offline script + reported number, not a platform feature:
 
 - **Benchmark→OTLP converter** (a real build item): converts an AgentRewardBench slice and the AgentRx benchmark (115 annotated failed trajectories) into OTLP JSON that ingests through the stage-1 pipeline.
-- **Agreement script:** runs the judge over the converted slice, reports outcome agreement vs expert labels and `failure_mode` agreement vs AgentRx (same taxonomy, no mapping layer). TRAIL provides span-level sanity checks.
+- **Agreement script:** runs the judge over the converted slice, reports outcome agreement vs expert labels and `failure_mode` agreement vs AgentRx (same taxonomy, no mapping layer). AgentRewardBench's human looping annotations double as a sanity check on the deterministic loop signals. (TRAIL was originally slated for span-level sanity checks but is HF-gated as of 2026-06; dropped at B4.)
+- **Quality-metrics validation (B5):** the same pattern for family 3 — a HaluBench slice (single-turn RAG QA, human PASS/FAIL hallucination labels, open access) converts to the single-turn RAG trace shape and grounds both the hallucination critic (confusion matrix, balanced accuracy) and RAGAS faithfulness (AUC vs the binary label). Critic prompt iteration runs against this slice under the per-metric versioning convention.
 - The headline demo claim: "our judge agrees with human annotators X%, and disagreement routes to review."
 
 ## Finalized At Build (Parameters, Not Decisions)

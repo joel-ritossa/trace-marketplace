@@ -117,6 +117,12 @@ def _assemble(
     return messages, sum(len(m.content) for m in messages)
 
 
+def rendering_text(messages: list[RenderedMessage]) -> str:
+    """The flat prompt-surface form of a rendering — what LLM analyzers
+    (judge, critics) actually send."""
+    return "\n\n".join(f"{m.role}: {m.content}" for m in messages)
+
+
 def render_trace(trace: TraceInput, config: RendererConfig) -> RenderedTrace:
     total = len(trace.spans)
     steps = [_build_step(span, i + 1, total) for i, span in enumerate(trace.spans)]

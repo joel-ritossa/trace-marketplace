@@ -5,11 +5,12 @@ from pathlib import Path
 
 import httpx
 
-from app import redaction
+from app import obs, redaction
 from app.clients import db, storage
 from app.dev import faults
-from app.importers import otlp
+from app.importers import otlp, sessions
 from app.importers.errors import PermanentIngestError
+from app.queries import notifications as notifications_q
 from app.queries import spans as spans_q
 from app.queries import traces as traces_q
 from app.queries import uploads
@@ -24,12 +25,14 @@ async def ingest_upload(upload_id: str) -> None:
     """Fetch the raw payload, verify it, and rewrite its normalized rows.
 
     Idempotent by delete-and-rewrite under stable trace identity
-    (6_architecture.md, A2 amendment): trace rows are upserted keyed on
-    (upload_id, source_trace_id) — so traces.id survives a re-ingest and
-    analysis/acquisition rows never cascade away — spans are deleted and
+    (6_architecture.md, A2 amendment + A6): trace rows are upserted keyed on
+    (owner_id, source_trace_id) — so traces.id survives a re-ingest *and* a
+    re-upload of the same logical trace (the newest upload adopts the row),
+    and analysis/acquisition rows never cascade away — spans are deleted and
     re-inserted per trace, and traces absent from the payload are dropped,
     all in one transaction with the status flip. Any re-run converges.
     """
+    obs.bind(upload_id=upload_id)
     pool = db.pool()
     upload = await uploads.get(pool, upload_id)
     if upload is None:
@@ -57,10 +60,35 @@ async def ingest_upload(upload_id: str) -> None:
             raise
         if hashlib.sha256(raw).hexdigest() != upload["sha256"]:
             raise PermanentIngestError("Stored payload does not match the recorded checksum.")
+
+        # Route by format (8_session-ingestion.md): OTLP flows through as-is;
+        # session JSONL converts to a per-turn OTLP payload first, then both
+        # share the one normalize path below. Detection re-reads the raw
+        # bytes (not the upload row) so the result stays a pure function of
+        # the stored payload.
         try:
             payload = json.loads(raw)
-        except ValueError as exc:
-            raise PermanentIngestError("Stored payload is not parseable JSON.") from exc
+        except ValueError:
+            payload = None
+        if isinstance(payload, dict) and otlp.matches(payload):
+            source_format, importer_version = otlp.SOURCE_FORMAT, otlp.IMPORTER_VERSION
+        else:
+            records = sessions.parse_records(raw)
+            source_format = sessions.detect(records)
+            if source_format is None:
+                raise PermanentIngestError(
+                    "Payload is not OTLP JSON or a supported agent-session log "
+                    "(unsupported schema)."
+                )
+            importer_version = sessions.IMPORTER_VERSION
+            payload = sessions.convert(
+                source_format,
+                records,
+                session_id=Path(upload["filename"]).stem,
+                # created_at is immutable per upload: re-ingest reproduces
+                # identical synthesized timestamps for clockless logs.
+                anchor=upload["created_at"],
+            )
 
         salt = upload["redaction_salt"]
         result = otlp.import_payload(
@@ -91,8 +119,8 @@ async def ingest_upload(upload_id: str) -> None:
                     upload_id=upload_id,
                     owner_id=str(upload["owner_id"]),
                     trace=trace,
-                    source_format=otlp.SOURCE_FORMAT,
-                    importer_version=otlp.IMPORTER_VERSION,
+                    source_format=source_format,
+                    importer_version=importer_version,
                 )
                 await spans_q.delete_for_trace(conn, trace_id)
                 await spans_q.insert_many(conn, trace_id, trace.spans)
@@ -132,3 +160,12 @@ async def ingest_upload(upload_id: str) -> None:
         # Permanent: no retry, readable reason, done (6_architecture.md).
         await uploads.mark_failed(pool, upload_id, str(exc))
         logger.info("ingest_upload: upload %s permanently failed: %s", upload_id, exc)
+        # CLI failures fail unattended — surface them as a notification
+        # (A3 decision 5; the query no-ops for web uploads). Best-effort:
+        # the failure is already recorded, so this must not re-run the task.
+        try:
+            await notifications_q.upload_failed(pool, upload_id)
+        except Exception:
+            logger.exception(
+                "ingest_upload: upload_failed notification for %s not delivered", upload_id
+            )

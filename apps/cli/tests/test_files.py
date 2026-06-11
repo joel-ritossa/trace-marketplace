@@ -3,15 +3,27 @@ import os
 from trace_sync.files import StabilityScanner, discover
 
 
-def test_discover_recursive_json_only(tmp_path):
+def test_discover_recursive_json_and_jsonl(tmp_path):
     (tmp_path / "a.json").write_text("{}")
+    (tmp_path / "s.jsonl").write_text('{"type":"user"}\n')
     (tmp_path / "notes.txt").write_text("not a trace")
     nested = tmp_path / "deep" / "deeper"
     nested.mkdir(parents=True)
     (nested / "b.json").write_text("{}")
 
     found = discover([tmp_path])
-    assert found == [tmp_path / "a.json", nested / "b.json"]
+    assert found == [tmp_path / "a.json", nested / "b.json", tmp_path / "s.jsonl"]
+
+
+def test_discover_since_hours_filters_by_mtime(tmp_path):
+    fresh = tmp_path / "fresh.jsonl"
+    fresh.write_text("{}")
+    stale = tmp_path / "stale.json"
+    stale.write_text("{}")
+    os.utime(stale, (1, 1))  # epoch-old
+
+    assert discover([tmp_path], since_hours=1) == [fresh]
+    assert discover([tmp_path]) == [fresh, stale]
 
 
 def test_discover_accepts_explicit_file(tmp_path):

@@ -2,24 +2,39 @@
 
 import { SearchX, Store } from "lucide-react";
 import { Pager } from "@/components/shell/pager";
-import { TraceCards } from "@/components/traces/trace-cards";
+import { BulkAcquireAction } from "@/components/traces/bulk-actions";
+import { BulkBar, useSelection } from "@/components/traces/bulk-bar";
+import { ExcludedNote } from "@/components/traces/excluded-note";
+import { SaveSubscription } from "@/components/traces/save-subscription";
+import { TraceList } from "@/components/traces/trace-list";
 import { TraceFiltersBar, hasActiveFilters } from "@/components/traces/trace-filters";
-import { TRACE_PAGE_SIZE, useTraceList } from "@/components/traces/use-trace-list";
+import { useTraceList } from "@/components/traces/use-trace-list";
 
 export default function MarketplacePage() {
-  const { result, error, filters, setFilters, sort, setSort, page, setPage } =
+  const { result, error, filters, setFilters, sort, setSort, page, setPage, pageSize, setPageSize, reload } =
     useTraceList("marketplace");
+  const { selected, toggle, setAll, clear } = useSelection();
   const filtered = hasActiveFilters(filters);
 
   return (
-    <div>
-      <h1 className="text-2xl font-semibold tracking-tight">Marketplace</h1>
-      <p className="mt-1 text-sm text-muted-foreground">
-        Listed agent traces from every contributor. Inspect freely; acquire to download.
-      </p>
+    <div className="mx-auto w-full max-w-6xl">
+      <div className="flex items-end justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Browse</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Listed agent traces from every contributor. Inspect freely; acquire to download.
+          </p>
+        </div>
+        <SaveSubscription filters={filters} total={result?.total ?? null} />
+      </div>
 
       <div className="mt-6">
-        <TraceFiltersBar onChange={setFilters} sort={sort} onSortChange={setSort} />
+        <TraceFiltersBar
+          filters={filters}
+          onChange={setFilters}
+          sort={sort}
+          onSortChange={setSort}
+        />
       </div>
 
       <div className="mt-4">
@@ -34,6 +49,7 @@ export default function MarketplacePage() {
             <p className="mt-1 text-sm text-muted-foreground">
               Nothing matches the current search and filters.
             </p>
+            <ExcludedNote count={result.excluded_unanalyzed} className="mt-2" />
           </div>
         ) : result.traces.length === 0 ? (
           <div className="flex flex-col items-center rounded-lg border bg-background px-6 py-16 text-center">
@@ -45,15 +61,30 @@ export default function MarketplacePage() {
           </div>
         ) : (
           <>
-            <TraceCards traces={result.traces} context="marketplace" />
+            <ExcludedNote count={result.excluded_unanalyzed} className="mb-2" />
+            <TraceList
+              traces={result.traces}
+              view="marketplace"
+              selection={{ selected, toggle, setAll }}
+            />
             <div className="mt-4">
               <Pager
                 page={page}
-                pageSize={TRACE_PAGE_SIZE}
+                pageSize={pageSize}
                 total={result.total}
                 onPageChange={setPage}
+                onPageSizeChange={setPageSize}
               />
             </div>
+            <BulkBar count={selected.size} onClear={clear}>
+              <BulkAcquireAction
+                ids={[...selected]}
+                onDone={() => {
+                  clear();
+                  reload();
+                }}
+              />
+            </BulkBar>
           </>
         )}
       </div>

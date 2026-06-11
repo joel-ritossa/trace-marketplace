@@ -4,21 +4,21 @@ import { useRef, useState } from "react";
 import { FileJson, UploadCloud } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { UPLOAD_MAX_MB } from "@/lib/api/uploads";
+import { publicEnv } from "@/lib/env";
 import { cn } from "@/lib/utils";
 
 export function UploadDropzone({
   disabled,
-  onFile,
+  onFiles,
 }: {
   disabled: boolean;
-  onFile: (file: File) => void;
+  onFiles: (files: File[]) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
 
   function handleFiles(files: FileList | null) {
-    const file = files?.[0];
-    if (file) onFile(file);
+    if (files && files.length > 0) onFiles(Array.from(files));
   }
 
   return (
@@ -44,9 +44,10 @@ export function UploadDropzone({
       ) : (
         <UploadCloud className="size-8 text-muted-foreground" strokeWidth={1.5} />
       )}
-      <p className="mt-4 text-sm font-medium">Drop a trace file here</p>
+      <p className="mt-4 text-sm font-medium">Drop trace files here</p>
       <p className="mt-1 text-sm text-muted-foreground">
-        One OTLP JSON file, up to {UPLOAD_MAX_MB} MB.
+        OTLP JSON or agent-session JSONL — up to {publicEnv.uploadMaxFiles} files,{" "}
+        {UPLOAD_MAX_MB} MB each.
       </p>
       <Button
         type="button"
@@ -56,12 +57,13 @@ export function UploadDropzone({
         disabled={disabled}
         onClick={() => inputRef.current?.click()}
       >
-        Choose file
+        Choose files
       </Button>
       <input
         ref={inputRef}
         type="file"
-        accept="application/json,.json"
+        multiple
+        accept="application/json,.json,.jsonl"
         className="hidden"
         onChange={(e) => {
           handleFiles(e.target.files);
