@@ -53,6 +53,11 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   return res.json() as Promise<T>;
 }
 
+// For endpoints with no response body (e.g. DELETE → 204).
+export async function apiSend(path: string, init?: RequestInit): Promise<void> {
+  await authedRequest(path, init);
+}
+
 // Authenticated binary download (downloads need the bearer header, so a plain
 // <a href> can't be used). Triggers a browser save via a temporary object URL.
 export async function apiDownload(path: string, filename: string): Promise<void> {

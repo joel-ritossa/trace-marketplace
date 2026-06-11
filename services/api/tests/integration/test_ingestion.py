@@ -142,8 +142,8 @@ async def test_traces_list_and_sort(api: httpx.AsyncClient) -> None:
     by_spans = (await api.get("/v1/traces", params={"sort": "span_count"})).json()
     assert [t["span_count"] for t in by_spans["traces"]] == [7, 1]
 
-    bad_scope = await api.get("/v1/traces", params={"scope": "marketplace"})
-    assert bad_scope.status_code == 422  # Slice 3 scope, honestly rejected
+    bad_scope = await api.get("/v1/traces", params={"scope": "everything"})
+    assert bad_scope.status_code == 422  # unknown scopes honestly rejected
 
 
 async def test_retry_does_not_duplicate_rows(

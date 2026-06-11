@@ -55,6 +55,7 @@
 
 - Prioritize e2e/integration tests that exercise the real system (real Postgres, real Redis, real worker via Compose). The smoke script and each slice's "done when" are the bar.
 - Mock-based unit tests are fine where they earn their keep (importer edge cases, error classification); do not spam them or mock things Compose can run for real.
+- No browser automation unless the user explicitly asks for it — it is too slow and inefficient. Verify UI work with the test suite, the smoke script, and curl; leave click-through verification to the user.
 
 ### Process
 

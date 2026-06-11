@@ -91,7 +91,7 @@ One row per consumer-trace entitlement. The "purchase" object: in Stage 1 every 
 | `price_usd` | numeric | Always `0` in Stage 1; column exists so the shape is honest. |
 | `acquired_at` | timestamptz | |
 
-Constraints: unique `(consumer_id, trace_id)` — acquiring is idempotent. Owners do not acquire their own traces (API rejects; ownership already grants access). If a trace is deleted or unlisted, acquisition rows are kept but the trace no longer resolves (`404`); revisit retention when licensing becomes real.
+Constraints: unique `(consumer_id, trace_id)` — acquiring is idempotent. Owners do not acquire their own traces (API rejects; ownership already grants access). `trace_id` references `traces.id` with `on delete cascade`: deleting a trace deletes its acquisitions. For $0 acquisitions orphaned entitlement rows are dead weight; retention gets revisited when licensing becomes real. Unlisting keeps acquisition rows but the trace no longer resolves for non-owners (`404`, downloads included) — visibility is the contributor's kill switch over sensitive data. Relisting restores access to existing acquirers.
 
 ### dead_letters
 
@@ -110,7 +110,7 @@ One row per ingestion job that exhausted its retries. The DLQ lives in Postgres,
 
 Writing a `dead_letters` row also sets the upload to `failed` with a readable `error_message`. Requeue is a small CLI command (`make requeue UPLOAD=…`) that resets the upload and enqueues a fresh job.
 
-Indexes: `spans(trace_id)`, `traces(owner_id)`, `traces(visibility) where visibility = 'listed'`, GIN on `traces.search_tsv`, unique `(owner_id, sha256)` on uploads, unique `(consumer_id, trace_id)` on acquisitions, `dead_letters(upload_id)`.
+Indexes: `spans(trace_id, started_at)`, `traces(owner_id)`, `traces(upload_id)`, `traces(visibility) where visibility = 'listed'`, GIN on `traces.search_tsv`, unique `(owner_id, sha256)` on uploads, unique `(consumer_id, trace_id)` plus `acquisitions(consumer_id)` and `acquisitions(trace_id)` on acquisitions, `dead_letters(upload_id)`.
 
 ## Storage
 
@@ -134,7 +134,7 @@ Enforced in the API; mirrored as RLS policies for defense in depth.
 | Search / marketplace results | Own traces + listed traces. |
 | Create upload | Any authenticated user. |
 | Change visibility, tags, description | Owner only. |
-| Delete trace / upload | Owner only; deletes cascade to spans and remove the storage object when no other trace references the upload. |
+| Delete trace | Owner only; spans and acquisitions cascade. When no other trace references the upload, the upload row and its storage object are deleted too — every surviving upload stays downloadable, no half-dead state. |
 
 Inspection is deliberately open for listed traces: consumers evaluate quality before acquiring. Acquisition gates download (the deliverable) and builds the library. When real pricing exists, pre-acquisition span visibility becomes a preview/redaction decision — out of scope here.
 

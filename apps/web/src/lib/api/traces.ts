@@ -1,4 +1,4 @@
-import { ApiError, apiDownload, apiFetch } from "@/lib/api/client";
+import { ApiError, apiDownload, apiFetch, apiSend } from "@/lib/api/client";
 
 // Types mirror services/api/app/schemas/trace.py and span.py — keep in sync.
 
@@ -6,6 +6,8 @@ export type TraceStatus = "ok" | "error";
 export type SpanKind = "llm" | "agent" | "tool" | "chain" | "retriever" | "embedding" | "other";
 export type SpanStatus = "ok" | "error" | "unset";
 export type TraceSort = "created_at" | "duration_ms" | "span_count";
+export type TraceScope = "mine" | "marketplace" | "acquired";
+export type TraceVisibility = "private" | "listed";
 
 export type TraceListItem = {
   trace_id: string;
@@ -18,8 +20,14 @@ export type TraceListItem = {
   provider: string | null;
   model: string | null;
   created_at: string;
+  visibility: TraceVisibility;
+  tags: string[];
+  description: string | null;
+  listed_at: string | null;
   owner_display_name: string | null;
+  is_owner: boolean;
   acquired: boolean;
+  acquired_at: string | null;
 };
 
 export type TraceList = { traces: TraceListItem[]; total: number };
@@ -40,12 +48,41 @@ export type TraceDetail = {
   service_name: string | null;
   tool_names: string[];
   error_types: string[];
+  tags: string[];
+  description: string | null;
+  visibility: TraceVisibility;
+  listed_at: string | null;
+  owner_display_name: string | null;
   source_format: string;
   importer_version: string;
   created_at: string;
   is_owner: boolean;
   acquired: boolean;
   can_download: boolean;
+};
+
+export type TraceFilters = {
+  q?: string;
+  provider?: string;
+  model?: string;
+  tool?: string;
+  has_errors?: boolean;
+  from?: string;
+  to?: string;
+};
+
+export type TraceUpdate = {
+  visibility?: TraceVisibility;
+  tags?: string[];
+  description?: string | null;
+  confirm_ownership?: boolean;
+};
+
+export type Acquisition = {
+  acquisition_id: string;
+  trace_id: string;
+  price_usd: number;
+  acquired_at: string;
 };
 
 export type SpanListItem = {
@@ -83,12 +120,35 @@ export type SpanDetail = SpanListItem & {
 
 export const SPAN_PAGE_SIZE = 500;
 
-export async function listTraces(sort: TraceSort = "created_at"): Promise<TraceList> {
-  return apiFetch<TraceList>(`/v1/traces?sort=${sort}`);
+export async function listTraces(
+  scope: TraceScope = "mine",
+  sort: TraceSort = "created_at",
+  filters: TraceFilters = {},
+): Promise<TraceList> {
+  const params = new URLSearchParams({ scope, sort });
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== "" && value !== false) params.set(key, String(value));
+  }
+  return apiFetch<TraceList>(`/v1/traces?${params}`);
 }
 
 export async function getTrace(traceId: string): Promise<TraceDetail> {
   return apiFetch<TraceDetail>(`/v1/traces/${traceId}`);
+}
+
+export async function updateTrace(traceId: string, update: TraceUpdate): Promise<TraceDetail> {
+  return apiFetch<TraceDetail>(`/v1/traces/${traceId}`, {
+    method: "PATCH",
+    body: JSON.stringify(update),
+  });
+}
+
+export async function deleteTrace(traceId: string): Promise<void> {
+  await apiSend(`/v1/traces/${traceId}`, { method: "DELETE" });
+}
+
+export async function acquireTrace(traceId: string): Promise<Acquisition> {
+  return apiFetch<Acquisition>(`/v1/traces/${traceId}/acquire`, { method: "POST" });
 }
 
 /** Pages through the light span list until the whole trace is loaded.

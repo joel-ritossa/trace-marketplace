@@ -7,7 +7,9 @@ import type { TraceSpan } from "@evilmartians/agent-prism-types";
 
 import { DetailsView } from "@/components/agent-prism/DetailsView/DetailsView";
 import { TreeView } from "@/components/agent-prism/TreeView";
+import { VisibilityBadge } from "@/components/traces/badges";
 import { buildSpanTree, defaultExpandedIds, withDetail } from "@/components/traces/span-tree";
+import { TraceActions } from "@/components/traces/trace-actions";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api/client";
 import {
@@ -133,6 +135,11 @@ export function TraceInspector({ traceId }: { traceId: string }) {
   }
 
   const { trace, roots } = state;
+
+  function onTraceChange(updated: TraceDetail) {
+    setState((prev) => (prev.phase === "ready" ? { ...prev, trace: updated } : prev));
+  }
+
   const selectedNode = selectedId ? nodeById.get(selectedId) : undefined;
   const selectedDetail = selectedId ? details.get(selectedId) : undefined;
   const panelSpan =
@@ -158,6 +165,7 @@ export function TraceInspector({ traceId }: { traceId: string }) {
     ["Model", trace.model ?? "—"],
     ["Service", trace.service_name ?? "—"],
     ["Tools", trace.tool_names.length > 0 ? trace.tool_names.join(", ") : "—"],
+    ["Contributor", trace.owner_display_name ?? "—"],
     ["Source", `${trace.source_format} · importer ${trace.importer_version}`],
   ];
 
@@ -181,23 +189,46 @@ export function TraceInspector({ traceId }: { traceId: string }) {
                 title={trace.status === "error" ? "Trace contains errors" : "Trace OK"}
               />
               <span className="truncate">{trace.name}</span>
+              <VisibilityBadge visibility={trace.visibility} />
             </h1>
             {trace.error_types.length > 0 && (
               <p className="mt-1 text-sm text-error-deep">
                 Error types: {trace.error_types.join(", ")}
               </p>
             )}
+            {!trace.is_owner && trace.description && (
+              <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{trace.description}</p>
+            )}
+            {!trace.is_owner && trace.tags.length > 0 && (
+              <div className="mt-1.5 flex flex-wrap gap-1">
+                {trace.tags.map((tag) => (
+                  <span
+                    key={tag}
+                    className="rounded-full bg-secondary px-2 py-0.5 text-xs text-muted-foreground"
+                  >
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
-          {trace.can_download && (
-            <div className="flex flex-col items-end gap-1">
-              <Button size="sm" variant="outline" disabled={downloading} onClick={onDownload}>
-                <Download /> Download raw
-              </Button>
-              {downloadError && (
-                <p className="text-xs text-error-deep">Download failed — try again.</p>
-              )}
-            </div>
-          )}
+          <div className="flex flex-col items-end gap-1">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!trace.can_download || downloading}
+              onClick={onDownload}
+              title={trace.can_download ? undefined : "Acquire this trace to download it"}
+            >
+              <Download /> Download raw
+            </Button>
+            {!trace.can_download && (
+              <p className="text-xs text-muted-foreground">Acquire to download</p>
+            )}
+            {downloadError && (
+              <p className="text-xs text-error-deep">Download failed — try again.</p>
+            )}
+          </div>
         </div>
         <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-2 rounded-lg border bg-background px-4 py-3 text-sm sm:grid-cols-4">
           {meta.map(([label, value]) => (
@@ -210,6 +241,8 @@ export function TraceInspector({ traceId }: { traceId: string }) {
           ))}
         </dl>
       </div>
+
+      <TraceActions trace={trace} onChange={onTraceChange} />
 
       <div className="grid h-[calc(100vh-22rem)] min-h-96 grid-cols-1 gap-4 lg:grid-cols-5">
         <div className="overflow-y-auto rounded-lg border bg-background py-2 lg:col-span-3">

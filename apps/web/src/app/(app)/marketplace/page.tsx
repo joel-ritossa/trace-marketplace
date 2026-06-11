@@ -1,21 +1,19 @@
 "use client";
 
-import Link from "next/link";
-import { ScrollText, SearchX } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { TracesTable } from "@/components/traces/traces-table";
+import { SearchX, Store } from "lucide-react";
+import { TraceCards } from "@/components/traces/trace-cards";
 import { TraceFiltersBar, hasActiveFilters } from "@/components/traces/trace-filters";
 import { useTraceList } from "@/components/traces/use-trace-list";
 
-export default function TracesPage() {
-  const { result, error, filters, setFilters, sort, setSort } = useTraceList("mine");
+export default function MarketplacePage() {
+  const { result, error, filters, setFilters, sort, setSort } = useTraceList("marketplace");
   const filtered = hasActiveFilters(filters);
 
   return (
     <div>
-      <h1 className="text-2xl font-semibold tracking-tight">My Traces</h1>
+      <h1 className="text-2xl font-semibold tracking-tight">Marketplace</h1>
       <p className="mt-1 text-sm text-muted-foreground">
-        Traces parsed from your uploads, private and listed.
+        Listed agent traces from every contributor. Inspect freely; acquire to download.
       </p>
 
       <div className="mt-6">
@@ -37,17 +35,14 @@ export default function TracesPage() {
           </div>
         ) : result.traces.length === 0 ? (
           <div className="flex flex-col items-center rounded-lg border bg-background px-6 py-16 text-center">
-            <ScrollText className="size-8 text-muted-foreground" strokeWidth={1.5} />
-            <p className="mt-4 text-sm font-medium">No traces yet</p>
+            <Store className="size-8 text-muted-foreground" strokeWidth={1.5} />
+            <p className="mt-4 text-sm font-medium">The marketplace is empty</p>
             <p className="mt-1 text-sm text-muted-foreground">
-              Upload a trace file and its parsed traces will appear here.
+              No one has listed a trace yet. List one of yours from its detail page.
             </p>
-            <Button asChild size="sm" className="mt-4">
-              <Link href="/upload">Upload a trace</Link>
-            </Button>
           </div>
         ) : (
-          <TracesTable traces={result.traces} />
+          <TraceCards traces={result.traces} context="marketplace" />
         )}
       </div>
     </div>

@@ -26,4 +26,4 @@ Every slice follows the same sequence, each pass re-verified end to end:
 | [slice-0](slice-0/000_implementation.md) | Walking skeleton (auth, API, worker, compose) | Done (2026-06-10) |
 | [slice-1](slice-1/000_implementation.md) | Raw upload loop + reliability skeleton | Done (2026-06-10): implemented + [audited](slice-1/001_audit.md) + [modularity pass](slice-1/002_modularity.md) |
 | [slice-2](slice-2/000_implementation.md) | Ingestion and inspection | Implemented + verified + [audited](slice-2/001_audit.md) + [reliability sweep](slice-2/002_reliability-sweep.md) (2026-06-11) |
-| slice-3 | Discovery, listing, and acquisition | Not started |
+| [slice-3](slice-3/000_implementation.md) | Discovery, listing, and acquisition | Implemented + verified + [audited](slice-3/001_audit.md) (2026-06-11); UI follow-ups deferred |

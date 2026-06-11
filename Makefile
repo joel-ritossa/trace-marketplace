@@ -16,3 +16,13 @@ dev-dataset:
 	python3 tools/exgentic_to_otlp.py $(ARGS)
 
 .PHONY: dev-dataset
+
+# Populate the marketplace: fixtures uploaded + listed by a demo contributor.
+seed:
+	python3 tools/seed.py
+
+# Run the full Stage 1 demo script end to end against the live stack.
+smoke:
+	python3 tools/smoke.py
+
+.PHONY: seed smoke
