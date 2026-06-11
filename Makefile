@@ -76,3 +76,13 @@ smoke:
 	python3 tools/smoke.py
 
 .PHONY: seed seed-dev seed-demo wipe-demo smoke
+
+# Frontend dev with hot reload: stop the compose web (a production build)
+# and run the Next dev server on the same port — it must be the same port
+# because the API's CORS only allows WEB_ORIGIN. Ctrl-C the dev server and
+# `docker compose start web` to go back to the containerized build.
+web-dev:
+	docker compose stop web
+	set -a; . ./.env; set +a; pnpm --filter web exec next dev -p $${WEB_PORT:-3000}
+
+.PHONY: web-dev

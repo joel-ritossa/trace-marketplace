@@ -61,8 +61,11 @@ violation. Config values are env tunables (`ANALYSIS_RENDER_*`,
   message and the final K steps are never dropped, which is also the budget
   floor: with a degenerate config (budget smaller than K skeleton lines) the
   output runs over rather than dropping them.
-- **The first user message requires role-attributed input** (`gen_ai.*`
-  structured or Traceloop flattened messages). OpenInference's raw
-  `input.value` has no roles, so such traces get no dedicated user message —
-  the content still appears on its span's step. Fail-open, no guessing.
+- **The first user message follows the full fallback chain** (B4 pass 4):
+  role-attributed input first (`gen_ai.*` structured or Traceloop flattened
+  messages), then generic `input.value` — user-role mining when the value
+  is a JSON message payload, the raw string as-is otherwise (the session
+  importers' shape, where it *is* the ask). JSON payloads without user-role
+  messages fail open to no dedicated user message; the content still
+  appears on its span's step.
 - One trace = one rendering unit; no session aggregation (extension).

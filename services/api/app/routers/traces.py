@@ -18,6 +18,7 @@ from app.schemas.analysis import (
     AnalysisAudit,
     AnalysisLabels,
     AnalysisSignals,
+    AnalysisSummary,
     AuditAnalyzer,
     LabelValue,
     TraceAnalysisResponse,
@@ -272,10 +273,13 @@ async def get_trace_analysis(trace_id: str, user: CurrentUser) -> TraceAnalysisR
         metric_scores = ta["metric_scores"]
 
     analyzers = []
+    summary = None
     for run in await analysis_q.fetch_results(pool, trace_id):
         output = run["output"]
         if run["analyzer"] == "judge":
             reasoning = output.get("reasoning")
+        if run["analyzer"] == "summary":
+            summary = AnalysisSummary(gist=output.get("gist"), steps=output.get("steps") or [])
         analyzers.append(
             AuditAnalyzer(
                 analyzer=run["analyzer"],
@@ -294,6 +298,7 @@ async def get_trace_analysis(trace_id: str, user: CurrentUser) -> TraceAnalysisR
         skip_reason=ta["llm_skip_reason"] if ta is not None and state == "skipped" else None,
         failed_reason=dead_letter["last_error"] if dead_letter is not None else None,
         labels=labels,
+        summary=summary,
         reasoning=reasoning,
         signals=signals,
         metric_scores=metric_scores,

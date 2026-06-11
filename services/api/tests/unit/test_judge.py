@@ -247,6 +247,54 @@ async def test_out_of_vocabulary_vote_is_malformed(patch_llm) -> None:
     assert [v.value for v in category_votes].count(INVALID_VOTE) == 1
 
 
+async def test_scoped_category_prompt_and_vocabulary(patch_llm) -> None:
+    """Owner task scope (1_analysis.md): the prompt lists only the scoped
+    categories + other, and a globally-valid but out-of-scope vote is
+    malformed."""
+    fake = patch_llm(
+        {
+            _OutcomeVote: [ov("success")] * 3,
+            _CategoryVote: [cv("web_research"), cv("coding"), cv("coding")],
+        }
+    )
+    spans = judge_trace().spans
+    trace = make_trace(spans, owner_task_categories=["coding", "debugging"])
+    verdict = await run_judge(trace, SETTINGS)
+
+    system = fake.messages_for(_CategoryVote)[0][0]["content"]
+    assert '"coding"' in system and '"debugging"' in system and '"other"' in system
+    assert '"web_research"' not in system
+    assert system.rstrip().splitlines()[-1] != ""  # sanity: prompt built
+
+    assert verdict.task_category == "coding"
+    assert verdict.task_category_confidence == pytest.approx(2 / 3)
+    category_votes = [v for v in verdict.votes if v.call == "category"]
+    assert [v.value for v in category_votes].count(INVALID_VOTE) == 1
+
+
+async def test_unscoped_category_offers_full_taxonomy(patch_llm) -> None:
+    fake = patch_llm(
+        {
+            _OutcomeVote: [ov("success")] * 3,
+            _CategoryVote: [cv("devops_infra")] * 3,
+        }
+    )
+    verdict = await run_judge(judge_trace(), SETTINGS)
+    system = fake.messages_for(_CategoryVote)[0][0]["content"]
+    assert '"devops_infra"' in system and '"web_research"' in system
+    category_lines = [line for line in system.splitlines() if line.startswith('- "')]
+    assert category_lines[-1].startswith('- "other"')  # escape hatch last
+    assert verdict.task_category == "devops_infra"
+
+
+def test_build_v2_orders_canonically_with_other_last() -> None:
+    from app.analysis.prompts.judge import category
+
+    prompt = category.build_v2({"other", "web_research", "coding"})
+    lines = [line for line in prompt.splitlines() if line.startswith('- "')]
+    assert [line.split('"')[1] for line in lines] == ["coding", "web_research", "other"]
+
+
 async def test_malformed_outcome_vote_abstains(patch_llm) -> None:
     patch_llm(
         {

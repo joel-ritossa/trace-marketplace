@@ -8,6 +8,7 @@ import { OutcomeBadge } from "@/components/traces/badges";
 import { Pager, usePageParam } from "@/components/shell/pager";
 import { listReviewItems, type ReviewItem, type ReviewItemList } from "@/lib/api/review";
 import { formatDate } from "@/lib/format";
+import { useRealtimeRefetch } from "@/lib/realtime";
 import { humanize } from "@/components/review/taxonomy";
 
 function Row({ item, uploadFilter }: { item: ReviewItem; uploadFilter: string | null }) {
@@ -113,6 +114,9 @@ export default function ReviewQueuePage() {
   }, [page, pageSize, uploadFilter]);
 
   useEffect(reload, [reload]);
+  // New items from an analysis run (or resolutions elsewhere, e.g. the
+  // desktop app) appear without a manual refresh.
+  useRealtimeRefetch("review_items", reload);
 
   useEffect(() => {
     if (result && result.items.length === 0 && page > 1 && result.total > 0) {

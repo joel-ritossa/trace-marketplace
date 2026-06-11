@@ -63,5 +63,15 @@ clean prompts; Cursor was already correct (id-less fix from pass 1).
   path untouched).
 
 Out of scope, noted: Codex `thread_rolled_back` (1 occurrence in sample)
-still leaves rolled-back turns in place; conversation view does not yet
-render `gen_ai.reasoning`.
+still leaves rolled-back turns in place.
+
+Tie-up pass (same day): the conversation view now renders `gen_ai.reasoning`
+as a collapsed Reasoning card ahead of the span's assistant output
+(`conversation.ts` emits it on both the structured and generic extraction
+paths, deduped; `conversation-view.tsx` `ReasoningCard`). Note current local
+data shows none — real Codex rollouts carry only `encrypted_content`
+(0/818 items had summary text) and the synced Cursor sessions have no
+thinking blocks; the golden corpus pins the path. The earlier
+`test_filter_query` failure resolved itself — it was mid-flight work on the
+similar-behavior stream (empty-query floor moved to
+`SubscriptionCreateRequest`); the suite passes as landed.

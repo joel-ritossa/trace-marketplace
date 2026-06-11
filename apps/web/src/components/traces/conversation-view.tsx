@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, ChevronRight, Wrench } from "lucide-react";
+import { Brain, ChevronDown, ChevronRight, Wrench } from "lucide-react";
 
 import type { ConversationItem } from "@/components/traces/conversation";
 import { cn } from "@/lib/utils";
@@ -92,6 +92,31 @@ function ToolCard({ item }: { item: Extract<ConversationItem, { kind: "tool" }> 
   );
 }
 
+function ReasoningCard({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="w-full rounded-md border border-dashed">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-xs text-muted-foreground"
+      >
+        {open ? <ChevronDown className="size-3 shrink-0" /> : <ChevronRight className="size-3 shrink-0" />}
+        <Brain className="size-3 shrink-0" />
+        <span className="shrink-0 font-medium uppercase tracking-wide">Reasoning</span>
+        {!open && (
+          <span className="min-w-0 truncate">{text.replace(/\s+/g, " ").slice(0, 100)}</span>
+        )}
+      </button>
+      {open && (
+        <div className="border-t px-2.5 py-2 text-muted-foreground">
+          <ClampedText text={text} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SystemCard({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   return (
@@ -122,6 +147,7 @@ export function ConversationView({ items }: { items: ConversationItem[] }) {
     <div className="flex flex-col gap-3">
       {items.map((item) => {
         if (item.kind === "tool") return <ToolCard key={item.id} item={item} />;
+        if (item.kind === "reasoning") return <ReasoningCard key={item.id} text={item.text} />;
         if (item.role === "system") return <SystemCard key={item.id} text={item.text} />;
         const user = item.role === "user";
         return (

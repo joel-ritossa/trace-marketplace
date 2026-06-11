@@ -23,14 +23,89 @@ export const FAILURE_MODES: { value: string; description: string }[] = [
   { value: "inconclusive", description: "Failed, cause unattributable" },
 ];
 
+// Display groups mirror models.py TASK_CATEGORY_GROUPS (1_analysis.md
+// Taxonomies). "other" is the judge's permanent escape hatch — listed for
+// filters/resolve, never offered in the task-scope picker.
+export const TASK_CATEGORY_GROUPS: { label: string; values: string[] }[] = [
+  {
+    label: "Software engineering",
+    values: [
+      "coding",
+      "debugging",
+      "code_review",
+      "testing_qa",
+      "devops_infra",
+      "ci_cd",
+      "database_admin",
+      "security_engineering",
+      "ml_engineering",
+    ],
+  },
+  {
+    label: "Data",
+    values: [
+      "data_analysis",
+      "data_engineering",
+      "data_visualization",
+      "reporting_bi",
+      "financial_analysis",
+    ],
+  },
+  {
+    label: "Web & research",
+    values: [
+      "web_research",
+      "web_automation",
+      "web_scraping",
+      "market_research",
+      "competitive_analysis",
+      "academic_research",
+    ],
+  },
+  { label: "Knowledge & QA", values: ["retrieval_qa", "summarization", "translation"] },
+  {
+    label: "Content",
+    values: [
+      "content_generation",
+      "technical_writing",
+      "copywriting",
+      "editing_proofreading",
+      "social_media",
+    ],
+  },
+  {
+    label: "Business operations",
+    values: [
+      "customer_ops",
+      "customer_support",
+      "sales_outreach",
+      "crm_ops",
+      "hr_recruiting",
+      "legal_review",
+      "compliance",
+      "procurement",
+      "invoicing_billing",
+    ],
+  },
+  {
+    label: "Personal & coordination",
+    values: [
+      "scheduling_planning",
+      "email_management",
+      "travel_planning",
+      "task_management",
+      "personal_assistant",
+    ],
+  },
+  {
+    label: "Operations & monitoring",
+    values: ["monitoring_alerting", "incident_response", "file_management", "document_processing"],
+  },
+  { label: "Specialized", values: ["education_tutoring", "design_assets", "game_playing"] },
+];
+
 export const TASK_CATEGORIES: string[] = [
-  "web_research",
-  "customer_ops",
-  "coding",
-  "data_analysis",
-  "scheduling_planning",
-  "content_generation",
-  "retrieval_qa",
+  ...TASK_CATEGORY_GROUPS.flatMap((group) => group.values),
   "other",
 ];
 

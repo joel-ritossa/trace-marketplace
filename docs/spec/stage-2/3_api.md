@@ -40,6 +40,7 @@ Owner or listed. The full analysis view for the trace-detail Analysis section:
     "failure_mode":  { "value": "tool_output_misinterpretation", "confidence": 0.6, "provenance": "machine" },
     "task_category": { "value": "web_research", "confidence": 1.0, "provenance": "human" }
   },
+  "summary": { "gist": "…", "steps": ["…"] },
   "reasoning": "…",
   "signals": { "has_retry_loop": true, "loop_kind": "cycle", "...": "…" },
   "metric_scores": { "faithfulness": 0.82, "hallucination": false },
@@ -48,7 +49,7 @@ Owner or listed. The full analysis view for the trace-detail Analysis section:
 }
 ```
 
-`analysis_state` follows [2_data-model.md](2_data-model.md): `pending | complete | skipped | failed` (with the dead-letter reason verbatim on `failed`; `skipped` carries `skip_reason`: `not_configured | owner_opt_out`).
+`analysis_state` follows [2_data-model.md](2_data-model.md): `pending | complete | skipped | failed` (with the dead-letter reason verbatim on `failed`; `skipped` carries `skip_reason`: `not_configured | owner_opt_out`). `summary` is the behavior summary ([1_analysis.md](1_analysis.md)), read from the `summary` analyzer row; null when none exists.
 
 ### API keys (JWT only)
 
@@ -58,7 +59,7 @@ Owner or listed. The full analysis view for the trace-detail Analysis section:
 
 ### Profile
 
-- `GET /v1/profile` / `PATCH /v1/profile` — read and update `display_name` and `allow_private_llm_analysis`.
+- `GET /v1/profile` / `PATCH /v1/profile` — read and update `display_name`, `allow_private_llm_analysis`, and `task_categories` (validated against the global enum, `other` rejected; deduplicated; empty array = unscoped).
 
 ### Notifications
 

@@ -156,6 +156,16 @@ async def analyze_trace(trace_id: str) -> None:
             runs.append(listing_run)
             listing = ListingResult.model_validate(listing_run.output)
 
+    # Behavior summary (1_analysis.md behavior-summary rules): machine-owned
+    # display prose, regenerated on every run with the rest of the rewrite —
+    # never past the consent gate. Keyless, the analyzer returns None itself;
+    # malformed output fails open (no row, no summary).
+    if not opt_out:
+        with obs.stage(logger, "summary"):
+            summary_run = await run_analyzer(ANALYZERS["summary"], trace, settings)
+        if summary_run is not None:
+            runs.append(summary_run)
+
     promoted: dict = {field: getattr(signals, field) for field in SIGNAL_FIELDS}
     if verdict is not None:
         for field in analysis_q.LABEL_FIELDS:
@@ -174,9 +184,12 @@ async def analyze_trace(trace_id: str) -> None:
         promoted["metric_scores"] = metric_scores
 
     # HIL routing (1_analysis.md): only the outcome judge creates review
-    # items — skipped runs have no verdict and never route. The rewrite
-    # transaction applies the provenance filter and persists item + digest
-    # atomically with the analysis rows (A3 decisions 1 and 3).
+    # items — skipped runs have no verdict and never route. A verdict with
+    # no reasons still carries the (empty) routing context so the rewrite
+    # supersedes any stale open item: the fresh verdict answered the
+    # question. The rewrite transaction applies the provenance filter and
+    # persists item + digest atomically with the analysis rows (A3
+    # decisions 1 and 3).
     routing = None
     if verdict is not None:
         reasons = route(signals, verdict, settings.confidence_threshold)
@@ -186,16 +199,16 @@ async def analyze_trace(trace_id: str) -> None:
                 ", ".join(r.code for r in reasons),
                 extra={"review_reasons": [r.code for r in reasons]},
             )
-            routing = analysis_q.RoutingContext(
-                reasons=reasons,
-                verdict_snapshot={
-                    field: getattr(verdict, field)
-                    for label in analysis_q.LABEL_FIELDS
-                    for field in (label, f"{label}_confidence")
-                },
-                owner_id=str(gate["owner_id"]),
-                upload_id=str(gate["upload_id"]),
-            )
+        routing = analysis_q.RoutingContext(
+            reasons=reasons,
+            verdict_snapshot={
+                field: getattr(verdict, field)
+                for label in analysis_q.LABEL_FIELDS
+                for field in (label, f"{label}_confidence")
+            },
+            owner_id=str(gate["owner_id"]),
+            upload_id=str(gate["upload_id"]),
+        )
 
     with obs.stage(logger, "rewrite"):
         await analysis_q.rewrite(

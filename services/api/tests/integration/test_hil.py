@@ -82,6 +82,18 @@ async def disarm(upload_id: str) -> None:
     await redis.aclose()
 
 
+async def rearm(upload_id: str, spec: str) -> None:
+    """Swap the armed fault between runs — e.g. uncertain verdict on the
+    first analysis, confident verdict on the re-run."""
+    from redis.asyncio import Redis
+
+    from app.config import settings
+
+    redis = Redis.from_url(settings.redis_url)
+    await redis.set(f"fault:{upload_id}", spec, ex=3600)
+    await redis.aclose()
+
+
 def requeue_upload(upload_id: str) -> None:
     result = subprocess.run(
         ["uv", "run", "python", "-m", "app.cli.requeue", "upload", upload_id],
@@ -314,6 +326,27 @@ async def test_reroute_supersedes_then_human_filter_stops_routing(
         if n["type"] == "review_request"
     ]
     assert digests[0]["payload"]["item_count"] == 2
+
+    await disarm(upload_id)
+
+
+async def test_clean_rerun_supersedes_stale_item(api: httpx.AsyncClient) -> None:
+    """A re-run whose fresh verdict no longer routes supersedes the stale
+    open item instead of leaving it asking an answered question
+    (1_analysis.md: a re-run supersedes the open item)."""
+    upload_id, (trace_id,) = await upload_routed(api, otlp_payload(uuid.uuid4().hex))
+    (item,) = await wait_open_items(api, upload_id, 1)
+
+    await rearm(upload_id, "analyze:verdict:success:0.95")
+    requeue_upload(upload_id)
+    assert (await wait_terminal(api, upload_id))["trace_ids"] == [trace_id]
+
+    async def superseded():
+        res = await api.get(f"/v1/review-items/{item['review_item_id']}")
+        return res.json() if res.json()["status"] == "superseded" else None
+
+    await wait_until(superseded, 30.0, "stale item was never superseded")
+    assert (await api.get(f"/v1/review-items?upload_id={upload_id}")).json()["items"] == []
 
     await disarm(upload_id)
 

@@ -113,6 +113,9 @@ services:
       - "${WEB_PORT:-3000}:3000"
     environment:
       SUPABASE_INTERNAL_URL: http://host.docker.internal:${SUPABASE_API_PORT:-55321}
+      # /ask code agent (pass-through; keyless = the page 503s cleanly).
+      OPENAI_API_KEY:
+      ASK_AGENT_MODEL:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

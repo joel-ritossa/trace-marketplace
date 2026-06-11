@@ -7,12 +7,14 @@ export type Profile = {
   email: string | null;
   display_name: string | null;
   allow_private_llm_analysis: boolean;
+  task_categories: string[];
   created_at: string;
 };
 
 export type ProfileUpdate = {
   display_name?: string;
   allow_private_llm_analysis?: boolean;
+  task_categories?: string[];
 };
 
 export async function getProfile(): Promise<Profile> {

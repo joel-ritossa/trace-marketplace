@@ -112,6 +112,33 @@ def test_first_user_message_across_spans() -> None:
     assert content.first_user_message([make_span(0)]) is None
 
 
+def test_first_user_message_generic_input_fallback() -> None:
+    # The session importers' shape: input.value is the raw user ask.
+    raw = make_span(0, kind="llm", attributes={"input.value": "pull latest main and plan"})
+    assert content.first_user_message([raw]) == "pull latest main and plan"
+
+    # A JSON request payload: mine user-role messages, never the system text.
+    payload = make_span(
+        0,
+        kind="llm",
+        attributes={
+            "input.value": json.dumps(
+                {
+                    "messages": [
+                        {"role": "system", "content": "rules"},
+                        {"role": "user", "content": "the ask"},
+                    ]
+                }
+            )
+        },
+    )
+    assert content.first_user_message([payload]) == "the ask"
+
+    # JSON without user-role messages fails open, not to the blob.
+    blob = make_span(0, kind="llm", attributes={"input.value": json.dumps({"q": "x"})})
+    assert content.first_user_message([blob]) is None
+
+
 def test_attribute_summary_skips_noise_and_caps() -> None:
     span = make_span(
         0,

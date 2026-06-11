@@ -29,4 +29,5 @@ Each demo is one slug-named file with three sections:
 | `cli-sync.md` | The machine door on your own Codex/Claude/Cursor sessions: API-key auth, stateless sync + watch, server-side dedupe, live `/uploads`, honest unattended failures | Live |
 | `hil-loop.md` | Uncertain verdicts route to a review queue with reasons: per-upload digest notifications, split-view resolve with human provenance, supersede-never-duplicate, keyless via canned-verdict fault | Live |
 | `judge-agreement.md` | The judge scored against expert human labels on real benchmarks (AgentRewardBench, AgentRx): benchmark→OTLP converters, one-command agreement report, routing-on-miss measured | Live |
+| `metric-agreement.md` | The hallucination critic and faithfulness score validated against human PASS/FAIL labels (HaluBench): same converter → agreement-fold pattern as the judge, per-metric caching | Live |
 | `subscriptions.md` | Saved searches that watch the marketplace: event-driven matching, notify-once digests, new-since-last-seen feed, bulk acquire → labeled zip download | Live |

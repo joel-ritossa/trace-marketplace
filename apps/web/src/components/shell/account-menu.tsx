@@ -1,6 +1,6 @@
 "use client";
 
-import { Monitor, Moon, Sun } from "lucide-react";
+import { Download, Monitor, Moon, Sun } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 import {
@@ -21,7 +21,12 @@ const THEMES = [
   { value: "system", label: "System", Icon: Monitor },
 ] as const;
 
-/** Header account menu: avatar trigger, theme selector, sign out. */
+/** Latest desktop release (macOS .dmg + install notes). The repo is private,
+ *  so the link assumes the viewer has repo access — fine for the trial. */
+const DESKTOP_RELEASE_URL =
+  "https://github.com/worktrial-joel-ritossa-dot/trace-marketplace/releases/latest";
+
+/** Header account menu: avatar trigger, theme selector, desktop download, sign out. */
 export function AccountMenu({ email }: { email: string }) {
   const router = useRouter();
   const { theme, setTheme } = useTheme();
@@ -58,6 +63,12 @@ export function AccountMenu({ email }: { email: string }) {
           ))}
         </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
+        <DropdownMenuItem asChild>
+          <a href={DESKTOP_RELEASE_URL} target="_blank" rel="noreferrer">
+            <Download className="size-4 text-muted-foreground" />
+            Download desktop app
+          </a>
+        </DropdownMenuItem>
         <DropdownMenuItem onSelect={signOut}>Sign out</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

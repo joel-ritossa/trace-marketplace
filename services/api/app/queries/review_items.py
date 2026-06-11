@@ -47,16 +47,24 @@ def verdict_snapshot(current: Mapping[str, Any]) -> dict[str, Any]:
     return snapshot
 
 
-async def supersede_and_create(
-    conn: asyncpg.Connection, *, trace_id: str, context: dict[str, Any]
-) -> str:
-    """The supersede rule (1_analysis.md): a re-run that routes again marks
-    the open item superseded and creates a fresh one — never duplicates.
-    Runs inside the analysis rewrite's transaction."""
+async def supersede_open(conn: asyncpg.Connection, trace_id: str) -> None:
+    """The supersede rule (1_analysis.md): a re-run supersedes the trace's
+    open item — including a re-run that no longer routes, whose fresh verdict
+    answers the question the stale item was asking. Runs inside the analysis
+    rewrite's transaction."""
     await conn.execute(
         "update review_items set status = 'superseded' where trace_id = $1 and status = 'open'",
         trace_id,
     )
+
+
+async def supersede_and_create(
+    conn: asyncpg.Connection, *, trace_id: str, context: dict[str, Any]
+) -> str:
+    """A re-run that routes again supersedes the open item and creates a
+    fresh one — never duplicates. Runs inside the analysis rewrite's
+    transaction."""
+    await supersede_open(conn, trace_id)
     return await conn.fetchval(
         "insert into review_items (trace_id, context) values ($1, $2) returning id",
         trace_id,

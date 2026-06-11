@@ -33,7 +33,7 @@ from app.analysis.routing import finalize_verdict
 from app.analysis.signals import run_signals
 from app.analysis.trace_input import TraceInput
 
-JUDGE_VERSION = "5"
+JUDGE_VERSION = "7"
 
 _MAX_EVIDENCE_ERROR_SPANS = 10
 
@@ -41,11 +41,13 @@ Call = Literal["outcome", "failure_mode", "category"]
 
 # Prompt modules carry their own per-prompt versions (prompts/ convention);
 # JUDGE_VERSION covers the ensemble (prompts + composition + voting
-# config). Decoupled so one prompt can rev without the other two.
+# config). Decoupled so one prompt can rev without the other two. The
+# category entry is the unscoped (full taxonomy) build; a scoped trace
+# overrides it per call (1_analysis.md Owner task scope).
 _PROMPTS: dict[Call, str] = {
     "outcome": outcome.V3,
     "failure_mode": failure_mode.V4,
-    "category": category.V1,
+    "category": category.build_v2(TASK_CATEGORIES),
 }
 
 # Recorded value for a fm/category vote whose response failed validation:
@@ -90,9 +92,18 @@ _VOCABULARY: dict[Call, frozenset[str] | None] = {
 }
 
 
-async def _one_vote(call: Call, user_text: str, settings: AnalysisSettings) -> JudgeVote:
+async def _one_vote(
+    call: Call,
+    user_text: str,
+    settings: AnalysisSettings,
+    *,
+    system: str | None = None,
+    vocabulary: frozenset[str] | None = None,
+) -> JudgeVote:
+    """`system`/`vocabulary` override the call's defaults — the owner-scoped
+    category call passes both; everything else uses `_PROMPTS`/`_VOCABULARY`."""
     messages = [
-        {"role": "system", "content": _PROMPTS[call]},
+        {"role": "system", "content": system if system is not None else _PROMPTS[call]},
         {"role": "user", "content": user_text},
     ]
     try:
@@ -102,9 +113,11 @@ async def _one_vote(call: Call, user_text: str, settings: AnalysisSettings) -> J
     except llm.MalformedResponse as exc:
         return _malformed_vote(call, exc.meta)
     value = getattr(parsed, _VALUE_FIELDS[call])
-    vocabulary = _VOCABULARY[call]
+    if vocabulary is None:
+        vocabulary = _VOCABULARY[call]
     if vocabulary is not None and value not in vocabulary:
-        # Out-of-vocabulary is a malformed vote, not a new label.
+        # Out-of-vocabulary (including outside the owner's scope) is a
+        # malformed vote, not a new label.
         return _malformed_vote(call, meta)
     return JudgeVote(
         call=call,
@@ -130,13 +143,23 @@ def _malformed_vote(call: Call, meta: llm.CallMeta) -> JudgeVote:
     )
 
 
-async def _collect_votes(call: Call, user_text: str, settings: AnalysisSettings) -> list[JudgeVote]:
+async def _collect_votes(
+    call: Call,
+    user_text: str,
+    settings: AnalysisSettings,
+    *,
+    system: str | None = None,
+    vocabulary: frozenset[str] | None = None,
+) -> list[JudgeVote]:
     # Settle every vote before re-raising the first error: gather without
     # return_exceptions would leave sibling calls running detached. Raising
     # the original exception (not an ExceptionGroup) preserves the typed
     # permanent/transient classification the worker keys on.
     results = await asyncio.gather(
-        *(_one_vote(call, user_text, settings) for _ in range(settings.judge_votes)),
+        *(
+            _one_vote(call, user_text, settings, system=system, vocabulary=vocabulary)
+            for _ in range(settings.judge_votes)
+        ),
         return_exceptions=True,
     )
     for result in results:
@@ -255,8 +278,17 @@ async def run_judge(
         user_message = content.first_user_message(trace.spans)
         if not user_message and not trace.tool_names:
             return None
+        # Owner task scope (1_analysis.md): the scoped vocabulary always
+        # includes "other"; unknown stored values are dropped, not trusted.
+        scope = TASK_CATEGORIES & frozenset(trace.owner_task_categories or ())
+        system = category.build_v2(scope | {"other"}) if scope else None
+        vocabulary = (scope | {"other"}) if scope else None
         return await _collect_votes(
-            "category", _category_text(user_message, trace.tool_names), settings
+            "category",
+            _category_text(user_message, trace.tool_names),
+            settings,
+            system=system,
+            vocabulary=vocabulary,
         )
 
     # Settle both branches before re-raising the first error (the

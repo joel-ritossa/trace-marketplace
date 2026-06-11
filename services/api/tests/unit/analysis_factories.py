@@ -55,9 +55,12 @@ def make_span(
     )
 
 
-def make_trace(spans: list[SpanInput]) -> TraceInput:
+def make_trace(
+    spans: list[SpanInput], owner_task_categories: list[str] | None = None
+) -> TraceInput:
     error_count = sum(1 for s in spans if s.status == "error")
     return TraceInput(
+        owner_task_categories=owner_task_categories,
         source_trace_id="t" * 32,
         name="synthetic-trace",
         status="error" if error_count else "ok",

@@ -16,7 +16,7 @@ from app.analysis.config import RendererConfig
 from app.analysis.models import RenderedMessage, RenderedTrace
 from app.analysis.trace_input import SpanInput, TraceInput
 
-RENDERER_VERSION = "1"
+RENDERER_VERSION = "2"
 
 _ROLE_BY_KIND = {"llm": "assistant", "tool": "tool"}
 # Cap-shrink floor: after this many halvings, steps render skeleton-only.

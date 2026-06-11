@@ -42,6 +42,14 @@ class AnalysisSignals(BaseModel):
     tool_call_count: int | None = None
 
 
+class AnalysisSummary(BaseModel):
+    """The behavior summary (1_analysis.md): descriptive prose from the
+    `summary` analyzer row — what the agent did, not whether it succeeded."""
+
+    gist: str | None = None
+    steps: list[str] = []
+
+
 class AuditAnalyzer(BaseModel):
     analyzer: str
     analyzer_version: str
@@ -63,6 +71,7 @@ class TraceAnalysisResponse(BaseModel):
     skip_reason: SkipReason | None = None
     failed_reason: str | None = None
     labels: AnalysisLabels
+    summary: AnalysisSummary | None = None
     reasoning: str | None = None
     signals: AnalysisSignals | None = None
     metric_scores: dict[str, float | bool] | None = None

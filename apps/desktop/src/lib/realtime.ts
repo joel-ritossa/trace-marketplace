@@ -1,11 +1,11 @@
 import { useEffect, useRef } from "react";
 import { supabase } from "./supabase";
 
-// Unlike the web app (fresh browser client per createClient() call), the
-// desktop app has one long-lived client — supabase-js reuses channels by
-// topic, so two subscribers to the same table (or a StrictMode remount
-// racing its own async cleanup) would hit "cannot add postgres_changes
-// callbacks after subscribe()". A unique topic per hook instance avoids it.
+// supabase-js reuses channels by topic, so two subscribers to the same table
+// (or a StrictMode remount racing its own async cleanup) would hit "cannot
+// add postgres_changes callbacks after subscribe()". A unique topic per hook
+// instance avoids it (the web's lib/realtime.ts does the same — its
+// createBrowserClient is a singleton too).
 let nextChannelId = 0;
 
 /** Supabase Realtime as an invalidation signal only — mirrors the web's

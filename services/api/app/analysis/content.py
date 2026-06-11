@@ -179,9 +179,25 @@ def _user_text_from_messages(value: Any) -> str | None:
     return None
 
 
+def _user_text_from_generic(value: str | None) -> str | None:
+    """Generic input (`input.value`): a JSON request payload (mine its
+    user-role messages, fail open on other shapes) or a raw prompt string,
+    which is the best available ask as-is (the session importers' shape)."""
+    if not value:
+        return None
+    try:
+        decoded = json.loads(value)
+    except ValueError:
+        return value
+    if isinstance(decoded, dict):
+        decoded = decoded.get("messages")
+    return _user_text_from_messages(decoded)
+
+
 def first_user_message(spans: list[SpanInput]) -> str | None:
     """The earliest user-role message across LLM spans — a rendering must-have
-    and the sample adapter's `user_input`."""
+    and the sample adapter's `user_input`. Per-span fallback chain mirrors
+    `input_text`: GenAI messages, Traceloop flattened prompts, generic input."""
     for span in spans:
         if span.kind != "llm":
             continue
@@ -193,6 +209,9 @@ def first_user_message(spans: list[SpanInput]) -> str | None:
                 content = span.attributes.get(f"gen_ai.prompt.{i}.content")
                 if isinstance(content, str) and content:
                     return content
+        text = _user_text_from_generic(_first_str(span.attributes, _GENERIC_INPUT_KEYS))
+        if text:
+            return text
     return None
 
 

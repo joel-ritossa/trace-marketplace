@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, ArrowRight } from "lucide-react";
 
 import { FAILURE_MODES, humanize, OUTCOMES, TASK_CATEGORIES } from "@/components/review/taxonomy";
+import { BehaviorSummary } from "@/components/traces/behavior-summary";
 import { TraceEvidence } from "@/components/traces/trace-evidence";
 import { Button } from "@/components/ui/button";
 import {
@@ -171,6 +172,7 @@ export function ResolveView({ itemId }: { itemId: string }) {
   const [state, setState] = useState<LoadState>({ phase: "loading" });
   const [nextId, setNextId] = useState<string | null>(null);
   const [reasoning, setReasoning] = useState<JudgeReasoning | null>(null);
+  const [summary, setSummary] = useState<TraceAnalysis["summary"]>(null);
 
   // The form mirrors the label model exactly; nothing pre-selected.
   const [outcome, setOutcome] = useState<Outcome | null>(null);
@@ -200,16 +202,19 @@ export function ResolveView({ itemId }: { itemId: string }) {
     };
   }, [itemId]);
 
-  // The judge's reasoning lives on the analysis row, not the item's context
-  // snapshot — fetched separately so the reviewer sees why the machine was
-  // uncertain. Fails open: the card just omits it.
+  // The judge's reasoning and the behavior summary live on the analysis,
+  // not the item's context snapshot — fetched separately so the reviewer
+  // sees what the agent did and why the machine was uncertain. Fails open:
+  // the cards just omit them.
   const traceId = state.phase === "ready" ? state.item.trace_id : null;
   useEffect(() => {
     if (traceId === null) return;
     let cancelled = false;
     getTraceAnalysis(traceId)
       .then((analysis) => {
-        if (!cancelled) setReasoning(judgeReasoning(analysis));
+        if (cancelled) return;
+        setReasoning(judgeReasoning(analysis));
+        setSummary(analysis.summary);
       })
       .catch(() => {});
     return () => {
@@ -324,6 +329,12 @@ export function ResolveView({ itemId }: { itemId: string }) {
         </div>
 
         <div className="flex flex-col gap-4">
+          {summary !== null && (
+            <section className="rounded-lg border bg-background px-4 py-3">
+              <BehaviorSummary summary={summary} />
+            </section>
+          )}
+
           <MachineContext item={item} reasoning={reasoning} />
 
           {item.status !== "open" && !justResolved ? (

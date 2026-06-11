@@ -9,6 +9,7 @@ import {
   ClipboardCheck,
   ScrollText,
   Settings,
+  Sparkles,
   Store,
   type LucideIcon,
 } from "lucide-react";
@@ -37,6 +38,10 @@ const GROUPS: { label: string; items: Item[] }[] = [
       { href: "/subscriptions", label: "Subscriptions", icon: BellRing },
       { href: "/library", label: "Library", icon: BookMarked },
     ],
+  },
+  {
+    label: "Project",
+    items: [{ href: "/ask", label: "Ask the code", icon: Sparkles }],
   },
 ];
 

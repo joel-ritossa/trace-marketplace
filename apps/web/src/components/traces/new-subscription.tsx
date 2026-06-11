@@ -106,6 +106,12 @@ export function NewSubscription() {
           </DialogHeader>
 
           <Input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Subscription name"
+            maxLength={120}
+          />
+          <Input
             value={text.q}
             onChange={(e) => onText({ ...text, q: e.target.value })}
             placeholder="Search text (optional)…"
@@ -135,12 +141,6 @@ export function NewSubscription() {
             </p>
           </div>
 
-          <Input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Subscription name"
-            maxLength={120}
-          />
           {error && <p className="text-sm text-error-deep">{error}</p>}
           <DialogFooter>
             <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>

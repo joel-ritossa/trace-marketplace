@@ -99,6 +99,7 @@ export type TraceAnalysis = {
     failure_mode: LabelValue | null;
     task_category: LabelValue | null;
   };
+  summary: { gist: string | null; steps: string[] } | null;
   reasoning: string | null;
   signals: {
     has_retry_loop: boolean | null;

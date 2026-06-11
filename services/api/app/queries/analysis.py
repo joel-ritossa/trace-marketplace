@@ -49,7 +49,8 @@ def filter_reasons(
 ) -> list[RoutingReason]:
     """Human-answered questions are not re-asked (A3 decision 3): drop each
     reason whose target field carries human provenance on the row being
-    written. All filtered -> no item, no supersede."""
+    written. All filtered -> no fresh item (the stale open item is still
+    superseded — the question is answered)."""
     return [r for r in reasons if provenances.get(REASON_FIELD[r.code]) not in HUMAN_PROVENANCE]
 
 
@@ -59,7 +60,14 @@ async def fetch_trace_input(pool: asyncpg.Pool, trace_id: str) -> TraceInput | N
     `analyze_trace` worker job. `select *` is deliberate: `TraceInput`
     mirrors the full normalized column set and ignores platform-only
     columns (owner_id, upload_id, …)."""
-    trace_row = await pool.fetchrow("select * from traces where id = $1", trace_id)
+    trace_row = await pool.fetchrow(
+        """
+        select t.*, p.task_categories as owner_task_categories
+        from traces t join profiles p on p.id = t.owner_id
+        where t.id = $1
+        """,
+        trace_id,
+    )
     if trace_row is None:
         return None
     span_rows = await pool.fetch(
@@ -165,10 +173,12 @@ async def rewrite(
     existing provenance is human/human_confirmed are carried over the new
     machine values, never overwritten.
 
-    Routing (A3): when reasons survive the provenance filter, the same
-    transaction supersedes the trace's open review item, creates the fresh
-    one, and upserts the per-upload digest — labels never commit without
-    the item that routed them.
+    Routing (A3): a run that produced a verdict supersedes the trace's open
+    review item — the fresh verdict re-answers the questions, stale items
+    must not outlive it (1_analysis.md supersede rule). When reasons survive
+    the provenance filter, the same transaction creates the fresh item and
+    upserts the per-upload digest — labels never commit without the item
+    that routed them.
     """
     # Local imports break the queries-module cycle (review_items/notifications
     # import this module for the label vocabulary).
@@ -232,6 +242,8 @@ async def rewrite(
                 await notifications_q.review_digest_upsert(
                     conn, user_id=routing.owner_id, upload_id=routing.upload_id
                 )
+            else:
+                await review_items_q.supersede_open(conn, trace_id)
         # A successful run is newer truth than any old failure: close open
         # analyze dead letters so the derived state can't stay `failed`
         # after a recovery that bypassed the trace-requeue CLI (operator

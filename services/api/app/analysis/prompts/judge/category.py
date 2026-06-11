@@ -1,3 +1,37 @@
+from collections.abc import Iterable
+
+from app.analysis.models import TASK_CATEGORY_DESCRIPTIONS
+
+# V2: built per trace over the owner's task scope (1_analysis.md Owner task
+# scope). The instruction text is versioned here; the category lines come
+# from the canonical descriptions in models.py.
+_V2_TEMPLATE = """\
+Classify what kind of task an AI agent was asked to perform. You will be
+shown the user's opening request and the names of the tools the agent used —
+judge the task's nature from the goal, not from how well it went.
+
+Choose exactly one category:
+
+{categories}
+
+Pick the single best fit; use "other" only when none of the listed
+categories fits.
+
+Respond with JSON: {{"task_category": "...", "confidence": <0.0-1.0>,
+"reasoning": "<one sentence>"}}.
+"""
+
+
+def build_v2(allowed: Iterable[str]) -> str:
+    """The V2 prompt over a scoped vocabulary. `allowed` must already
+    include "other" (the caller owns scope semantics); order follows the
+    canonical taxonomy, with "other" last."""
+    ordered = [v for v in TASK_CATEGORY_DESCRIPTIONS if v in set(allowed) and v != "other"]
+    lines = [f'- "{value}" — {TASK_CATEGORY_DESCRIPTIONS[value]}.' for value in ordered]
+    lines.append(f'- "other" — {TASK_CATEGORY_DESCRIPTIONS["other"]}.')
+    return _V2_TEMPLATE.format(categories="\n".join(lines))
+
+
 V1 = """\
 Classify what kind of task an AI agent was asked to perform. You will be
 shown the user's opening request and the names of the tools the agent used —

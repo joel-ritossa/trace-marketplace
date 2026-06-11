@@ -32,6 +32,7 @@ Content measures, set per page — no page escapes its container: full width (tr
 - Split view: trace evidence (same inspection components as `/traces/[id]`) beside the verdict form; the reviewer never leaves the screen.
 - Evidence defaults to the conversation view (a chat-style reconstruction of LLM messages and tool calls, deduped across replayed history) so a reviewer can read and score without span literacy; the span tree + details panel sits behind a Conversation/Spans toggle.
 - Machine verdict, confidence, routing reason shown as context — **never pre-selected** in the form.
+- The behavior summary ([1_analysis.md](1_analysis.md)) sits above the machine verdict — gist visible, step walkthrough behind a collapsed disclosure — orienting the reviewer before they read the evidence. Omitted when none exists.
 - Form mirrors the label model exactly: ternary outcome (indeterminate is a valid answer, not a skip); failure_mode select (10 categories, one-line descriptions) only when failure chosen; task_category independent. No free text, no scales.
 - Resolve commits with provenance; post-resolve shows per-field provenance + confidence 1.0. Partial resolution allowed. "Resolve & next" is primary within a batch.
 - Owner-initiated relabel from trace detail reuses this view (same route, self-created item).
@@ -64,6 +65,7 @@ Content measures, set per page — no page escapes its container: full width (tr
 - **API keys:** mint (name it) → plaintext shown exactly once — monospace, copy button, "you won't see this again", dismissed only by user action; reveal includes the CLI usage snippet with the key inlined. List: name, `key_display`, created, `last_used_at` ("never used" explicit), scope stated (upload-only); revoke per-row with consequence-stating confirm.
 - **Profile:** display name, inline edit (consumer-facing on marketplace cards).
 - **Privacy:** "Allow LLM analysis of private traces" toggle (default on), with honest consequence copy both ways: on = private-trace content is sent to the configured LLM provider for labeling; off = private traces get deterministic signals only until listed (listing always analyzes). Plain statement, no alarm styling; takes effect on subsequent analysis runs, and the copy says so.
+- **Task scope:** grouped checkbox grid over the `task_category` enum ([1_analysis.md](1_analysis.md) Taxonomies) — "the kinds of tasks your agents work on". Selecting nothing = unscoped (full taxonomy), and the copy says so; `other` is not offered (always implicitly allowed). Applies to subsequent analysis runs, never retroactive.
 - States: empty key list (mint as the empty-state action, links CLI setup), list, reveal, post-revoke.
 
 ### /uploads
@@ -95,7 +97,7 @@ Three regions, full content width: a header strip (status, name, visibility + ou
 ### /traces/[traceId] — Analysis section
 
 - A third section between the metadata header and the span tree. Header keeps a compact label strip (outcome / failure_mode / task_category badges with provenance + confidence) for triage; the section is the full view.
-- Contents in disclosure order: labels with per-field provenance + confidence → judge reasoning → deterministic signals → metric scores (flag/score + reason each). Audit details (analyzer versions, model id, stored votes) behind a collapsed disclosure.
+- Contents in disclosure order: labels with per-field provenance + confidence → behavior summary (gist visible, step walkthrough behind a collapsed disclosure) → judge reasoning → deterministic signals → metric scores (flag/score + reason each). Audit details (analyzer versions, model id, stored votes) behind a collapsed disclosure.
 - Owner-initiated relabel entry point lives here (routes to the resolve view).
 - The section always renders, with explicit non-result states (below).
 

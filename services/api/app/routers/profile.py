@@ -16,6 +16,7 @@ def _response(user: AuthUser, row: asyncpg.Record) -> ProfileResponse:
         email=user.email,
         display_name=row["display_name"],
         allow_private_llm_analysis=row["allow_private_llm_analysis"],
+        task_categories=list(row["task_categories"]),
         created_at=row["created_at"],
     )
 
@@ -35,6 +36,7 @@ async def update_profile(body: ProfileUpdateRequest, user: CurrentUser) -> Profi
         user.id,
         display_name=body.display_name,
         allow_private_llm_analysis=body.allow_private_llm_analysis,
+        task_categories=body.task_categories,
     )
     if row is None:
         raise ApiError("profile_not_found", "Profile not found.", status=404)

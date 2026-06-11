@@ -53,6 +53,10 @@ class TraceInput(BaseModel):
     service_name: str | None
     tool_names: list[str]
     error_types: list[str]
+    # Owner task scope (1_analysis.md Taxonomies): the analysis input the
+    # category call's vocabulary is built from. None/empty = unscoped —
+    # fixture mode and the offline runner always run unscoped.
+    owner_task_categories: list[str] | None = None
     # Chronological (started_at, source_span_id) — both sources guarantee it.
     spans: list[SpanInput]
 

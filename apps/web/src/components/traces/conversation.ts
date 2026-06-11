@@ -14,6 +14,7 @@ export type MessageRole = "user" | "assistant" | "system" | "other";
 
 export type ConversationItem =
   | { kind: "message"; id: string; role: MessageRole; label: string; text: string }
+  | { kind: "reasoning"; id: string; text: string }
   | {
       kind: "tool";
       id: string;
@@ -182,6 +183,18 @@ function emitMessage(builder: Builder, message: Dict): void {
   for (const tool of tools) builder.items.push({ ...tool, id: nextId(builder) });
 }
 
+/** Model reasoning (Claude thinking blocks, Codex reasoning summaries) is
+ *  preserved by the session importers as `gen_ai.reasoning` on the llm span;
+ *  it renders collapsed ahead of the span's assistant output. */
+function emitReasoning(builder: Builder, detail: SpanDetail): void {
+  const reasoning = detail.attributes["gen_ai.reasoning"];
+  if (typeof reasoning !== "string" || reasoning.length === 0) return;
+  const key = `reasoning:${reasoning}`;
+  if (builder.seenMessages.has(key)) return;
+  builder.seenMessages.add(key);
+  builder.items.push({ kind: "reasoning", id: nextId(builder), text: reasoning });
+}
+
 function inputMessages(detail: SpanDetail): Dict[] | null {
   return (
     parseMessages(detail.attributes["gen_ai.input.messages"]) ??
@@ -257,6 +270,7 @@ export function buildConversation(
     const outputs = outputMessages(detail);
     if (inputs !== null || outputs !== null) {
       for (const message of inputs ?? []) emitMessage(builder, message);
+      emitReasoning(builder, detail);
       for (const message of outputs ?? []) emitMessage(builder, message);
       continue;
     }
@@ -273,6 +287,7 @@ export function buildConversation(
         text: input,
       });
     }
+    emitReasoning(builder, detail);
     const output = firstString(detail.attributes, GENERIC_OUTPUT_KEYS);
     if (output !== null && !builder.seenMessages.has(output)) {
       builder.seenMessages.add(output);

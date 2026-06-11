@@ -142,6 +142,27 @@ async def test_profile_roundtrip(api: httpx.AsyncClient):
     res = await api.patch("/v1/profile", json={"display_name": "   "})
     assert res.status_code == 422
 
+    # Task scope: dedupe + sort on write; partial update leaves it alone.
+    assert before["task_categories"] == []  # default unscoped
+    res = await api.patch(
+        "/v1/profile", json={"task_categories": ["web_research", "coding", "coding"]}
+    )
+    assert res.status_code == 200
+    assert res.json()["task_categories"] == ["coding", "web_research"]
+    res = await api.patch("/v1/profile", json={"display_name": "Integration Tester"})
+    assert res.json()["task_categories"] == ["coding", "web_research"]
+
+    # Validation: out-of-enum values and "other" are 422s.
+    res = await api.patch("/v1/profile", json={"task_categories": ["nonsense"]})
+    assert res.status_code == 422
+    res = await api.patch("/v1/profile", json={"task_categories": ["other"]})
+    assert res.status_code == 422
+
+    # Back to unscoped — later tests rely on the default judge behavior.
+    res = await api.patch("/v1/profile", json={"task_categories": []})
+    assert res.status_code == 200
+    assert res.json()["task_categories"] == []
+
 
 async def test_uploads_list_carries_source_and_trace_ids(api: httpx.AsyncClient):
     import asyncio

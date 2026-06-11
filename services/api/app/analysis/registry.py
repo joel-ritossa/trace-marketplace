@@ -23,8 +23,10 @@ from app.analysis.models import (
     ListingResult,
     MetricResult,
     SignalsResult,
+    SummaryResult,
 )
 from app.analysis.signals import SIGNALS_VERSION, run_signals
+from app.analysis.summary import SUMMARY_VERSION, run_summary
 from app.analysis.trace_input import TraceInput
 
 AnalyzerFn = Callable[[TraceInput, AnalysisSettings], Awaitable[BaseModel | None]]
@@ -100,6 +102,16 @@ ANALYZERS: dict[str, AnalyzerSpec] = {
         version=LISTING_VERSION,
         result_model=ListingResult,
         run=run_listing,
+        model_id=lambda s: s.judge_model,
+    ),
+    # Behavior summary (not a label family): descriptive gist + steps for
+    # the Analysis section and the resolve view; prose carries no envelope
+    # confidence.
+    "summary": AnalyzerSpec(
+        name="summary",
+        version=SUMMARY_VERSION,
+        result_model=SummaryResult,
+        run=run_summary,
         model_id=lambda s: s.judge_model,
     ),
     # Family 3 (B3): metric scores are not labels and carry no envelope

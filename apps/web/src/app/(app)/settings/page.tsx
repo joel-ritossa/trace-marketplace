@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { ApiKeysSection } from "@/components/settings/api-keys-section";
 import { PrivacySection } from "@/components/settings/privacy-section";
 import { ProfileSection } from "@/components/settings/profile-section";
+import { TaskScopeSection } from "@/components/settings/task-scope-section";
 import { getProfile, type Profile } from "@/lib/api/profile";
 
 export default function SettingsPage() {
@@ -20,7 +21,7 @@ export default function SettingsPage() {
     <div className="mx-auto w-full max-w-2xl">
       <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
       <p className="mt-1 text-sm text-muted-foreground">
-        API keys, profile, and analysis privacy.
+        API keys, profile, analysis privacy, and task scope.
       </p>
 
       <div className="mt-8 flex flex-col gap-10">
@@ -33,6 +34,7 @@ export default function SettingsPage() {
           <>
             <ProfileSection profile={profile} onUpdated={setProfile} />
             <PrivacySection profile={profile} onUpdated={setProfile} />
+            <TaskScopeSection profile={profile} onUpdated={setProfile} />
           </>
         )}
       </div>

@@ -86,7 +86,7 @@ The composed LLM judge producing the trace's labels. Zero-shot (rubric only) on 
 
 1. **Outcome call** — `outcome` + confidence + reasoning, from rubric + full trace rendering. The clean-room call: **family-1 signals are never in this prompt** (anchoring breaks disagreement-based routing). Prompt seeded from openevals' trajectory-accuracy rubrics, adapted to the ternary verdict.
 2. **Failure-mode call** — only when outcome = `failure`: classifies `failure_mode`. May include deterministic evidence (`loop_kind`, error spans) — anchoring matters for the verdict, not for diagnosing a declared failure. Prompt seeded from AgentRx's classification prompt.
-3. **Category call** — `task_category` over a goal-focused minimal rendering (first user message + tool names). Clio-style facet classification.
+3. **Category call** — `task_category` over a goal-focused minimal rendering (first user message + tool names). Clio-style facet classification. The prompt's vocabulary is the owner's task scope (see Taxonomies below): the scoped values + `other`, built per trace from a versioned prompt template.
 
 Prompt text lives in versioned prompt files; the three calls are one worker step and one results row — "the judge" is one analyzer with one version.
 
@@ -117,7 +117,22 @@ The ternary prompt option stays — voting does not replace abstention (a forced
 | `system_failure` | Infra errors (timeouts, unreachable endpoints) |
 | `inconclusive` | Failed, cause unattributable (≠ outcome `indeterminate`) |
 
-**`task_category`** — starting set, finalized against the dev/candidate datasets before lock: `web_research`, `customer_ops`, `coding`, `data_analysis`, `scheduling_planning`, `content_generation`, `retrieval_qa`, `other`.
+**`task_category`** — closed enum, ~50 values grouped for UI display (canonical values + one-line descriptions live in `app/analysis/models.py`; the web/desktop taxonomy files mirror it). A strict superset of the original 8-value set, so existing labels stay valid:
+
+| Group | Values |
+|---|---|
+| Software engineering | `coding`, `debugging`, `code_review`, `testing_qa`, `devops_infra`, `ci_cd`, `database_admin`, `security_engineering`, `ml_engineering` |
+| Data | `data_analysis`, `data_engineering`, `data_visualization`, `reporting_bi`, `financial_analysis` |
+| Web & research | `web_research`, `web_automation`, `web_scraping`, `market_research`, `competitive_analysis`, `academic_research` |
+| Knowledge & QA | `retrieval_qa`, `summarization`, `translation` |
+| Content | `content_generation`, `technical_writing`, `copywriting`, `editing_proofreading`, `social_media` |
+| Business operations | `customer_ops`, `customer_support`, `sales_outreach`, `crm_ops`, `hr_recruiting`, `legal_review`, `compliance`, `procurement`, `invoicing_billing` |
+| Personal & coordination | `scheduling_planning`, `email_management`, `travel_planning`, `task_management`, `personal_assistant` |
+| Operations & monitoring | `monitoring_alerting`, `incident_response`, `file_management`, `document_processing` |
+| Specialized | `education_tutoring`, `design_assets`, `game_playing` |
+| — | `other` |
+
+**Owner task scope (hard scoping).** A taxonomy this size invites vote splits on boundary tasks, so owners scope it: `profiles.task_categories` holds the categories an account works in (settings page; empty = unscoped). The category call's vocabulary is the owner's selection **plus `other`** (the permanent escape hatch — it can never be deselected); empty selection means the full taxonomy. A vote outside the scoped vocabulary is a malformed vote, exactly like an out-of-enum value. Scoping constrains only the judge on *your* traces — the global enum stays the marketplace's filter vocabulary, and human resolution may pick any global value. Changing the scope is not retroactive (no automatic re-judging, consistent with the HIL rule).
 
 ### Trace rendering
 
@@ -157,6 +172,17 @@ Rules:
 - **Non-deterministic.** The call samples at temperature > 0, and there is no voting fold: the same trace can yield different tags and phrasing on different runs. This is why generated tags can never be filter vocabulary — a predicate like `tag = "retry-loop"` would silently depend on which run a trace happened to get. Fill-if-empty makes the copy stable *once written*, but two identical traces may still carry different copy.
 - **Search-visible.** Tags and description feed `search_tsv` (tags at A weight), so generated copy shifts full-text relevance. Acceptable for listing copy; one more reason regeneration is off.
 - **Owner-attributable.** The copy lands in fields the marketplace presents as the contributor's own words. The owner can edit or clear it at any time from the trace detail page; nothing marks it as machine-written in the UI (the `listing` audit row is the provenance record).
+
+## Behavior Summary (Gist + Steps)
+
+The `summary` analyzer describes what the agent did — a 1-2 sentence gist plus a 3-8 bullet chronological step walkthrough — so a reviewer or prospective consumer can grasp the behavior without reading the full evidence. One LLM call over the judge rendering (judge model, no voting), run inside `analyze_trace`.
+
+Rules:
+
+- **Description, not a verdict.** The prompt forbids judging success; outcome stays the judge's job. Like listing copy it is prose, never a label: no closed vocabulary, no confidence, no HIL routing, no filter semantics.
+- **Machine-owned, regenerated every run.** Unlike listing copy it is never owner-editable and never presented as the contributor's words, so the delete-and-rewrite regenerates it with the rest of the analysis. Non-determinism across runs is acceptable for display prose.
+- **No promoted columns.** It lives in its `analyzer_results` row (`analyzer = "summary"`, which also carries call cost); `GET /v1/traces/{id}/analysis` reads it from there — no `trace_analysis` migration.
+- **Gated like the judge:** skipped keyless and for private traces of opted-out owners. A malformed or empty response fails open — no summary beats junk. Not search-visible: it feeds nothing but the two display surfaces (trace-detail Analysis section, review resolve view).
 
 ## HIL Routing
 

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CircleHelp, Tags } from "lucide-react";
+import { BehaviorSummary } from "@/components/traces/behavior-summary";
 import { OutcomeBadge, SKIP_REASON_COPY } from "@/components/traces/badges";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api/client";
@@ -69,9 +70,9 @@ function LabelRow({ name, label }: { name: string; label: LabelValue | null }) {
   );
 }
 
-/** The trace-detail Analysis section (4_pages.md): labels → reasoning →
- *  signals → metric scores, audit behind a disclosure. Always renders, with
- *  the four honest states — never a lie. */
+/** The trace-detail Analysis section (4_pages.md): labels → behavior
+ *  summary → reasoning → signals → metric scores, audit behind a
+ *  disclosure. Always renders, with the four honest states — never a lie. */
 export function AnalysisSection({ traceId, isOwner }: { traceId: string; isOwner: boolean }) {
   const [state, setState] = useState<LoadState>({ phase: "loading" });
   const loadTicket = useRef(0);
@@ -217,6 +218,8 @@ function Body({ analysis, isOwner }: { analysis: TraceAnalysis; isOwner: boolean
           <LabelRow name="Task category" label={analysis.labels.task_category} />
         </dl>
       )}
+
+      <BehaviorSummary summary={analysis.summary} />
 
       {analysis.reasoning && (
         <div>

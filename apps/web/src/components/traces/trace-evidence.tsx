@@ -121,8 +121,9 @@ export function TraceEvidence({ traceId, className }: { traceId: string; classNa
     if (state.phase !== "ready") return;
     let cancelled = false;
     const content = state.spans.filter(isContentSpan).slice(0, MAX_CONTENT_SPANS);
-    setConvo({ loaded: 0, total: content.length, done: content.length === 0 });
     (async () => {
+      if (cancelled) return;
+      setConvo({ loaded: 0, total: content.length, done: content.length === 0 });
       let loaded = 0;
       for (const span of content) {
         let retries = 0;

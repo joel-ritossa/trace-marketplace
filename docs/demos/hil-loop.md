@@ -61,9 +61,13 @@ cd services/api && uv run pytest tests/integration/test_hil.py -q
 
 6. Re-run analysis on a trace with an open item
    (`make requeue UPLOAD=<id>` with the fault still armed): the old item
-   flips `superseded`, exactly one fresh item is open — never two. Resolve
-   the outcome and requeue again: the same uncertainty reasons are now
-   filtered (that question was answered by a human) and nothing routes.
+   flips `superseded`, exactly one fresh item is open — never two. Re-arm a
+   confident verdict (`analyze:verdict:success:0.95`) and requeue: the open
+   item flips `superseded` with no fresh one — a re-run that resolves the
+   uncertainty closes the question instead of leaving a stale ask. Resolve
+   the outcome on an open item and requeue again: the same uncertainty
+   reasons are now filtered (that question was answered by a human) and
+   nothing routes.
 
 7. Owner relabel: on any analyzed trace's detail page, Analysis →
    "Relabel" self-creates an item (empty reasons) and lands on the same

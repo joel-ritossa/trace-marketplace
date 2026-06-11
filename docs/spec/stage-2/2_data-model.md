@@ -146,6 +146,7 @@ All additive, via new migrations:
 
 - `uploads.source` text, `cli | web`, default `web`. Set by the API from auth type (API key → `cli`); clients never set it.
 - `profiles.allow_private_llm_analysis` boolean not null default `true` — the per-account opt-out of LLM analysis for private traces ([1_analysis.md](1_analysis.md) Runtime). Editable only by the owner (existing profiles access rule).
+- `profiles.task_categories` text[] not null default `'{}'` — the owner's task scope for the judge's category call ([1_analysis.md](1_analysis.md) Taxonomies): values from the global `task_category` enum (never `other`); empty = unscoped. Editable only by the owner (existing profiles access rule).
 - `traces.total_tokens` integer nullable — ingestion-derived sum of span tokens (importer addition; like `duration_ms`).
 - `dead_letters.trace_id` uuid nullable — analysis tasks are trace-scoped; ingestion rows leave it null.
 - Importer check (not a schema change): trace `name` derivation must produce scannable names (root-span name, falling back to source filename), never a bare id — CLI sync makes this visible at volume.

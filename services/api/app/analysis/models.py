@@ -49,20 +49,91 @@ METRICS = (
     "goal_accuracy",
 )
 
-# Locked at B2 against the dev dataset (buildlog stage-2/B2); additions are
-# additive text values, no contract break.
-TASK_CATEGORIES = frozenset(
-    {
-        "web_research",
-        "customer_ops",
-        "coding",
-        "data_analysis",
-        "scheduling_planning",
-        "content_generation",
-        "retrieval_qa",
-        "other",
-    }
-)
+# Expanded at task-scope (buildlog stage-2/task-scope) from the 8 values
+# locked at B2 — a strict superset, so existing labels stay valid. The
+# canonical source for values, display groups, and the one-liners the
+# category prompt and resolve forms show; web/desktop taxonomy files mirror
+# it. Additions are additive text values, no contract break.
+TASK_CATEGORY_GROUPS: dict[str, dict[str, str]] = {
+    "Software engineering": {
+        "coding": "Writing or modifying application code as the deliverable",
+        "debugging": "Diagnosing and fixing defects or unexpected behavior",
+        "code_review": "Reviewing code changes for correctness and quality",
+        "testing_qa": "Writing or running tests; quality assurance",
+        "devops_infra": "Deploys, infrastructure-as-code, cloud or system operations",
+        "ci_cd": "Build pipelines and release automation",
+        "database_admin": "Schema, migration, and query administration",
+        "security_engineering": "Vulnerability analysis, hardening, secrets handling",
+        "ml_engineering": "Training, evaluating, or deploying ML models",
+    },
+    "Data": {
+        "data_analysis": "Querying, transforming, computing over, or interpreting structured data",
+        "data_engineering": "Data pipelines, ETL, ingestion",
+        "data_visualization": "Charts or dashboards as the deliverable",
+        "reporting_bi": "Recurring business reporting and BI",
+        "financial_analysis": "Financial modeling or accounting analysis",
+    },
+    "Web & research": {
+        "web_research": "Finding, gathering, or synthesizing information from the open web",
+        "web_automation": "Performing actions or transactions on web applications",
+        "web_scraping": "Programmatic extraction of data from websites",
+        "market_research": "Researching markets, products, or pricing",
+        "competitive_analysis": "Monitoring or analyzing competitors",
+        "academic_research": "Literature search, papers, citation work",
+    },
+    "Knowledge & QA": {
+        "retrieval_qa": "Answering questions from a known corpus or knowledge base",
+        "summarization": "Condensing documents, threads, or transcripts",
+        "translation": "Translating between natural languages",
+    },
+    "Content": {
+        "content_generation": "Producing prose or creative artifacts as the deliverable",
+        "technical_writing": "Documentation, specs, guides",
+        "copywriting": "Marketing or promotional copy",
+        "editing_proofreading": "Revising or correcting existing text",
+        "social_media": "Posts, threads, community content",
+    },
+    "Business operations": {
+        "customer_ops": (
+            "Customer-facing operations: account actions, order handling, acting on a user's behalf"
+        ),
+        "customer_support": "Support requests, triage, troubleshooting for customers",
+        "sales_outreach": "Prospecting, outreach, follow-ups",
+        "crm_ops": "CRM record upkeep and workflows",
+        "hr_recruiting": "Sourcing, screening, HR workflows",
+        "legal_review": "Contract or policy review",
+        "compliance": "Regulatory checks and audits",
+        "procurement": "Vendor and purchasing workflows",
+        "invoicing_billing": "Billing, invoices, payments administration",
+    },
+    "Personal & coordination": {
+        "scheduling_planning": "Calendars, bookings, itineraries, coordination",
+        "email_management": "Inbox triage and drafting",
+        "travel_planning": "Trip itineraries and travel bookings",
+        "task_management": "Todo and project tracker upkeep",
+        "personal_assistant": "General life admin and errands",
+    },
+    "Operations & monitoring": {
+        "monitoring_alerting": "Watching systems or metrics; handling alerts",
+        "incident_response": "Diagnosing and mitigating live incidents",
+        "file_management": "Organizing files, drives, archives",
+        "document_processing": "Extracting or structuring data from documents (OCR, forms)",
+    },
+    "Specialized": {
+        "education_tutoring": "Teaching, explaining, grading",
+        "design_assets": "Generating or editing images and design assets",
+        "game_playing": "Games, puzzles, or simulated environments",
+    },
+    "Other": {
+        "other": "None of the above fits",
+    },
+}
+TASK_CATEGORY_DESCRIPTIONS: dict[str, str] = {
+    value: description
+    for group in TASK_CATEGORY_GROUPS.values()
+    for value, description in group.items()
+}
+TASK_CATEGORIES = frozenset(TASK_CATEGORY_DESCRIPTIONS)
 
 
 class SignalsResult(BaseModel):
@@ -144,6 +215,17 @@ class ListingResult(BaseModel):
 
     description: str | None = None
     tags: list[str] = []
+    calls: list[MetricCall] = []
+
+
+class SummaryResult(BaseModel):
+    """Behavior-summary output (additive, post-B0): a gist + step
+    walkthrough of what the agent did — descriptive prose, never a label.
+    No confidence, no routing, no promoted columns; it lives in its
+    `analyzer_results` row and the analysis endpoint reads it from there."""
+
+    gist: str | None = None
+    steps: list[str] = []
     calls: list[MetricCall] = []
 
 
