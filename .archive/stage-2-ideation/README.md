@@ -1,0 +1,16 @@
+# Stage 2 Ideation
+
+Running ideation sessions for stage 2, held while stage 1 was in development. Each file is one session's raw thinking; later sessions build on (and sometimes overturn) earlier ones. Non-normative — like the rest of `.archive/`, nothing here is spec. Stage 2 gets a real `spec/stage-2/` before any code.
+
+## Sessions
+
+| Session | What it covers |
+|---|---|
+| [ideation-session-1.md](ideation-session-1.md) | Broad survey of stage-2 options on top of the stage-1 baseline. Defines the evaluation criteria (exploit the stage-1 data asset, demo as a story, reuse the worker architecture, works with ~20 traces on a laptop). Working decision: enrichment + intelligent discovery (#1) and trace sets / dataset building (#2) as the core, with a ranked stretch list (similar traces, trace diff, aggregate analytics, eval exports, `tracepush`, lint, annotations). |
+| [ideation-session-2.md](ideation-session-2.md) | Meta-level reframe through the Fleet lens (the onsite evaluator builds RL training environments: tasks = prompt + environment + verifier). Conclusion: traces are *ore, not product* — the marketplace is the supply side of an agent-training flywheel. Surveys four refinement products in increasing ambition: trajectories, rewards, tasks, environments. Session 1's core stays; the Fleet lens selects and reframes the stretches. |
+| [ideation-session-3.md](ideation-session-3.md) | Commits to a product thesis: fuse session 2's rewards + task mining into a **data engine for RL training data** — cluster traces into tasks, humans label success/failure, a layered judge learns per-task outcome prediction, uncertainty routes hard cases back to humans. North star: the learned per-task **verifier**; the marketplace's unit of value shifts from "trace" to "task dataset". Includes judge design, risks, sliced build order, demo script, and the open binary-vs-graded label question. |
+| [ideation-session-4.md](ideation-session-4.md) | Adds the **edge listener / passive labeling** layer on top of session 3: a local listener captures traces as agents emit them, enriches them, and prompts the contributor at the moment of capture when the outcome is uncertain — contributors passively label as a side effect of normal work. Label provenance (`machine_labeled` / `human_confirmed` / `human_labeled`) becomes a marketplace quality tier with human-only / no-human configs. Flags the biggest open question: how per-task "learning" actually works (cluster+train vs improved baseline evals vs LLM-generated evals). |
+
+## Status
+
+**Sessions 3 + 4 together are the current leading candidate for the stage-2 direction** (session 3's data engine with session 4's edge listener as the capture/supervision front door). A candidate, not a decision — still open: the intent-clustering prototype against the real dev dataset, the binary-vs-graded label question, the per-task learning mechanism (session 4's big open question), and a proper `spec/stage-2/` draft before any implementation.
