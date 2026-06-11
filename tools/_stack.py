@@ -35,6 +35,9 @@ class StackError(RuntimeError):
     pass
 
 
+_RATE_LIMIT_RETRIES = 5
+
+
 def _request(
     url: str,
     *,
@@ -42,14 +45,21 @@ def _request(
     headers: dict | None = None,
     body: bytes | None = None,
 ) -> tuple[int, bytes]:
-    req = urllib.request.Request(url, method=method, data=body, headers=headers or {})
-    try:
-        with urllib.request.urlopen(req, timeout=30) as res:
-            return res.status, res.read()
-    except urllib.error.HTTPError as err:
-        return err.code, err.read()
-    except urllib.error.URLError as err:
-        raise StackError(f"cannot reach {url}: {err.reason} — is the stack running?") from err
+    # Scripts hammer the API harder than a human; honor 429 Retry-After
+    # instead of surfacing the limiter as a failure.
+    for attempt in range(_RATE_LIMIT_RETRIES + 1):
+        req = urllib.request.Request(url, method=method, data=body, headers=headers or {})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as res:
+                return res.status, res.read()
+        except urllib.error.HTTPError as err:
+            if err.code == 429 and attempt < _RATE_LIMIT_RETRIES:
+                time.sleep(min(int(err.headers.get("Retry-After", 1)), 10))
+                continue
+            return err.code, err.read()
+        except urllib.error.URLError as err:
+            raise StackError(f"cannot reach {url}: {err.reason} — is the stack running?") from err
+    raise AssertionError("unreachable")
 
 
 def sign_in(env: dict[str, str], email: str, password: str) -> str:

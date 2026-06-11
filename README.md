@@ -27,8 +27,9 @@ docker compose up --build      # web :3000, api :8000, redis, worker, scheduler
 Open http://localhost:3000, sign up, and upload a trace file (OTLP JSON) from the Upload page; it is validated, preserved raw, parsed into traces and spans by the worker, and downloadable byte-identical. My Traces lists what was parsed; each trace opens an inspector with the span tree and per-span attributes/events. From there, list a trace on the Marketplace (with the ownership confirmation), where any signed-in user can search, inspect, acquire it ($0), and download the raw payload from their Library.
 
 ```sh
-make seed     # populate the marketplace: fixtures uploaded + listed by a demo contributor
-make smoke    # run the full demo loop end to end (upload → list → search → acquire → download)
+make seed      # populate the marketplace: fixtures uploaded + listed by a demo contributor
+make seed-dev  # same with real benchmark traces, uploaded through the trace-sync CLI
+make smoke     # run the full demo loop end to end (upload → list → search → acquire → download)
 ```
 
 No trace file handy? Use the committed synthetic fixtures in `fixtures/`, or pull real agent-benchmark sessions: `make dev-dataset` converts [Exgentic/agent-llm-traces](https://huggingface.co/datasets/Exgentic/agent-llm-traces) (CDLA-Permissive-2.0) into uploadable OTLP JSON under git-ignored `devdata/`. See `docs/demos/` for guided walkthroughs.

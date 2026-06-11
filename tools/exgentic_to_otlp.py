@@ -16,7 +16,7 @@ The dataset is flattened, so conversion is not 1:1:
 - timestamps are ISO strings (sometimes naive; treated as UTC) → nanos.
 
 Usage:
-    python3 tools/exgentic_to_otlp.py [--count 5] [--offset 0] [--min-spans 0]
+    python3 tools/exgentic_to_otlp.py [--count 5] [--offset 0] [--min-spans 0] [--spread]
 """
 
 import argparse
@@ -30,6 +30,11 @@ from pathlib import Path
 ROWS_URL = "https://datasets-server.huggingface.co/rows"
 DATASET = "Exgentic/agent-llm-traces"
 PAGE_SIZE = 10  # rows average ~1.5 MB; keep responses manageable
+# Dataset row count (static dataset; only --spread stride math uses this).
+TOTAL_ROWS = 1781
+# Rows are grouped by harness/benchmark, so --spread takes a few per strided
+# page instead of a contiguous run — variety over locality.
+SPREAD_PER_PAGE = 3
 OUT_DIR = Path(__file__).parents[1] / "devdata"
 
 
@@ -127,26 +132,47 @@ def convert_session(row: dict) -> dict:
     }
 
 
+def _offsets(args: argparse.Namespace) -> list[int]:
+    """Page offsets to visit. Sequential by default; --spread strides across
+    the dataset so the grouped harness/benchmark blocks all get sampled."""
+    if not args.spread:
+        last_page = max(args.offset, TOTAL_ROWS - PAGE_SIZE)
+        return list(range(args.offset, last_page + PAGE_SIZE, PAGE_SIZE))
+    n_pages = max(1, -(-args.count // SPREAD_PER_PAGE))  # ceil
+    stride = max(PAGE_SIZE, (TOTAL_ROWS - PAGE_SIZE) // max(1, n_pages - 1))
+    return [min(args.offset + i * stride, TOTAL_ROWS - PAGE_SIZE) for i in range(n_pages)]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--count", type=int, default=5, help="sessions to convert")
     parser.add_argument("--offset", type=int, default=0, help="dataset row offset to start at")
     parser.add_argument("--min-spans", type=int, default=0, help="skip sessions with fewer spans")
+    parser.add_argument(
+        "--spread",
+        action="store_true",
+        help="stride across the dataset for harness/benchmark variety",
+    )
     args = parser.parse_args()
 
     OUT_DIR.mkdir(exist_ok=True)
     written = 0
-    offset = args.offset
-    while written < args.count:
+    seen: set[str] = set()
+    for offset in _offsets(args):
+        if written >= args.count:
+            break
         rows = fetch_rows(offset, PAGE_SIZE)
         if not rows:
-            print(f"dataset exhausted at offset {offset}; wrote {written}")
             break
+        taken_this_page = 0
         for row in rows:
             if written >= args.count:
                 break
-            if len(row["spans"]) < args.min_spans:
+            if args.spread and taken_this_page >= SPREAD_PER_PAGE:
+                break
+            if len(row["spans"]) < args.min_spans or row["session_id"] in seen:
                 continue
+            seen.add(row["session_id"])
             otlp = convert_session(row)
             span_count = len(row["spans"]) + 1  # + synthesized root
             name = f"{row['harness']}-{row['benchmark']}-{row['session_id']}-{span_count}spans.json"
@@ -154,7 +180,9 @@ def main() -> None:
             path.write_text(json.dumps(otlp))
             print(f"wrote {path.relative_to(Path.cwd())} ({path.stat().st_size / 1e6:.1f} MB)")
             written += 1
-        offset += PAGE_SIZE
+            taken_this_page += 1
+    if written < args.count:
+        print(f"dataset exhausted; wrote {written} of {args.count}")
 
 
 if __name__ == "__main__":

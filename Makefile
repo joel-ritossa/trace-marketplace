@@ -21,8 +21,13 @@ dev-dataset:
 seed:
 	python3 tools/seed.py
 
+# Same, with real benchmark traces: fetch/convert Exgentic sessions into
+# devdata/ (if empty), upload them through the trace-sync CLI, list them.
+seed-dev:
+	python3 tools/seed_dev.py
+
 # Run the full Stage 1 demo script end to end against the live stack.
 smoke:
 	python3 tools/smoke.py
 
-.PHONY: seed smoke
+.PHONY: seed seed-dev smoke
