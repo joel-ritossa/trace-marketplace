@@ -1,6 +1,7 @@
 "use client";
 
-import { AlertCircle, CheckCircle2, TriangleAlert } from "lucide-react";
+import Link from "next/link";
+import { AlertCircle, ArrowRight, CheckCircle2, TriangleAlert } from "lucide-react";
 import type { Flow } from "@/components/uploads/upload-flow";
 
 export function FlowStatus({ flow }: { flow: Flow }) {
@@ -39,17 +40,41 @@ export function FlowStatus({ flow }: { flow: Flow }) {
       </p>
     );
   }
-  const warnings = upload.parse_warnings ? Object.entries(upload.parse_warnings) : [];
+  // parse_warnings shape: { skipped_spans: N, samples: [...] } — the count is
+  // user-facing; the samples are debugging detail left to the API response.
+  const skipped = upload.parse_warnings?.skipped_spans;
   return (
     <div className="mt-3 flex flex-col gap-1">
       <p className="flex items-center gap-2 text-sm text-status-ok">
         <CheckCircle2 className="size-4 shrink-0" />
         {upload.filename} ingested.
       </p>
-      {warnings.length > 0 && (
+      {typeof skipped === "number" && skipped > 0 && (
         <p className="flex items-center gap-2 text-sm text-warning-deep">
           <TriangleAlert className="size-4 shrink-0" />
-          {warnings.map(([key, value]) => `${key.replaceAll("_", " ")}: ${String(value)}`).join(", ")}
+          {skipped} malformed span{skipped === 1 ? "" : "s"} skipped.
+        </p>
+      )}
+      {upload.trace_ids.length > 0 && (
+        <p className="flex items-center gap-2 text-sm">
+          <ArrowRight className="size-4 shrink-0 text-muted-foreground" />
+          {upload.trace_ids.length === 1 ? (
+            <Link href={`/traces/${upload.trace_ids[0]}`} className="font-medium hover:underline">
+              View the trace
+            </Link>
+          ) : (
+            <span className="flex flex-wrap gap-x-2">
+              {upload.trace_ids.map((traceId, i) => (
+                <Link
+                  key={traceId}
+                  href={`/traces/${traceId}`}
+                  className="font-medium hover:underline"
+                >
+                  Trace {i + 1}
+                </Link>
+              ))}
+            </span>
+          )}
         </p>
       )}
     </div>

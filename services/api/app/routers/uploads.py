@@ -13,7 +13,7 @@ from app.config import settings
 from app.dev import faults
 from app.errors import ApiError
 from app.importers import otlp
-from app.queries import uploads
+from app.queries import traces, uploads
 from app.schemas.upload import (
     UploadCreatedResponse,
     UploadListItem,
@@ -108,7 +108,13 @@ async def create_upload(request: Request, user: CurrentUser) -> UploadCreatedRes
     if fault:
         await faults.arm(str(upload_id), fault)
 
-    await ingest_upload.kiq(str(upload_id))
+    # The committed row is the acceptance of record; a broker blip may delay
+    # ingestion (the stuck-upload sweep re-enqueues it) but must not turn an
+    # already-durable upload into a 500.
+    try:
+        await ingest_upload.kiq(str(upload_id))
+    except Exception:
+        logger.exception("upload %s: enqueue failed; sweep will recover", upload_id)
     logger.info(
         "upload %s created: %s, %d bytes, sha256=%s…", upload_id, filename, len(data), sha256[:12]
     )
@@ -142,13 +148,18 @@ async def list_uploads(
 @router.get("/{upload_id}", response_model=UploadStatusResponse)
 async def get_upload(upload_id: str, user: CurrentUser) -> UploadStatusResponse:
     row = await _owned_or_404(upload_id, user)
+    trace_ids = (
+        await traces.ids_for_upload(db.pool(), str(row["id"]))
+        if row["status"] == "complete"
+        else []
+    )
     return UploadStatusResponse(
         upload_id=str(row["id"]),
         filename=row["filename"],
         status=row["status"],
         error_message=row["error_message"],
         parse_warnings=row["parse_warnings"],
-        trace_ids=[],  # populated when ingestion produces traces (Slice 2)
+        trace_ids=trace_ids,
         created_at=row["created_at"],
         processed_at=row["processed_at"],
     )

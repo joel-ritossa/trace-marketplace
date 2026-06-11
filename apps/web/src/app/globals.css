@@ -1,6 +1,8 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+@import "../components/agent-prism/theme/theme.css";
+@import "../components/agent-prism/theme/tailwind-bridge.css";
 
 /* Defined but never activated: app surfaces are light-only per DESIGN.md.
    Keeping the variant pins shadcn's dark: classes to a .dark class (which we

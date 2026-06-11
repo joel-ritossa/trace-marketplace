@@ -1,0 +1,32 @@
+# Archetype: Auth
+# Used by: /, /auth/sign-in, /auth/sign-up.
+
+screen: auth
+intent: "Get into the product with minimum friction"
+
+layout:
+  no_app_shell: true            # auth pages render outside the authenticated nav
+  centered_card:
+    - product_name              # orientation: what am I signing into
+    - form:
+        sign_in: [email, password]
+        sign_up: [email, password]   # nothing else; one account type, no role/plan steps
+    - submit                    # verb button: "Sign in" / "Create account"; pending state
+    - sibling_link              # sign-in <-> sign-up cross-link
+    - error_area                # credential errors: generic, non-enumerating; format errors: inline at field
+
+behavior:
+  - enter_submits
+  - input_preserved_on_failure
+  - post_auth_redirect_to_originally_requested_url
+  - signed_in_root_redirects_to_library
+  - session_expiry_returns_here_with_message_then_back
+
+states: [idle, submitting, field_error, credential_error, redirecting]
+
+must_load:
+  principles:
+    - authentication/auth_flows.md
+    - forms/data_entry.md
+  anti_patterns: [infinite_form, competing_ctas]
+  checks: validation/checks_by_screen.yaml#auth

@@ -1,0 +1,54 @@
+# Archetype: Upload Flow
+# Used by: /upload. A state machine rendered as one page, not a wizard.
+
+screen: upload_flow
+intent: "Hand the system a trace file; learn what it became"
+
+layout:
+  shell:
+    - top_header_nav            # top bar, never a sidebar (navigation/app_shell.md)
+  header:
+    - page_title                # "Upload"
+  body:
+    - state_panel               # exactly one state renders at a time
+
+state_machine:
+  idle:
+    elements:
+      - drop_zone               # also click-to-browse, keyboard operable
+      - constraints_copy        # "one OTLP JSON file, up to N MB" in idle copy
+    primary: select_file
+  file_selected:
+    elements: [file_chip_with_name_size, remove_file, submit]
+    validation: client_side     # size, extension, single file — before POST
+    primary: submit
+  uploading:
+    elements: [progress_or_spinner, filename]
+  processing:                   # polling GET /v1/uploads/{id}
+    elements: [spinner, status_name_text]   # "received" / "processing" — named, never bare spinner
+    note: navigation away allowed; no beforeunload guard
+  complete:
+    elements:
+      - success_summary         # "Complete — 3 traces created"
+      - created_trace_links     # each links to /traces/[id]
+      - parse_warnings_inline   # adjacent to success when present (partial success)
+      - upload_another
+    primary: open_first_trace
+  failed:
+    elements:
+      - verbatim_error_message  # spec: no generic copy
+      - try_another_file        # resets to idle
+    primary: try_another_file
+  duplicate:
+    style: neutral_informational   # NOT error styling
+    elements: [already_uploaded_copy, link_to_existing_upload]
+
+states: [idle, file_selected, uploading, processing, complete, failed, duplicate]
+
+must_load:
+  principles:
+    - upload/file_upload.md
+    - upload/async_status.md
+    - global/feedback.md
+  anti_patterns: [fabricated_progress, generic_error_swallowing, duplicate_punished_as_failure, infinite_form]
+  checks: validation/checks_by_screen.yaml#upload_flow

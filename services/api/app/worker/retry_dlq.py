@@ -4,6 +4,11 @@ Transient failures re-kick with exponential backoff + jitter; exhaustion writes
 a dead_letters row and marks the upload failed (6_architecture.md). Tasks opt
 in with the retry_dlq label and upload_id as first argument.
 
+The retry budget is `uploads.attempts` — the durable counter incremented by
+each claim — not a message label. A label would reset to zero whenever the
+sweep re-enqueues a lost job, unbounding total work per upload and making
+dead_letters.attempts lie. The requeue CLI resets the counter for a fresh run.
+
 The delayed re-kick is an in-process sleep, not a broker-scheduled message —
 the Redis list broker has no delayed delivery. A worker crash during the wait
 loses only that re-kick, and the stuck-upload sweep re-enqueues it.
@@ -45,8 +50,15 @@ class RetryDlqMiddleware(TaskiqMiddleware):
         if not message.labels.get("retry_dlq"):
             return
 
-        attempt = int(message.labels.get("_retries", 0)) + 1
         upload_id = str(message.args[0] if message.args else message.kwargs["upload_id"])
+        attempt = await uploads.attempt_count(db.pool(), upload_id)
+        if attempt is None:
+            logger.warning(
+                "task %s upload=%s failed but the upload is gone; dropping",
+                message.task_name,
+                upload_id,
+            )
+            return
 
         if attempt < settings.ingest_max_attempts:
             delay = min(
@@ -75,7 +87,7 @@ class RetryDlqMiddleware(TaskiqMiddleware):
             await asyncio.sleep(delay)
             kicker: AsyncKicker[Any, Any] = AsyncKicker(
                 task_name=message.task_name, broker=self.broker, labels=dict(message.labels)
-            ).with_labels(_retries=attempt)
+            )
             await kicker.kiq(*message.args, **message.kwargs)
         except Exception:
             logger.exception(

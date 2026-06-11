@@ -1,0 +1,45 @@
+# Archetype: Review Resolve (Stage 2)
+# Used by: per-item resolve view; reused for owner-initiated relabel.
+# The queue itself uses queue_screen checks (a specialized list).
+
+screen: review_resolve
+intent: "Judge one trace's outcome with the evidence in front of me; move to the next"
+
+layout:
+  shell:
+    - top_header_nav            # top bar, never a sidebar (navigation/app_shell.md); split body gets full width
+  header:
+    - back_to_queue             # restores queue state/position
+    - queue_position            # "3 of 12 from upload X"
+    - next_previous_controls
+  body:                         # split: evidence beside verdict, never separate pages
+    evidence:                   # embeds the trace_detail inspection components
+      - metadata_header
+      - span_tree               # errors flagged; this is what the reviewer reads
+      - span_detail_panel
+    verdict_panel:
+      - routing_reason          # why the machine asked: disagreement / indeterminate / low confidence
+      - machine_verdict_context # outcome + confidence, framed as "the machine's take", NOT preselected
+      - outcome_choice          # ternary radio: success / failure / indeterminate (a valid answer)
+      - failure_mode_select     # conditional on failure; closed 10-category taxonomy with descriptions
+      - task_category_select    # closed taxonomy; independently resolvable
+      - resolve_actions
+  cta:
+    primary: resolve_and_next   # batch sessions are judgment work, not navigation work
+    secondary: resolve
+    quiet: skip
+
+post_resolve:
+  - labels_updated_in_place_with_provenance   # "outcome: failure (human)"
+  - auto_advance_when_resolve_and_next
+
+states: [loading, item_resolved_already, results, error, queue_empty_redirect]
+
+must_load:
+  principles:
+    - review-queue/labeling.md
+    - review-queue/queue.md
+    - trace-inspection/span_tree.md
+    - trace-inspection/detail_panel.md
+  anti_patterns: [granularity_invention, review_guilt_machine, machine_label_passing_as_human]
+  checks: validation/checks_by_screen.yaml#review_resolve

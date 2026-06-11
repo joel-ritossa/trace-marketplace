@@ -1,6 +1,6 @@
 # Stage 2 Infra
 
-The infrastructure components of stage 2, discussed and settled at spec-shaping level. None of this depends on the judging/analysis discussion; where a component touches analysis, only the *plumbing* is defined here and the content is a placeholder. Promote into `spec/stage-2/` once judging is settled.
+The infrastructure components of stage 2, discussed and settled at spec-shaping level. Originally drafted independent of the judging/analysis discussion; judging is now settled, and the analysis-touching sections (§4–§7) reflect its decisions. Promote into `spec/stage-2/` together with `judging/`.
 
 ## 1. Sync CLI
 
@@ -43,6 +43,7 @@ Content is a judging-discussion placeholder; plumbing is fixed:
 ## 5. Subscriptions + bulk acquire
 
 - Subscription = stored query: `id`, `owner_id`, `name`, query params jsonb — **the same filter vocabulary as `GET /v1/traces`**. One filter language everywhere (search UI, subscriptions, later bounties); any field that becomes filterable automatically becomes subscribable.
+- **Filter vocabulary includes numeric range predicates** (`field >= x` and friends) — required by label confidence and `metric_scores` filtering (judging README); applies to stage-1 numerics (duration, tokens) for free.
 - **Event-driven matching, two triggers:** (a) a trace is listed; (b) analysis completes/updates derived fields on a listed trace (a trace may only start matching once the field a rule uses is filled in). No cron sweep.
 - Matches generate **per-match** `subscription_match` notifications (batching/digest is a future knob).
 - Feed: subscription detail page executes the stored query live (backfill for free) with a new-since-last-seen marker.
@@ -53,11 +54,20 @@ Content is a judging-discussion placeholder; plumbing is fixed:
 Analyzers are placeholders; their infrastructure is not:
 
 - Post-ingestion worker job(s) (same taskiq/retry/DLQ machinery as ingestion).
-- Results table: trace ref, analyzer name, analyzer version, output jsonb, confidence — provenance and re-runnability, mirroring the ingestion invariant (re-running an analyzer reproduces its rows).
-- Fields used for *matching* get promoted onto `traces` as real columns/arrays (like `tool_names` today) so rule-based filtering stays plain SQL. Which fields exist is the judging discussion's output; the promotion mechanism is infra.
-- Uncertainty routing: analyzer output below a confidence threshold → review item + notification (see §4).
+- Results table: trace ref, analyzer name, analyzer version, output jsonb, confidence — provenance and re-runnability, mirroring the ingestion invariant (re-running an analyzer reproduces its rows). Two contents notes from the judging side: LLM verdict rows store their **N sampled votes** in the output jsonb (sampled verdicts aren't bit-reproducible; the recorded votes are the audit artifact), and the **model id** rides in the result metadata (judge-model-selection comparisons assume it).
+- Fields used for *matching* get promoted into **`trace_analysis`** — a 1:1 side table keyed by `trace_id`, not new columns on `traces`. Rationale: one writer per table (ingestion owns `traces` and delete-and-rewrites it per upload; analysis owns `trace_analysis` and delete-and-rewrites it per run — re-ingestion and re-analysis stay independent), structural null semantics (no row = not yet analyzed), and zero stage-1 schema contact. Filtered queries take one 1:1 PK join, handled in the shared filter builder. RLS on `trace_analysis` mirrors `traces` exactly; deletes cascade via `trace_id`.
+- Which fields exist in `trace_analysis` is the judging discussion's output; the promotion mechanism is infra.
+- Uncertainty routing: **only the outcome judge creates review items** (settled in judging) — triggers are indeterminate outcome, family-1 disagreement, and low outcome/category vote-share confidence. Other analyzers (signals, metric evals) never route. Plumbing per §4 unchanged.
 
-## 7. Upload source provenance
+## 7. LLM provider dependency
+
+Analysis workers call third-party LLM providers (OpenAI / Anthropic / OpenRouter) — a new external dependency and data flow stage 1 didn't have.
+
+- **Config is env vars with local-demo defaults** (per `AGENTS.md`): provider key(s), judge model, vote count N, confidence thresholds, rendering token budget, default-on metric set. One `.env.example` documents all of it.
+- Must be documented as a required third-party service for running the app (delivery rule); the privacy implication (trace content leaves the box) is tracked in the judging README and needs explicit docs before promote/ship.
+- Workers degrade explicitly when no key is configured: deterministic signals still run; LLM analyzers skip with a logged reason, leaving fields null (fail-open, consistent with derived-field principles).
+
+## 8. Upload source provenance
 
 `uploads.source: cli | web`, inferred by the API from the auth type (API key → `cli`, JWT → `web`). The CLI does not set it. Debugging/analytics only.
 

@@ -1,0 +1,198 @@
+# Machine-Reviewable Checks by Screen Type
+# A reviewing agent loads the entry for the screen under review and verifies
+# each check against the implementation (code reading and/or rendered UI).
+# Checks are boolean. `severity: spec` = violates normative spec; must block.
+# `severity: principle` = violates this repo; fix unless explicitly waived.
+#
+# Cross-references: each check_id is defined in the named principle file.
+
+universal:
+  # Apply to every screen, every time.
+  checks:
+    - id: loading_empty_error_states_present_on_every_data_view
+      severity: principle
+    - id: exactly_one_primary_button_per_screen_state
+      severity: principle
+    - id: api_error_detail_rendered_verbatim
+      severity: spec
+    - id: visibility_badge_on_every_trace_rendering
+      severity: spec
+    - id: disabled_actions_carry_inline_reason
+      severity: principle
+    - id: no_state_encoded_by_color_alone
+      severity: principle
+    - id: all_actions_keyboard_operable
+      severity: principle
+    - id: nav_visible_on_all_authenticated_routes
+      severity: principle
+    - id: shell_is_top_header_no_sidebar
+      severity: principle
+    - id: inspection_surfaces_get_full_viewport_width
+      severity: principle
+    - id: ui_terms_match_spec_vocabulary
+      severity: principle
+    - id: no_confirmation_on_reversible_or_idempotent_actions
+      severity: principle
+
+screen_type: auth
+applies_to: [landing, sign_in, sign_up]
+checks:
+  - signup_fields_limited_to_auth_requirements
+  - sign_in_and_sign_up_cross_linked
+  - field_format_errors_inline
+  - credential_errors_non_enumerating
+  - post_auth_redirect_to_requested_url
+  - signed_in_root_redirects_to_library
+  - input_preserved_on_submit_failure
+  - pending_state_prevents_double_submit
+
+---
+screen_type: upload_flow
+applies_to: [upload]
+checks:
+  - client_side_size_and_type_checks_before_post
+  - accepted_format_and_limit_in_idle_copy
+  - drop_zone_doubles_as_keyboard_accessible_picker
+  - current_status_name_rendered_during_polling
+  - no_fabricated_progress_percentages
+  - terminal_state_replaces_polling_ui
+  - complete_state_links_to_created_traces
+  - failed_state_shows_verbatim_error_and_retry   # severity: spec
+  - warnings_shown_adjacent_to_success            # severity: spec
+  - duplicate_state_visually_distinct_from_failure
+  - duplicate_state_links_to_existing_upload      # severity: spec
+  - no_navigation_blocking_after_accepted_post
+
+---
+screen_type: list_screen
+applies_to: [my_traces, marketplace, library, subscriptions]
+checks:
+  - column_set_matches_section_intent
+  - at_most_7_columns_per_table
+  - full_row_navigates_to_detail
+  - inline_actions_do_not_trigger_row_navigation
+  - badge_styles_consistent_across_surfaces
+  - pagination_server_side
+  - total_count_visible_with_results
+  - empty_state_has_single_cta_to_filling_action
+  - no_results_state_displays_active_filters
+  - filters_clearable_from_no_results_state
+  - every_active_filter_rendered_as_removable_chip
+  - result_count_updates_with_filter_changes
+  - no_empty_flash_during_refetch
+  - list_state_round_trips_through_url
+  - back_button_restores_previous_query
+marketplace_extra:
+  - card_fields_map_to_stored_columns
+  - contributor_and_listed_date_present
+  - acquired_badge_rendered_in_results
+  - acquired_traces_not_hidden_from_results
+  - default_view_shows_results_without_query
+library_extra:
+  - library_offers_per_card_download
+
+---
+screen_type: detail_screen
+applies_to: [trace_detail]
+checks:
+  # Header band
+  - name_status_visibility_counts_actions_above_fold
+  - provenance_block_present_with_upload_link
+  - error_count_navigates_to_error_spans
+  - actions_match_entitlement_flags               # severity: spec
+  - tags_description_editable_inline_for_owner
+  - edit_controls_invisible_to_non_owners
+  # Span tree
+  - every_span_rendered_including_orphans         # severity: spec
+  - node_shows_name_kind_duration_status_without_interaction
+  - error_spans_flagged_with_icon_plus_color      # severity: spec
+  - collapsed_ancestors_roll_up_error_counts
+  - timeline_bars_share_one_time_axis
+  - span_truncation_states_total_count
+  - expansion_and_selection_survive_lazy_loading
+  - tree_supports_arrow_key_navigation
+  # Detail panel
+  - tree_remains_visible_and_interactive_with_panel_open
+  - status_timing_visible_regardless_of_active_tab
+  - full_attributes_and_events_reachable          # severity: spec
+  - copy_affordance_on_json_blocks_and_ids
+  - no_silent_truncation_of_values
+  # Actions / entitlements
+  - acquire_labeled_free                          # severity: spec
+  - acquire_flips_to_download_in_place
+  - inspection_ungated_for_listed_traces          # severity: spec
+  - disabled_download_carries_reason              # severity: spec
+  - confirmation_names_specific_object
+  - confirmation_states_real_consequences
+  # Visibility consent
+  - consent_checkbox_unchecked_by_default         # severity: spec
+  - confirm_disabled_until_checkbox_checked       # severity: spec
+  - dialog_states_exposure_scope_concretely
+  - unlist_is_single_click
+  # States
+  - single_not_found_rendering_for_404_and_no_access  # severity: spec
+  - not_found_offers_recovery_navigation
+
+---
+screen_type: queue_screen
+applies_to: [review_queue]
+checks:
+  - routing_reason_rendered_per_item
+  - machine_verdict_and_confidence_visible_in_queue
+  - queue_copy_advisory_not_blocking
+  - empty_queue_rendered_as_positive_state
+  - queue_groups_by_upload_when_bulk
+  - resolve_and_next_flow_available
+
+---
+screen_type: review_resolve
+applies_to: [review_resolve]
+checks:
+  - trace_inspection_embedded_in_resolve_view
+  - machine_verdict_shown_but_not_preselected
+  - outcome_choices_exactly_ternary               # severity: spec
+  - indeterminate_framed_as_valid_resolution
+  - failure_mode_conditional_on_failure
+  - no_free_form_label_inputs                     # severity: spec
+  - post_resolve_shows_per_field_provenance
+  - partial_resolution_supported
+  - relabel_reuses_resolve_view
+  - return_navigation_restores_list_state
+  - queue_items_offer_next_previous
+
+---
+screen_type: feed
+applies_to: [notifications, subscription_feed]
+checks:
+  - every_notification_links_to_its_object
+  - notification_copy_names_object_and_type
+  - unread_count_on_bell
+  - mark_all_read_available
+  - read_items_remain_accessible
+  - review_requests_digested_per_upload
+  - list_groups_by_subscription_and_type
+  - feed_displays_query_as_chips
+  - new_since_last_seen_marker_present
+bulk_extra:
+  - bulk_bar_shows_live_selection_count
+  - bulk_bar_persistent_during_scroll
+  - clear_selection_always_available
+  - select_all_distinguishes_page_from_query_scope
+  - bulk_action_confirms_final_count
+  - no_auto_acquire_mechanism_exists              # severity: spec
+  - bulk_outcome_itemizes_failures_with_reasons
+  - succeeded_rows_update_in_place
+
+---
+screen_type: settings
+applies_to: [settings_api_keys]
+checks:
+  - plaintext_key_shown_only_at_mint              # severity: spec
+  - one_time_warning_present
+  - copy_button_on_reveal
+  - reveal_dismissed_only_by_user_action
+  - last_used_at_rendered_per_key
+  - scope_stated_in_ui
+  - revoke_confirms_with_consequence
+  - mint_success_includes_usage_snippet
+  - destructive_actions_visually_and_spatially_separated

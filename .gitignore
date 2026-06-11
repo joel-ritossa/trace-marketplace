@@ -46,6 +46,10 @@ pnpm-debug.log*
 
 *.tsbuildinfo
 
+# Real benchmark trace data pulled by `make dev-dataset` — never committed;
+# committed fixtures are synthetic (fixtures/).
+devdata/
+
 # Local tooling
 .DS_Store
 Thumbs.db

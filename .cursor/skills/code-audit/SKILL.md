@@ -5,7 +5,7 @@ description: Run a post-implementation code audit of a build slice in the trace-
 
 # Code Audit
 
-Post-implementation review pass for a slice (see `buildlog/stage-1/README.md`
+Post-implementation review pass for a slice (see `docs/buildlog/stage-1/README.md`
 for where this fits in the slice process). Findings first, fixes only after
 approval, everything recorded in the buildlog.
 
@@ -22,7 +22,7 @@ approval, everything recorded in the buildlog.
 5. **Re-verify end to end.** Lint (`ruff check`, eslint), builds
    (`next build`), compose rebuild, and the slice's done-when criteria.
 6. **Document.** Write findings + fixes to the slice's next numbered buildlog
-   file (`buildlog/stage-1/slice-N/00N_audit.md`).
+   file (`docs/buildlog/stage-1/slice-N/00N_audit.md`).
 
 ## Audit axes
 
@@ -31,7 +31,7 @@ Walk each axis explicitly; say so if an axis is clean.
 1. **Correctness** — real bugs: failures reported as success, unhandled error
    paths, missing-claim/null crashes, race conditions, wrong status codes.
 2. **Spec conformance** — API shapes, error envelope, and behavior match
-   `spec/stage-1/` exactly. The spec is normative.
+   `docs/spec/stage-1/` exactly. The spec is normative.
 3. **Modularity & file structure** — files growing into grab-bags (e.g.
    response models in `main.py`); enforce the routers/schemas/queries/worker
    layout on the backend and `lib/` separation (env, api client, types) on the
@@ -52,7 +52,7 @@ Walk each axis explicitly; say so if an axis is clean.
 Group by category with severity per finding:
 
 - **Bug** — incorrect behavior; must fix.
-- **Spec violation** — diverges from `spec/stage-1/`; must fix or amend spec.
+- **Spec violation** — diverges from `docs/spec/stage-1/`; must fix or amend spec.
 - **Modularity** — structural debt worth paying down now.
 - **Future-proofing** — fine locally, breaks or bites in deployment.
 - **Nit** — optional polish.

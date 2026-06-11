@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Vendored AgentPrism components (degit from evilmartians/agent-prism):
+    // third-party code kept as close to upstream as possible, not held to
+    // this repo's lint rules.
+    "src/components/agent-prism/**",
   ]),
 ]);
 

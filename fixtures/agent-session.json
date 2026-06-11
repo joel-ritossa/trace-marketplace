@@ -1,0 +1,147 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          { "key": "service.name", "value": { "stringValue": "demo-agent-service" } },
+          { "key": "telemetry.sdk.name", "value": { "stringValue": "opentelemetry" } }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": { "name": "demo.agent", "version": "0.1.0" },
+          "spans": [
+            {
+              "traceId": "11111111111111111111111111111111",
+              "spanId": "a000000000000001",
+              "name": "invoke_agent demo-agent",
+              "kind": 1,
+              "startTimeUnixNano": "1768471200000000000",
+              "endTimeUnixNano": "1768471205000000000",
+              "attributes": [
+                { "key": "gen_ai.operation.name", "value": { "stringValue": "invoke_agent" } },
+                { "key": "gen_ai.agent.name", "value": { "stringValue": "demo-agent" } }
+              ],
+              "status": { "code": 1 }
+            },
+            {
+              "traceId": "11111111111111111111111111111111",
+              "spanId": "a000000000000002",
+              "parentSpanId": "a000000000000001",
+              "name": "chat gpt-5",
+              "kind": 3,
+              "startTimeUnixNano": "1768471200100000000",
+              "endTimeUnixNano": "1768471201200000000",
+              "attributes": [
+                { "key": "gen_ai.operation.name", "value": { "stringValue": "chat" } },
+                { "key": "gen_ai.provider.name", "value": { "stringValue": "openai" } },
+                { "key": "gen_ai.request.model", "value": { "stringValue": "gpt-5" } },
+                { "key": "gen_ai.usage.input_tokens", "value": { "intValue": "1200" } },
+                { "key": "gen_ai.usage.output_tokens", "value": { "intValue": "85" } },
+                {
+                  "key": "gen_ai.response.finish_reasons",
+                  "value": { "arrayValue": { "values": [{ "stringValue": "tool_calls" }] } }
+                },
+                {
+                  "key": "gen_ai.input.messages",
+                  "value": {
+                    "stringValue": "[{\"role\": \"user\", \"parts\": [{\"type\": \"text\", \"content\": \"What's the weather in Paris? Use the docs if needed.\"}]}]"
+                  }
+                },
+                {
+                  "key": "gen_ai.output.messages",
+                  "value": {
+                    "stringValue": "[{\"role\": \"assistant\", \"finish_reason\": \"tool_calls\", \"parts\": [{\"type\": \"tool_call\", \"id\": \"call_1\", \"name\": \"get_weather\", \"arguments\": {\"location\": \"Paris\"}}]}]"
+                  }
+                }
+              ],
+              "status": { "code": 1 }
+            },
+            {
+              "traceId": "11111111111111111111111111111111",
+              "spanId": "a000000000000003",
+              "parentSpanId": "a000000000000001",
+              "name": "prepare_context",
+              "kind": 1,
+              "startTimeUnixNano": "1768471201250000000",
+              "endTimeUnixNano": "1768471202350000000",
+              "attributes": [
+                { "key": "traceloop.span.kind", "value": { "stringValue": "task" } },
+                { "key": "traceloop.entity.name", "value": { "stringValue": "prepare_context" } }
+              ],
+              "status": { "code": 1 }
+            },
+            {
+              "traceId": "11111111111111111111111111111111",
+              "spanId": "a000000000000004",
+              "parentSpanId": "a000000000000003",
+              "name": "weather_docs_lookup",
+              "kind": 1,
+              "startTimeUnixNano": "1768471201300000000",
+              "endTimeUnixNano": "1768471201700000000",
+              "attributes": [
+                { "key": "openinference.span.kind", "value": { "stringValue": "RETRIEVER" } },
+                { "key": "retrieval.documents", "value": { "intValue": 3 } }
+              ],
+              "status": { "code": 1 }
+            },
+            {
+              "traceId": "11111111111111111111111111111111",
+              "spanId": "a000000000000005",
+              "parentSpanId": "a000000000000004",
+              "name": "embeddings text-embedding-4",
+              "kind": 3,
+              "startTimeUnixNano": "1768471201320000000",
+              "endTimeUnixNano": "1768471201450000000",
+              "attributes": [
+                { "key": "gen_ai.operation.name", "value": { "stringValue": "embeddings" } },
+                { "key": "gen_ai.request.model", "value": { "stringValue": "text-embedding-4" } }
+              ],
+              "status": { "code": 1 }
+            },
+            {
+              "traceId": "11111111111111111111111111111111",
+              "spanId": "a000000000000006",
+              "parentSpanId": "a000000000000001",
+              "name": "execute_tool get_weather",
+              "kind": 3,
+              "startTimeUnixNano": "1768471202400000000",
+              "endTimeUnixNano": "1768471202900000000",
+              "attributes": [
+                { "key": "gen_ai.operation.name", "value": { "stringValue": "execute_tool" } },
+                { "key": "gen_ai.tool.name", "value": { "stringValue": "get_weather" } },
+                {
+                  "key": "gen_ai.tool.call.arguments",
+                  "value": { "stringValue": "{\"location\": \"Paris\"}" }
+                },
+                {
+                  "key": "gen_ai.tool.call.result",
+                  "value": { "stringValue": "{\"temperature_c\": 18, \"conditions\": \"cloudy\"}" }
+                }
+              ],
+              "status": { "code": 1 }
+            },
+            {
+              "traceId": "11111111111111111111111111111111",
+              "spanId": "a000000000000007",
+              "parentSpanId": "a000000000000001",
+              "name": "llm final answer",
+              "kind": 3,
+              "startTimeUnixNano": "1768471203000000000",
+              "endTimeUnixNano": "1768471204800000000",
+              "attributes": [
+                { "key": "openinference.span.kind", "value": { "stringValue": "LLM" } },
+                { "key": "llm.provider", "value": { "stringValue": "openai" } },
+                { "key": "llm.model_name", "value": { "stringValue": "gpt-5" } },
+                { "key": "llm.token_count.prompt", "value": { "intValue": "2400" } },
+                { "key": "llm.token_count.completion", "value": { "intValue": "120" } },
+                { "key": "llm.token_count.total", "value": { "intValue": "2520" } }
+              ],
+              "status": { "code": 1 }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

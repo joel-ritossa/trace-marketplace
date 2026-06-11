@@ -12,7 +12,7 @@ import re
 
 from app.clients import redis
 from app.config import settings
-from app.worker.errors import PermanentIngestError
+from app.importers.errors import PermanentIngestError
 
 _SPEC_RE = re.compile(r"^(permanent|exhaust|transient:\d+)$")
 _TTL_SECONDS = 3600

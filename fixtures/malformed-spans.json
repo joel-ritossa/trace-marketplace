@@ -1,0 +1,64 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          { "key": "service.name", "value": { "stringValue": "demo-agent-service" } }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": { "name": "demo.agent", "version": "0.1.0" },
+          "spans": [
+            {
+              "traceId": "44444444444444444444444444444444",
+              "spanId": "d000000000000001",
+              "name": "chat gpt-5",
+              "kind": 3,
+              "startTimeUnixNano": "1768471380000000000",
+              "endTimeUnixNano": "1768471381000000000",
+              "attributes": [
+                { "key": "gen_ai.operation.name", "value": { "stringValue": "chat" } },
+                { "key": "gen_ai.provider.name", "value": { "stringValue": "openai" } },
+                { "key": "gen_ai.request.model", "value": { "stringValue": "gpt-5" } }
+              ],
+              "status": { "code": 1 }
+            },
+            {
+              "traceId": "44444444444444444444444444444444",
+              "name": "span without a spanId",
+              "kind": 1,
+              "startTimeUnixNano": "1768471381100000000",
+              "endTimeUnixNano": "1768471381200000000",
+              "attributes": []
+            },
+            {
+              "traceId": "44444444444444444444444444444444",
+              "spanId": "d000000000000003",
+              "parentSpanId": "d000000000000001",
+              "name": "inverted timestamps",
+              "kind": 1,
+              "startTimeUnixNano": "1768471382000000000",
+              "endTimeUnixNano": "1768471381000000000",
+              "attributes": []
+            },
+            {
+              "traceId": "44444444444444444444444444444444",
+              "spanId": "d000000000000004",
+              "parentSpanId": "d000000000000001",
+              "name": "execute_tool get_weather",
+              "kind": 3,
+              "startTimeUnixNano": "1768471381300000000",
+              "endTimeUnixNano": "1768471381800000000",
+              "attributes": [
+                { "key": "gen_ai.operation.name", "value": { "stringValue": "execute_tool" } },
+                { "key": "gen_ai.tool.name", "value": { "stringValue": "get_weather" } }
+              ],
+              "status": { "code": 1 }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

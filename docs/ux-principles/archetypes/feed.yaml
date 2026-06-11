@@ -1,0 +1,40 @@
+# Archetype: Feed (Stage 2)
+# Used by: notifications page; subscription detail feed.
+
+screen: feed
+intent: "Catch up on what happened while I was away; jump to the things that matter"
+
+layout:
+  notifications_variant:
+    trigger: bell_in_shell_edge    # unread count badge; navigates to /notifications (routed page, no popover panel)
+    page:
+      - mark_all_read
+      - grouped_items              # grouped by type + source: digests per upload, per subscription
+      - item: [type_label, object_name, time, unread_indicator]
+    item_click: navigate_to_object # review_request -> queue (filtered); subscription_match -> trace or feed
+    states: [empty_positive, unread_mix, all_read]
+
+  subscription_feed_variant:
+    header:
+      - subscription_name
+      - query_as_filter_chips      # the rule, visible; editable (edit re-runs feed)
+      - match_count
+      - subscription_actions       # rename, edit query, delete (confirm states consequences)
+    body:
+      - new_since_last_seen_divider
+      - result_list                # marketplace-card variant of list_screen
+      - bulk_selection             # checkboxes + persistent bulk bar -> bulk acquire
+    states: [loading, no_matches_yet, results, error]
+
+bulk_acquire:
+  confirm: states_final_count      # "Acquire 12 traces?"
+  result: itemized                 # "8 acquired · 2 already in library · 2 no longer listed"
+  forbidden: auto_acquire          # locked decision; no such toggle may exist
+
+must_load:
+  principles:
+    - notifications/notifications.md
+    - search/saved_queries.md
+    - tables/bulk_selection.md
+  anti_patterns: [auto_acquire_smuggling, review_guilt_machine, navigation_trap]
+  checks: validation/checks_by_screen.yaml#feed

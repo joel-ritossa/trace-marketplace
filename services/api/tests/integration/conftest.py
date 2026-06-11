@@ -58,10 +58,32 @@ async def db():
 
 
 def otlp_payload(marker: str | None = None) -> bytes:
-    """Minimal valid OTLP JSON envelope; marker makes the bytes (sha) unique."""
+    """Minimal ingestable OTLP JSON (one valid span); marker makes the bytes
+    (sha) unique. Since Slice 2 the worker parses payloads, so an empty
+    resourceSpans would be a permanent ingest failure, not a completed upload."""
     import json
 
-    payload: dict = {"resourceSpans": []}
+    payload: dict = {
+        "resourceSpans": [
+            {
+                "scopeSpans": [
+                    {
+                        "spans": [
+                            {
+                                "traceId": "ab" * 16,
+                                "spanId": "cd" * 8,
+                                "name": "integration test span",
+                                "startTimeUnixNano": "1768471200000000000",
+                                "endTimeUnixNano": "1768471201000000000",
+                                "attributes": [],
+                                "status": {"code": 1},
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
     if marker:
         payload["_test_marker"] = marker
     return json.dumps(payload).encode()

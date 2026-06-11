@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 
 const links = [
-  { href: "/", label: "Traces" },
+  { href: "/traces", label: "Traces" },
   { href: "/upload", label: "Upload" },
 ];
 
@@ -19,7 +19,7 @@ export function NavLinks() {
           href={href}
           className={cn(
             "rounded-md px-3 py-1.5 text-sm transition-colors",
-            pathname === href
+            pathname === href || pathname.startsWith(`${href}/`)
               ? "font-medium text-foreground"
               : "text-muted-foreground hover:bg-accent hover:text-foreground",
           )}

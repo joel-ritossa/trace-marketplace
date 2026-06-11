@@ -1,0 +1,56 @@
+# Archetype: List Screen
+# Used by: /traces (table variant), /marketplace + /library (card variant),
+# /subscriptions (table variant). One layout skeleton, per-section fields.
+
+screen: list_screen
+intent: "Scan a collection, narrow it, and pick one item to open (or several to act on)"
+
+layout:
+  shell:
+    - top_header_nav            # top bar, never a sidebar (navigation/app_shell.md); active section marked
+  header:
+    - page_title                # unique per section: "My Traces" / "Marketplace" / "My Library"
+    - result_count              # "312 traces"
+    - primary_action            # only where the section has one: /traces -> "Upload" link; others usually none
+  controls:                     # one shared filter component everywhere
+    - search_input
+    - common_filters_inline     # provider, model, has_errors; stage 2 adds outcome etc.
+    - all_filters_disclosure    # collapsed advanced filters with active-count badge
+    - active_filter_chips       # removable, with clear-all; doubles as subscription preview
+    - save_as_subscription      # stage 2, marketplace only
+  body:
+    - result_list               # table or cards; full row clickable -> /traces/[id]
+    - pagination                # server-side, stable sort, count honest
+  bulk:                         # stage 2, where multi-select ships
+    - row_checkboxes
+    - persistent_bulk_bar       # count + Acquire + select-all-scope + clear
+
+variants:
+  my_traces:
+    style: table
+    columns: [name, created, span_count, errors, duration, model, visibility_badge]
+    empty_cta: { label: "Upload your first trace", href: /upload }
+  marketplace:
+    style: cards
+    fields: [name, contributor, listed_date, model_provider, span_count, errors, duration, in_library_badge, outcome_label_stage2]
+    default_sort: listed_date_desc
+    empty_copy: "Traces appear here when contributors list them"
+  library:
+    style: cards
+    fields: [name, acquired_date, model_provider, span_count, errors, duration, download_action]
+    empty_cta: { label: "Browse the marketplace", href: /marketplace }
+  subscriptions:
+    style: table
+    columns: [name, query_chips, match_count, last_match, actions]
+    empty_cta: { label: "Save a search as a subscription", href: /marketplace }
+
+states: [loading_skeleton_rows, empty, results, no_results_for_query, error]
+
+must_load:
+  principles:
+    - tables/trace_lists.md
+    - search/filtering.md
+    - global/state_handling.md
+    - global/hierarchy.md
+  anti_patterns: [filter_amnesia, blank_state_void, competing_ctas, invisible_visibility]
+  checks: validation/checks_by_screen.yaml#list_screen

@@ -1,0 +1,23 @@
+{
+  "resourceSpans": [
+    {
+      "resource": { "attributes": [] },
+      "scopeSpans": [
+        {
+          "scope": { "name": "demo.minimal" },
+          "spans": [
+            {
+              "traceId": "33333333333333333333333333333333",
+              "spanId": "c000000000000001",
+              "name": "hello span",
+              "kind": 1,
+              "startTimeUnixNano": "1768471320000000000",
+              "endTimeUnixNano": "1768471320250000000",
+              "attributes": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

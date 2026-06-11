@@ -10,6 +10,7 @@ import pytest
 from redis.asyncio import Redis
 
 from app.config import settings
+from app.queries import uploads as uploads_q
 from tests.integration.conftest import otlp_payload
 from tests.integration.test_uploads import upload_file, wait_terminal
 
@@ -90,6 +91,12 @@ async def test_exhausted_retries_dead_letter_and_requeue(
     assert row["attempts"] == settings.ingest_max_attempts
     assert row["requeued_at"] is None
 
+    # The retry budget is the durable counter, so the DLQ record can't lie.
+    upload_attempts = await db.fetchval(
+        "select attempts from uploads where id = $1", uuid.UUID(upload_id)
+    )
+    assert upload_attempts == row["attempts"]
+
     # Disarm the fault, then requeue through the operator CLI.
     redis = Redis.from_url(settings.redis_url)
     await redis.delete(f"fault:{upload_id}")
@@ -110,3 +117,61 @@ async def test_exhausted_retries_dead_letter_and_requeue(
         "select requeued_at from dead_letters where upload_id = $1", uuid.UUID(upload_id)
     )
     assert requeued_at is not None
+
+
+async def test_complete_is_terminal(api: httpx.AsyncClient, db: asyncpg.Connection) -> None:
+    """A stale retry chain or duplicate delivery must not regress `complete`."""
+    res = await upload_file(api, otlp_payload(uuid.uuid4().hex))
+    assert res.status_code == 201
+    upload_id = res.json()["upload_id"]
+    status = await wait_terminal(api, upload_id)
+    assert status["status"] == "complete"
+
+    # Exhausted stale chain trying to dead-letter: guarded no-op.
+    await uploads_q.mark_failed(db, upload_id, "stale failure from a duplicate delivery")
+    assert (
+        await db.fetchval("select status from uploads where id = $1", uuid.UUID(upload_id))
+        == "complete"
+    )
+
+    # Stale duplicate delivery trying to re-claim: refused atomically.
+    assert await uploads_q.mark_processing(db, upload_id) is None
+    assert (
+        await db.fetchval("select status from uploads where id = $1", uuid.UUID(upload_id))
+        == "complete"
+    )
+
+
+async def test_missing_storage_object_fails_permanently(
+    api: httpx.AsyncClient, db: asyncpg.Connection
+) -> None:
+    """A 404 from storage is permanent: fail on attempt 1, no retry burn."""
+    res = await upload_file(api, otlp_payload(uuid.uuid4().hex))
+    assert res.status_code == 201
+    upload_id = res.json()["upload_id"]
+    await wait_terminal(api, upload_id)
+
+    # Point the upload at an object that doesn't exist and force a fresh run.
+    await db.execute(
+        "update uploads set status = 'failed', storage_path = 'raw/nope/missing.json' "
+        "where id = $1",
+        uuid.UUID(upload_id),
+    )
+    result = subprocess.run(
+        ["uv", "run", "python", "-m", "app.cli.requeue", upload_id],
+        cwd=SERVICE_DIR,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+    status = await wait_terminal(api, upload_id, timeout=30.0)
+    assert status["status"] == "failed"
+    assert "missing" in status["error_message"].lower()
+
+    attempts = await db.fetchval("select attempts from uploads where id = $1", uuid.UUID(upload_id))
+    assert attempts == 1  # permanent: no retries
+    dlq = await db.fetchval(
+        "select count(*) from dead_letters where upload_id = $1", uuid.UUID(upload_id)
+    )
+    assert dlq == 0

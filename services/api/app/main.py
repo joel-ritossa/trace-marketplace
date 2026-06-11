@@ -7,7 +7,7 @@ from app.clients import db, redis, storage
 from app.config import settings
 from app.errors import register_error_handlers
 from app.middleware.rate_limit import RateLimitMiddleware
-from app.routers import dev, health, me, uploads
+from app.routers import dev, health, me, traces, uploads
 from app.worker.broker import broker
 
 
@@ -42,6 +42,7 @@ v1 = APIRouter(prefix="/v1")
 v1.include_router(health.router)
 v1.include_router(me.router)
 v1.include_router(uploads.router)
+v1.include_router(traces.router)
 if settings.dev_routes:
     v1.include_router(dev.router)
 app.include_router(v1)

@@ -1,0 +1,65 @@
+# Archetype: Trace Detail
+# Used by: /traces/[traceId] — the core inspection surface. Also embedded
+# (header + tree + panel, minus actions) inside the review_resolve archetype.
+
+screen: trace_detail
+intent: "Understand one trace deeply; act on it according to my entitlement"
+
+layout:
+  shell:
+    - top_header_nav            # top bar, never a sidebar (navigation/app_shell.md)
+  header_band:                  # sticky; identity -> state -> actions, one band
+    - trace_name
+    - status_badge
+    - visibility_badge          # spec: always visible
+    - count_trio                # duration, spans, errors (error count -> jumps to error spans)
+    - action_set                # pure function of is_owner/acquired/can_download
+  metadata_block:
+    - provider_model_service
+    - tools
+    - tags                      # owner: inline editable; link to filtered marketplace
+    - description               # owner: inline editable
+    - provenance                # source format, importer version, upload link
+    - labels_block_stage2       # outcome/failure_mode/category + provenance + confidence; "analysis pending" when null
+  body:                         # master-detail split, resizable; full viewport width — this page breaks out of centered max-width containers
+    main:
+      - span_tree               # full hierarchy, every span, error rollups, shared time axis, expand/collapse all
+      - load_more_boundary      # past ~500 spans; states total count
+    panel:                      # opens on span selection, beside not over
+      - span_header             # name, kind, status, timings, error type, model/tool, tokens — visible on all tabs
+      - tabs                    # input/output (default when semantic), attributes (full raw JSON), events, raw
+
+action_matrix:                  # exactly one primary per entitlement state
+  owner:
+    primary: download
+    secondary: [visibility_toggle, edit_tags_description]
+    destructive: delete         # separated, consequence-stating confirm
+  non_owner_listed_not_acquired:
+    primary: acquire_free
+    disabled_with_reason: { action: download, reason: "acquire to download" }
+  non_owner_acquired:
+    primary: download
+    badge: in_your_library
+
+dialogs:
+  list_trace_consent:           # private -> listed only
+    - consequence_copy          # concrete exposure scope
+    - consent_checkbox          # unchecked; confirm disabled until checked
+    - verb_buttons              # "List trace" / "Cancel"
+  delete_confirm:
+    - names_object
+    - states_consequences
+    - verb_buttons
+
+states: [loading_skeleton, not_found_uniform, results, error_trace_flagged, large_trace_paginated]
+
+must_load:
+  principles:
+    - trace-inspection/metadata_header.md
+    - trace-inspection/span_tree.md
+    - trace-inspection/detail_panel.md
+    - marketplace/acquisition.md
+    - forms/consent_confirmation.md
+    - forms/destructive_actions.md
+  anti_patterns: [span_data_paternalism, client_side_gatekeeping, consent_as_speed_bump, existence_leak, modal_inside_modal, scroll_to_act]
+  checks: validation/checks_by_screen.yaml#detail_screen

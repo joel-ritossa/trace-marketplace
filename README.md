@@ -2,8 +2,8 @@
 
 A marketplace for AI-agent trace data: contributors upload traces, consumers discover, inspect, acquire, and download them.
 
-- Spec: `spec/stage-1/` (normative)
-- Build log: `buildlog/stage-1/`
+- Spec: `docs/spec/stage-1/` (normative)
+- Build log: `docs/buildlog/stage-1/`
 - Engineering rules: `AGENTS.md` · Design system: `DESIGN.md`
 
 ## Stack
@@ -24,7 +24,9 @@ cp .env.example .env
 docker compose up --build      # web :3000, api :8000, redis, worker, scheduler
 ```
 
-Open http://localhost:3000, sign up, and upload a trace file (OTLP JSON) from the Upload page; it is validated, preserved raw, ingested by the worker, and downloadable byte-identical.
+Open http://localhost:3000, sign up, and upload a trace file (OTLP JSON) from the Upload page; it is validated, preserved raw, parsed into traces and spans by the worker, and downloadable byte-identical. The Traces page lists what was parsed; each trace opens an inspector with the span tree, per-span attributes/events, and raw download.
+
+No trace file handy? Use the committed synthetic fixtures in `fixtures/`, or pull real agent-benchmark sessions: `make dev-dataset` converts [Exgentic/agent-llm-traces](https://huggingface.co/datasets/Exgentic/agent-llm-traces) (CDLA-Permissive-2.0) into uploadable OTLP JSON under git-ignored `devdata/`. See `docs/demos/` for guided walkthroughs.
 
 ## Develop (outside Docker)
 
@@ -40,7 +42,7 @@ pnpm install && pnpm --filter web dev                                    # web :
 ## Operations
 
 - **Requeue a dead-lettered upload**: `make requeue UPLOAD=<upload_id>` — resets the upload and enqueues a fresh ingest job (see `dead_letters` table).
-- **Integration tests** (stack must be running): `cd services/api && uv run pytest tests/integration`.
+- **Tests**: `cd services/api && uv run pytest tests/unit` (importer golden + edge cases, no stack needed); `uv run pytest tests/integration` (stack must be running).
 - **Fault injection** (local only, requires `DEV_ROUTES=true`): send `X-Fault: transient:2 | exhaust | permanent` with `POST /v1/uploads` to demo retries and dead-lettering.
 
 ## Database

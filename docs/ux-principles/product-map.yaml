@@ -1,0 +1,148 @@
+# Trace Marketplace — Product Surface Map
+# Phase 1 output: the product's UI surface area, organized by user intent
+# and interaction pattern, not implementation. Derived from docs/spec/stage-1/4_pages.md
+# and .archive/stage-2-planning/spec-shaping/ (infra.md, requirements.md, judging/).
+#
+# stage: 1 = normative spec, shipping now. 2 = planned, under development.
+
+screens:
+  # --- Entry & identity ---
+  - id: landing
+    stage: 1
+    route: /
+    intent: "Decide to sign in/up, or jump straight to library when signed in"
+    archetype: auth
+  - id: sign_in
+    stage: 1
+    route: /auth/sign-in
+    intent: "Return to my account"
+    archetype: auth
+  - id: sign_up
+    stage: 1
+    route: /auth/sign-up
+    intent: "Create an account (single user type: everyone contributes and consumes)"
+    archetype: auth
+
+  # --- Contribution ---
+  - id: upload
+    stage: 1
+    route: /upload
+    intent: "Submit a trace file and watch it become (or fail to become) traces"
+    archetype: upload_flow
+  - id: my_traces
+    stage: 1
+    route: /traces
+    intent: "See and manage everything I have uploaded (private + listed)"
+    archetype: list_screen
+
+  # --- Inspection (the core surface) ---
+  - id: trace_detail
+    stage: 1
+    route: /traces/[traceId]
+    intent: "Inspect a trace deeply: metadata, full span tree, per-span detail; act on it (list/acquire/download/delete). Stage 2 adds an Analysis section (labels + provenance/confidence, judge reasoning, signals, metric scores; audit details behind disclosure)"
+    archetype: detail_screen
+
+  # --- Discovery & consumption ---
+  - id: marketplace
+    stage: 1
+    route: /marketplace
+    intent: "Find listed traces worth acquiring via search and filters"
+    archetype: list_screen
+  - id: library
+    stage: 1
+    route: /library
+    intent: "Get back to traces I already acquired; download them"
+    archetype: list_screen
+
+  # --- Stage 2: analysis & human-in-the-loop ---
+  - id: review_queue
+    stage: 2
+    route: /review (planned)
+    intent: "Work through traces the analyzers were uncertain about"
+    archetype: queue_screen
+  - id: review_resolve
+    stage: 2
+    route: /review/[itemId] (planned)
+    intent: "Judge one trace: outcome (success/failure/indeterminate), failure mode, category"
+    archetype: review_resolve
+  - id: notifications
+    stage: 2
+    route: bell + /notifications (planned)
+    intent: "Learn that something needs me (review_request), matched me (subscription_match), or failed quietly (upload_failed, CLI uploads only)"
+    archetype: feed
+  - id: subscriptions
+    stage: 2
+    route: /subscriptions (planned)
+    intent: "Manage saved queries that watch the marketplace for me"
+    archetype: list_screen
+  - id: subscription_feed
+    stage: 2
+    route: /subscriptions/[id] (planned)
+    intent: "See matches (backfill + new-since-last-seen), multi-select, bulk-acquire"
+    archetype: feed
+  - id: settings_api_keys
+    stage: 2
+    route: /settings (planned)
+    intent: "Mint and revoke API keys for the sync CLI; edit profile display name; toggle LLM analysis of private traces (consequence-stating, default on)"
+    archetype: settings
+  - id: uploads_history
+    stage: 2
+    route: /uploads (planned)
+    intent: "See upload history and failed ingestions — especially CLI-synced uploads that failed while nobody was watching"
+    archetype: list_screen
+
+workflows:
+  - id: contribute_trace
+    stage: 1
+    steps: [upload_file, watch_ingestion_status, open_created_trace, inspect_spans]
+  - id: list_trace
+    stage: 1
+    steps: [open_trace_detail, toggle_visibility, confirm_ownership_consent]
+    note: "Listing is the consent act; privacy hinges on this interaction"
+  - id: discover_and_acquire
+    stage: 1
+    steps: [search_marketplace, filter_results, open_trace_detail, inspect, acquire, download]
+  - id: resolve_review_item
+    stage: 2
+    steps: [see_notification, open_queue, open_item, inspect_trace, set_outcome, resolve]
+  - id: subscribe_and_bulk_acquire
+    stage: 2
+    steps: [build_filter_query, save_as_subscription, get_match_notifications, open_feed, multi_select, bulk_acquire]
+  - id: set_up_cli_sync
+    stage: 2
+    steps: [open_settings, mint_api_key, copy_key_once, configure_cli]
+  - id: bulk_list_traces
+    stage: 2
+    steps: [multi_select_own_traces, confirm_batch_consent, traces_listed]
+    note: "Batched consent: one dialog naming the exact count, same affirmative ownership checkbox, explicit selection only (no 'list all'). Listing remains the consent act"
+
+shared_patterns:
+  - id: result_list
+    note: "Tables (/traces) and result cards (/marketplace, /library) over the same data shape"
+  - id: search_and_filters
+    note: "One filter vocabulary everywhere: search UI, subscriptions, bounties. Any filterable field is subscribable."
+  - id: status_badge
+    note: "Visibility (private/listed), ingestion status, span status, outcome/provenance (stage 2). Always visible."
+  - id: span_tree_master_detail
+    note: "Tree on the left, span detail panel on selection (agent-prism components)"
+  - id: async_status_polling
+    note: "received -> processing -> complete | failed, with verbatim error messages"
+  - id: destructive_confirm
+    note: "Delete trace, revoke API key"
+  - id: consent_checkbox
+    note: "Ownership confirmation when flipping private -> listed"
+  - id: empty_state
+    note: "Every list has a cross-linking empty state (traces -> /upload, library -> /marketplace)"
+  - id: entitlement_actions
+    note: "Acquire / download / in-your-library driven by is_owner/acquired/can_download API flags"
+  - id: bulk_selection
+    stage: 2
+    note: "Multi-select + bulk acquire in results and feeds; bulk list on /traces (batched consent); bulk download in library (zip + labels.jsonl). No auto-acquire anywhere."
+
+cross_cutting_rules:
+  # From docs/spec/stage-1/4_pages.md — these are product law, not suggestions.
+  - "Real status and message always shown; never a generic 'something went wrong' when the API gives a reason"
+  - "Visibility is always visible: every trace rendering carries a private/listed badge"
+  - "The UI never enforces access; it renders what the API returns and explains 4xx reasons"
+  - "Not-found covers no-access by design (no information leak about private traces)"
+  - "Light-only UI; tokens from DESIGN.md; components from shadcn/ui; icons from lucide-react"

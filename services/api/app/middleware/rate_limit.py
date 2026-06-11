@@ -7,9 +7,11 @@ dependency; here we only need a cheap stable key (a forged sub only rate-limits
 the forger). Unauthenticated requests are covered by the global bucket alone.
 """
 
+import logging
 import time
 
 import jwt
+from redis.exceptions import RedisError
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import Response
@@ -17,6 +19,8 @@ from starlette.responses import Response
 from app.clients import redis
 from app.config import settings
 from app.errors import error_response
+
+logger = logging.getLogger(__name__)
 
 # Atomic refill-and-take. Returns {allowed, retry_after_seconds}.
 _TOKEN_BUCKET_LUA = """
@@ -88,17 +92,22 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     )
                 )
 
-        if self._script is None:
-            self._script = redis.client().register_script(_TOKEN_BUCKET_LUA)
-        now = time.time()
-        for key, rate, burst in buckets:
-            allowed, retry_after = await self._script(keys=[key], args=[rate, burst, now])
-            if not allowed:
-                return error_response(
-                    "rate_limited",
-                    "Too many requests; slow down.",
-                    429,
-                    headers={"Retry-After": str(max(1, int(retry_after)))},
-                )
+        # Fail open on Redis loss: rate-limit state is not state of record, so
+        # the limiter's backing store must not gate Postgres-only reads.
+        try:
+            if self._script is None:
+                self._script = redis.client().register_script(_TOKEN_BUCKET_LUA)
+            now = time.time()
+            for key, rate, burst in buckets:
+                allowed, retry_after = await self._script(keys=[key], args=[rate, burst, now])
+                if not allowed:
+                    return error_response(
+                        "rate_limited",
+                        "Too many requests; slow down.",
+                        429,
+                        headers={"Retry-After": str(max(1, int(retry_after)))},
+                    )
+        except (RedisError, OSError) as exc:
+            logger.warning("rate limiter unavailable (%s); failing open", exc)
 
         return await call_next(request)

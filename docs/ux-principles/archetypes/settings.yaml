@@ -1,0 +1,45 @@
+# Archetype: Settings (Stage 2)
+# Used by: API key management; grows sections (profile) without changing shape.
+
+screen: settings
+intent: "Configure my account's machinery; mint/revoke CLI credentials safely"
+
+layout:
+  shell:
+    - top_header_nav            # top bar, never a sidebar (navigation/app_shell.md); reached via account menu, not a nav section
+  header:
+    - page_title                # "Settings"
+  body:
+    sections:                   # grouped, labeled; each section self-contained
+      - api_keys:
+          - section_intro       # what keys are for: the sync CLI; upload-only scope stated
+          - key_list            # name · created · last_used_at ("never used") · scope · [Revoke]
+          - mint_form           # one name field + "Create key" (verb button)
+          - cli_docs_link
+    danger_separation: true     # revoke styled danger, spatially separated per row
+
+mint_flow:
+  reveal_state:                 # the critical moment
+    - plaintext_key_monospace
+    - copy_button
+    - one_time_warning          # "you won't be able to see this key again"
+    - cli_usage_snippet         # TRACE_API_KEY=... trace-sync watch <path>
+    dismissal: user_action_only # no auto-dismiss, no navigation stealing it
+  after_dismiss:
+    key_renders_as: name_plus_prefix_only
+
+revoke_flow:
+  confirm:
+    - names_key
+    - states_consequence        # "The CLI using it will stop authenticating immediately"
+    - verb_buttons              # "Revoke key" / "Cancel"
+
+states: [loading, no_keys_yet_with_cta, key_list, reveal, error]
+
+must_load:
+  principles:
+    - settings/api_keys.md
+    - forms/data_entry.md
+    - forms/destructive_actions.md
+  anti_patterns: [secret_reshow_pretense, excessive_confirmation, hidden_save]
+  checks: validation/checks_by_screen.yaml#settings

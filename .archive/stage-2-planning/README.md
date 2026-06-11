@@ -12,4 +12,4 @@ Working area for figuring out stage 2 before it becomes a normative `spec/stage-
 
 ## Current status
 
-Direction is finalized at the requirements level (see [spec-shaping/requirements.md](spec-shaping/requirements.md)): base = sync CLI → analysis with web human-in-the-loop → subscriptions + bulk acquire; extensions = task bounties, desktop notifications, derived-field similarity. Infra is being ironed out first; everything that *analyzes* traces (judging/labeling/evals) is an explicit placeholder pending its own discussion.
+**Promoted.** `spec/stage-2/` is now the normative stage-2 spec; this directory is the historical record of how it was shaped. These docs were not retro-edited at promotion — where they disagree with the spec (including the snapshot framing in `spec-shaping/requirements.md`, written while judging was still open), the spec wins. Extension designs live in `extensions/`; deferred candidates in `follow-up/`.

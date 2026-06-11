@@ -1,0 +1,85 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          { "key": "service.name", "value": { "stringValue": "demo-agent-service" } }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": { "name": "demo.agent", "version": "0.1.0" },
+          "spans": [
+            {
+              "traceId": "22222222222222222222222222222222",
+              "spanId": "b000000000000001",
+              "name": "invoke_agent demo-agent",
+              "kind": 1,
+              "startTimeUnixNano": "1768471260000000000",
+              "endTimeUnixNano": "1768471263500000000",
+              "attributes": [
+                { "key": "gen_ai.operation.name", "value": { "stringValue": "invoke_agent" } },
+                { "key": "gen_ai.agent.name", "value": { "stringValue": "demo-agent" } }
+              ],
+              "status": { "code": 2, "message": "agent run failed" }
+            },
+            {
+              "traceId": "22222222222222222222222222222222",
+              "spanId": "b000000000000002",
+              "parentSpanId": "b000000000000001",
+              "name": "chat gpt-5",
+              "kind": 3,
+              "startTimeUnixNano": "1768471260050000000",
+              "endTimeUnixNano": "1768471261000000000",
+              "attributes": [
+                { "key": "gen_ai.operation.name", "value": { "stringValue": "chat" } },
+                { "key": "gen_ai.provider.name", "value": { "stringValue": "openai" } },
+                { "key": "gen_ai.request.model", "value": { "stringValue": "gpt-5" } },
+                { "key": "gen_ai.usage.input_tokens", "value": { "intValue": "900" } },
+                { "key": "gen_ai.usage.output_tokens", "value": { "intValue": "40" } }
+              ],
+              "status": { "code": 1 }
+            },
+            {
+              "traceId": "22222222222222222222222222222222",
+              "spanId": "b000000000000003",
+              "parentSpanId": "b000000000000001",
+              "name": "execute_tool web_search",
+              "kind": 3,
+              "startTimeUnixNano": "1768471261100000000",
+              "endTimeUnixNano": "1768471263400000000",
+              "attributes": [
+                { "key": "gen_ai.operation.name", "value": { "stringValue": "execute_tool" } },
+                { "key": "gen_ai.tool.name", "value": { "stringValue": "web_search" } },
+                {
+                  "key": "gen_ai.tool.call.arguments",
+                  "value": { "stringValue": "{\"query\": \"weather paris\"}" }
+                }
+              ],
+              "events": [
+                {
+                  "timeUnixNano": "1768471263390000000",
+                  "name": "exception",
+                  "attributes": [
+                    { "key": "exception.type", "value": { "stringValue": "TimeoutError" } },
+                    {
+                      "key": "exception.message",
+                      "value": { "stringValue": "web_search timed out after 2.3s" }
+                    },
+                    {
+                      "key": "exception.stacktrace",
+                      "value": {
+                        "stringValue": "Traceback (most recent call last):\n  File \"agent.py\", line 42, in run_tool\nTimeoutError: web_search timed out after 2.3s"
+                      }
+                    }
+                  ]
+                }
+              ],
+              "status": { "code": 2, "message": "tool timed out" }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

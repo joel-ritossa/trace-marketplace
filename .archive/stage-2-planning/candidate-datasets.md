@@ -16,7 +16,7 @@ Useful structural insight: **any trace corpus dumped from a benchmark run is aut
 - 6 benchmarks; **4 non-coding**: TAU-Bench Airline/Retail/Telecom (customer-service tool use — maximally enterprise/Fleet-flavored), BrowseCompPlus, AppWorld. Exclude SWE-bench for the non-coding preference.
 - 5 models × 5 agent frameworks attempting the *same benchmark tasks* → task clusters exist by construction, with ground truth to recover. De-risks the scariest part of the pivot (does intent clustering produce mush?) and enables same-task leaderboards immediately.
 - Benchmark tasks have known pass/fail criteria → outcome labels anchorable to ground truth.
-- License not visible on the card — verify.
+- License verified 2026-06-10: CDLA-Permissive-2.0 (per HF dataset tags). Open access (TRAIL, by contrast, is now gated).
 
 ### McGill-NLP/agent-reward-bench — human outcome labels (the "learning" corpus)
 
