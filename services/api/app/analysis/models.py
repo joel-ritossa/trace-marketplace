@@ -36,7 +36,8 @@ FAILURE_MODES = frozenset(
     }
 )
 
-# Starting set; finalized against the dev/candidate datasets before B2 lock.
+# Locked at B2 against the dev dataset (buildlog stage-2/B2); additions are
+# additive text values, no contract break.
 TASK_CATEGORIES = frozenset(
     {
         "web_research",
@@ -69,11 +70,21 @@ class SignalsResult(BaseModel):
 
 class JudgeVote(BaseModel):
     """One sampled run of one composed call — the stored audit artifact.
-    Values are labels + reasoning snippets, never trace content."""
+    Values are labels + reasoning snippets, never trace content.
+
+    Self-report + per-call cost fields added in B2 (additive; each vote is
+    exactly one LLM call, so the audit artifact carries what it cost)."""
 
     call: Literal["outcome", "failure_mode", "category"]
     value: str
     reasoning: str | None = None
+    # Self-reported confidence; the fold uses it only at N=1 (vote share is
+    # meaningless there). Null on malformed votes.
+    confidence: float | None = None
+    latency_ms: int | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cost_usd: float | None = None
 
 
 class JudgeVerdict(BaseModel):

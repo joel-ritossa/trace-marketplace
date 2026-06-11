@@ -30,6 +30,7 @@ flowchart TD
         A2["A2 analysis plumbing"]
         A3["A3 HIL loop"]
         A4["A4 discovery at scale"]
+        A5["A5 redaction"]
     end
 
     INT["Integration"]
@@ -46,7 +47,9 @@ flowchart TD
     B3 -. "metric_scores keys" .-> A4
     s3 ==> A4
     s3 -. "marketplace badges only" .-> A3
+    s2 --> A5
     A4 --> INT
+    A5 --> INT
     B4 -. "report only" .-> INT
 ```
 
@@ -58,7 +61,7 @@ flowchart TD
 **B1 — Deterministic signals.** Catalog, loop detection, `failure_suspected`; golden tests; hit-rate measurement on the dev dataset locks the promotion list.
 *Done when:* golden tests pass; hit-rate report exists; the runner emits signals for every dev-dataset trace.
 
-**B2 — Outcome judge.** Structured-output client; the three composed calls with versioned seeded prompts; self-consistency voting + confidence formula; the routing function; no-key skip.
+**B2 — Outcome judge.** Structured-output client over litellm (the pinned provider layer — one wrapped module, no direct provider SDKs, per-call cost/latency recorded); the three composed calls with versioned seeded prompts; self-consistency voting + confidence formula; the routing function; no-key skip.
 *Done when:* the runner judges fixtures end to end (votes + reasoning recorded); disagreement/indeterminate/low-confidence fixtures produce the right routing reasons; a keyless run skips cleanly.
 
 **B3 — Quality metrics.** Critics (sourced prompts) + pinned RAGAS collections behind applicability predicates; default-on set; verify RAGAS against our trace shapes.
@@ -80,6 +83,9 @@ flowchart TD
 
 **A4 — Discovery at scale** (needs stage-1 slice 3; consumes B3). Filter-language extension (analysis fields, min-bound predicates, `metric` param, `trace_analysis` join); subscriptions with event-driven matching + feed pages + "Save as subscription"; listing wires the opt-out re-run hook (visibility → listed re-enqueues `analyze_trace` for `owner_opt_out`-skipped traces before matching); bulk acquire / list-unlist (batched consent) / download (zip + `labels.jsonl`).
 *Done when:* demo-script steps 6–9 pass end to end.
+
+**A5 — Redaction** ([7_redaction.md](7_redaction.md); needs only stage-1 slice 2, parallel with A2–A4). Scrub step in the importer (`detect-secrets` + in-house PII recognizers, deterministic HMAC placeholders); `span_raw` table + `uploads` redaction columns with RLS; scrubbed payload artifact; owner/non-owner read and download boundaries; golden + determinism tests. Sequencing note: if A5 lands after analysis plumbing, already-analyzed traces are backfilled by re-ingest + re-analysis (delete-and-rewrite covers both).
+*Done when:* a fixture seeded with secrets/PII ingests with placeholders in `spans` and raw values in owner-only `span_raw`; a non-owner span view and acquirer download show placeholders while the owner sees originals; the negative-golden (id/hash-heavy) fixture shows zero replacements; re-ingest is byte-identical; redaction counts appear on the upload.
 
 ## Integration
 

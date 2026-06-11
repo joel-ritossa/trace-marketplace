@@ -9,6 +9,7 @@ from typing import Any
 from app.analysis import TraceInput
 from app.analysis.trace_input import SpanInput
 from app.importers import otlp
+from app.redaction import OFFLINE_SALT
 
 FIXTURES_DIR = Path(__file__).parents[4] / "fixtures"
 
@@ -17,7 +18,9 @@ _T0 = datetime(2026, 1, 1, tzinfo=UTC)
 
 def load_fixture_trace(name: str, index: int = 0) -> TraceInput:
     payload = json.loads((FIXTURES_DIR / f"{name}.json").read_text())
-    return TraceInput.from_import(otlp.import_payload(payload).traces[index])
+    return TraceInput.from_import(
+        otlp.import_payload(payload, redaction_salt=OFFLINE_SALT).traces[index]
+    )
 
 
 def make_span(

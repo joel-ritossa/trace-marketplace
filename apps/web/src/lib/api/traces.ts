@@ -9,6 +9,19 @@ export type TraceSort = "created_at" | "duration_ms" | "span_count";
 export type TraceScope = "mine" | "marketplace" | "acquired";
 export type TraceVisibility = "private" | "listed";
 
+// Analysis vocabulary (schemas/analysis.py).
+export type Outcome = "success" | "failure" | "indeterminate";
+export type Provenance = "machine" | "human_confirmed" | "human";
+export type AnalysisState = "pending" | "complete" | "skipped" | "failed";
+export type SkipReason = "not_configured" | "owner_opt_out";
+
+type AnalysisFields = {
+  outcome: Outcome | null;
+  outcome_confidence: number | null;
+  outcome_provenance: Provenance | null;
+  analysis_state: AnalysisState;
+};
+
 export type TraceListItem = {
   trace_id: string;
   name: string;
@@ -28,7 +41,7 @@ export type TraceListItem = {
   is_owner: boolean;
   acquired: boolean;
   acquired_at: string | null;
-};
+} & AnalysisFields;
 
 export type TraceList = { traces: TraceListItem[]; total: number };
 
@@ -59,6 +72,45 @@ export type TraceDetail = {
   is_owner: boolean;
   acquired: boolean;
   can_download: boolean;
+  total_tokens: number | null;
+} & AnalysisFields;
+
+export type LabelValue = {
+  value: string;
+  confidence: number | null;
+  provenance: Provenance;
+};
+
+export type TraceAnalysis = {
+  analysis_state: AnalysisState;
+  skip_reason: SkipReason | null;
+  failed_reason: string | null;
+  labels: {
+    outcome: LabelValue | null;
+    failure_mode: LabelValue | null;
+    task_category: LabelValue | null;
+  };
+  reasoning: string | null;
+  signals: {
+    has_retry_loop: boolean | null;
+    loop_kind: string | null;
+    recovered_from_error: boolean | null;
+    truncation_suspected: boolean | null;
+    llm_call_count: number | null;
+    tool_call_count: number | null;
+  } | null;
+  metric_scores: Record<string, number | boolean> | null;
+  open_review_item_id: string | null;
+  audit: {
+    analyzers: {
+      analyzer: string;
+      analyzer_version: string;
+      model_id: string | null;
+      confidence: number | null;
+      votes: Record<string, unknown>[] | null;
+      rendering_truncated: boolean | null;
+    }[];
+  };
 };
 
 export type TraceFilters = {
@@ -124,8 +176,10 @@ export async function listTraces(
   scope: TraceScope = "mine",
   sort: TraceSort = "created_at",
   filters: TraceFilters = {},
+  limit = 25,
+  offset = 0,
 ): Promise<TraceList> {
-  const params = new URLSearchParams({ scope, sort });
+  const params = new URLSearchParams({ scope, sort, limit: String(limit), offset: String(offset) });
   for (const [key, value] of Object.entries(filters)) {
     if (value !== undefined && value !== "" && value !== false) params.set(key, String(value));
   }
@@ -134,6 +188,10 @@ export async function listTraces(
 
 export async function getTrace(traceId: string): Promise<TraceDetail> {
   return apiFetch<TraceDetail>(`/v1/traces/${traceId}`);
+}
+
+export async function getTraceAnalysis(traceId: string): Promise<TraceAnalysis> {
+  return apiFetch<TraceAnalysis>(`/v1/traces/${traceId}/analysis`);
 }
 
 export async function updateTrace(traceId: string, update: TraceUpdate): Promise<TraceDetail> {

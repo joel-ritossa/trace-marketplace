@@ -6,7 +6,7 @@ require DB/Redis/Supabase variables. All values are local-demo defaults,
 overridable via `ANALYSIS_*` env vars documented in `.env.example`.
 """
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.env import env_files
@@ -27,6 +27,18 @@ class AnalysisSettings(BaseSettings):
     # Loop detection: exact-repeat / stagnation threshold (1_analysis.md,
     # N = 3 default). Cycle parameters are spec-fixed constants.
     loop_n: int = 3
+
+    # Outcome judge (1_analysis.md Family 2 / HIL routing). One model for
+    # all three composed calls — analyzer_results.model_id is one column on
+    # the judge's one row. Consensus is strict (share must exceed it) and
+    # bounded ≥ 0.5 so at most one label can ever clear it;
+    # confidence_threshold is the single routing knob for both the outcome
+    # and task_category triggers. Misconfiguration fails at settings load,
+    # not mid-analysis.
+    judge_model: str = "openai/gpt-5-mini"
+    judge_votes: int = Field(3, ge=1)
+    judge_consensus: float = Field(0.5, ge=0.5, lt=1)
+    confidence_threshold: float = 0.7
 
 
 class RendererConfig(BaseModel):

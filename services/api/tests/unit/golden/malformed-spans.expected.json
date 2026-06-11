@@ -16,6 +16,7 @@
         "get_weather"
       ],
       "error_types": [],
+      "total_tokens": null,
       "spans": [
         {
           "source_span_id": "d000000000000001",
@@ -39,7 +40,14 @@
             "gen_ai.provider.name": "openai",
             "gen_ai.request.model": "gpt-5"
           },
-          "events": []
+          "events": [],
+          "raw_attributes": {
+            "gen_ai.operation.name": "chat",
+            "gen_ai.provider.name": "openai",
+            "gen_ai.request.model": "gpt-5"
+          },
+          "raw_events": [],
+          "raw_status_message": null
         },
         {
           "source_span_id": "d000000000000004",
@@ -62,7 +70,13 @@
             "gen_ai.operation.name": "execute_tool",
             "gen_ai.tool.name": "get_weather"
           },
-          "events": []
+          "events": [],
+          "raw_attributes": {
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.tool.name": "get_weather"
+          },
+          "raw_events": [],
+          "raw_status_message": null
         }
       ]
     }

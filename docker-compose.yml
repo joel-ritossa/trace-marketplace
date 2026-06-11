@@ -12,6 +12,21 @@ x-backend-env: &backend-env
   # Dev surface + fault injection; the worker honors X-Fault markers only when
   # this is set. Defaults on for the local stack, overridable from .env.
   DEV_ROUTES: ${DEV_ROUTES:-true}
+  # Analysis (stage 2): pass-through when set in .env / the shell, omitted
+  # when unset (a bare key would poison the keyless skip: an empty-string
+  # provider key counts as configured). Keyless = the judge skips honestly.
+  ANALYSIS_JUDGE_MODEL:
+  ANALYSIS_JUDGE_VOTES:
+  ANALYSIS_JUDGE_CONSENSUS:
+  ANALYSIS_CONFIDENCE_THRESHOLD:
+  ANALYSIS_LOOP_N:
+  ANALYSIS_RENDER_BUDGET_TOKENS:
+  ANALYSIS_RENDER_FINAL_STEPS:
+  ANALYSIS_RENDER_TOOL_FIELD_CAP_CHARS:
+  ANALYSIS_RENDER_CONVERSATION_CAP_CHARS:
+  OPENAI_API_KEY:
+  ANTHROPIC_API_KEY:
+  OPENROUTER_API_KEY:
 
 services:
   redis:

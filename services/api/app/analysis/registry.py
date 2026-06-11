@@ -13,7 +13,8 @@ from dataclasses import dataclass
 from pydantic import BaseModel
 
 from app.analysis.config import AnalysisSettings
-from app.analysis.models import AnalyzerRun, SignalsResult
+from app.analysis.judge import JUDGE_VERSION, run_judge
+from app.analysis.models import AnalyzerRun, JudgeVerdict, SignalsResult
 from app.analysis.signals import SIGNALS_VERSION, run_signals
 from app.analysis.trace_input import TraceInput
 
@@ -71,5 +72,15 @@ ANALYZERS: dict[str, AnalyzerSpec] = {
     "stub": AnalyzerSpec(name="stub", version="1", result_model=StubResult, run=_run_stub),
     "signals": AnalyzerSpec(
         name="signals", version=SIGNALS_VERSION, result_model=SignalsResult, run=run_signals
+    ),
+    "judge": AnalyzerSpec(
+        name="judge",
+        version=JUDGE_VERSION,
+        result_model=JudgeVerdict,
+        run=run_judge,
+        # The judge applies the disagreement cap internally, so this is the
+        # final (capped) outcome confidence — what analyzer_results stores.
+        confidence=lambda v: v.outcome_confidence,
+        model_id=lambda s: s.judge_model,
     ),
 }

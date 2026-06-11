@@ -57,6 +57,8 @@ Ingestion is a pure function of the raw stored payload. A (re)run of `ingest_upl
 
 This makes retries, requeues, and duplicate deliveries safe by construction. It is the invariant every importer change must preserve.
 
+*(Amended at stage-2 A2.)* The rewrite runs under **stable trace identity**: trace rows are upserted keyed on unique `(upload_id, source_trace_id)` — all normalized columns rewritten, spans deleted and re-inserted per trace, traces absent from the re-imported payload deleted. `traces.id` survives a re-ingest, so rows hung off it (acquisitions, `trace_analysis` incl. human-provenance labels, review items) are never cascade-destroyed by a rewrite. The invariant's substance is unchanged: normalized content remains a pure function of the payload.
+
 `complete` is terminal for ingestion: the claim (`mark_processing`) and the failure write (`mark_failed`) are guarded in SQL (`where status <> 'complete'`), so a stale duplicate delivery can neither redo completed work nor overwrite `complete` with `failed` after a concurrent run succeeded. Only an explicit operator requeue or upload deletion moves a terminal upload. *(Amended during the slice-2 reliability sweep.)*
 
 ## Lost-Job Recovery
@@ -69,9 +71,10 @@ Token buckets in Redis, enforced as FastAPI middleware, so limits hold across mu
 
 | Bucket | Limit |
 |---|---|
-| Global (all traffic) | 50 req/s, burst 100 |
-| Per user | 10 req/s, burst 20 |
-| Per user, `POST /v1/uploads` | 10/min |
+| Global (all traffic) | 100 req/s, burst 200 |
+| Per user | 20 req/s, burst 40 |
+| Per user, `POST /v1/uploads` | 60/min |
+| Global, `POST /v1/uploads` | 300/min |
 
 Exceeding any bucket returns `429 rate_limited` with `Retry-After`. Limits are env-configurable; defaults above are tuned for a local demo, not production traffic.
 

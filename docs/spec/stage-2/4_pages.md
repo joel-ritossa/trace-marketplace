@@ -66,6 +66,7 @@ Nav: Review, Subscriptions, Settings join the primary nav; the bell (unread badg
 ### /uploads
 
 - Table: filename, source (`cli`/`web`), status, `error_message` verbatim, created/processed, link to created traces. Backed by `GET /v1/uploads` (stage 1 already returns everything needed).
+- Once A5 lands: redaction counts per upload (e.g. "4 emails, 1 API key masked"), from `uploads.redaction_counts` ([7_redaction.md](7_redaction.md)). Zero replacements shows nothing.
 - The honest surface for watch-mode failures: a failed CLI upload never becomes a trace and is invisible everywhere else.
 - States: loading, empty, results, failed rows visually flagged.
 
@@ -109,8 +110,8 @@ Filter-exclusion notes ("N not-yet-analyzed traces excluded") use the same state
 
 ### /library
 
-- Bulk-selection → "Download N": zip of raw payloads + `labels.jsonl` covering the selection. Same artifact offered at the bulk-acquire confirmation moment ("Acquired 50 — download now").
-- Single-trace raw download unchanged.
+- Bulk-selection → "Download N": zip of payloads (scrubbed for acquired traces, raw for own — [7_redaction.md](7_redaction.md)) + `labels.jsonl` covering the selection. Same artifact offered at the bulk-acquire confirmation moment ("Acquired 50 — download now").
+- Single-trace download unchanged in UI; serves per the same redaction boundary.
 
 ### /upload
 
@@ -121,3 +122,4 @@ Filter-exclusion notes ("N not-yet-analyzed traces excluded") use the same state
 - All new list surfaces paginate from day one.
 - Flood control is a system property: digests at the source (per upload, per subscription), grouping in queue and notifications list — the first big CLI sync is the stress test everywhere.
 - URL carries view state: filters, search, pagination serialize into the URL on every list surface, including feeds.
+- **Live surfaces use Supabase Realtime as an invalidation signal only.** The web app subscribes to `postgres_changes` on its own rows (RLS-enforced) and refetches through the API on change — row payloads from the socket are never consumed as data; the API stays the single read path. Web only (the CLI keeps polling per [5_cli.md](5_cli.md)). Wired surfaces: `/uploads` status flips (A1), the notification bell + `/notifications` (A3); later surfaces opt in with the same hook. Realtime is an enhancement layer — every surface must remain correct with the socket disconnected (load/refetch paths unchanged).

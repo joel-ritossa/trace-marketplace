@@ -26,3 +26,4 @@ then the explainer.
 |---|---|
 | [trace-upload-delivery-guarantee.md](trace-upload-delivery-guarantee.md) | Can an accepted upload be lost? What guarantees ingestion happens? |
 | [trace-rendering.md](trace-rendering.md) | What does the judge see when a trace is rendered? What gets dropped, and is it deterministic? |
+| [redaction-boundary.md](redaction-boundary.md) | Who sees raw trace content vs placeholders, and what does scrubbing actually catch? |

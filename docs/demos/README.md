@@ -26,3 +26,4 @@ Each demo is one slug-named file with three sections:
 | Demo | Shows | Status |
 |---|---|---|
 | `large-trace-handling.md` | A 5,000-span trace ingests and inspects smoothly: light span-list API + per-span detail fetch + capped default expansion | Live |
+| `cli-sync.md` | The machine door on your own Codex/Claude/Cursor sessions: API-key auth, stateless sync + watch, server-side dedupe, live `/uploads`, honest unattended failures | Live |

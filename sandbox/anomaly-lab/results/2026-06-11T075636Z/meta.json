@@ -1,0 +1,65 @@
+{
+ "timestamp": "2026-06-11T075636Z",
+ "git_sha": "8be72d5",
+ "dataset": {
+  "source": "Exgentic/agent-llm-traces",
+  "n": 300,
+  "sampling": "30 pages of 10, even stride over 1781 rows"
+ },
+ "params": {
+  "k": 8,
+  "kmeans_k": 20,
+  "hdbscan_min_cluster_size": 3,
+  "top_n": 10,
+  "n_controls": 10,
+  "seed": 0,
+  "embedding_model": "text-embedding-3-small",
+  "eval_model": "gpt-5-mini",
+  "target_cap_chars": 10000,
+  "neighbor_cap_chars": 5000
+ },
+ "eval_design": "blind judge; neighbor context = skeleton-space kNN for every method",
+ "llm_usage": {
+  "eval": {
+   "calls": 51,
+   "cost_usd": 0.1444,
+   "prompt_tokens": 362411,
+   "completion_tokens": 26913,
+   "latency_p50_s": 8.889,
+   "latency_max_s": 22.967
+  },
+  "explain": {
+   "calls": 3,
+   "cost_usd": 0.0107,
+   "prompt_tokens": 24557,
+   "completion_tokens": 2291,
+   "latency_p50_s": 12.75,
+   "latency_max_s": 13.334
+  }
+ },
+ "wall_time_s": 125.5,
+ "hdbscan": {
+  "n_clusters": 18,
+  "n_noise": 25,
+  "cluster_sizes": [
+   101,
+   23,
+   21,
+   20,
+   19,
+   15,
+   10,
+   10,
+   9,
+   7,
+   7,
+   6,
+   5,
+   5,
+   5,
+   5,
+   4,
+   3
+  ]
+ }
+}

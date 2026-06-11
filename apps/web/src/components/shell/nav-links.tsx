@@ -9,6 +9,7 @@ const links = [
   { href: "/library", label: "Library" },
   { href: "/traces", label: "My Traces" },
   { href: "/upload", label: "Upload" },
+  { href: "/settings", label: "Settings" },
 ];
 
 export function NavLinks() {

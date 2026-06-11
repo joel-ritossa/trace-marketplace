@@ -3,11 +3,12 @@
 import Link from "next/link";
 import { BookMarked } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Pager } from "@/components/shell/pager";
 import { TraceCards } from "@/components/traces/trace-cards";
-import { useTraceList } from "@/components/traces/use-trace-list";
+import { TRACE_PAGE_SIZE, useTraceList } from "@/components/traces/use-trace-list";
 
 export default function LibraryPage() {
-  const { result, error } = useTraceList("acquired");
+  const { result, error, page, setPage } = useTraceList("acquired");
 
   return (
     <div>
@@ -33,7 +34,17 @@ export default function LibraryPage() {
             </Button>
           </div>
         ) : (
-          <TraceCards traces={result.traces} context="library" />
+          <>
+            <TraceCards traces={result.traces} context="library" />
+            <div className="mt-4">
+              <Pager
+                page={page}
+                pageSize={TRACE_PAGE_SIZE}
+                total={result.total}
+                onPageChange={setPage}
+              />
+            </div>
+          </>
         )}
       </div>
     </div>

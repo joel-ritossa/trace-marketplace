@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { formatDate, formatDuration } from "@/lib/format";
-import { VisibilityBadge } from "@/components/traces/badges";
+import { TraceOutcome, VisibilityBadge } from "@/components/traces/badges";
 import type { TraceListItem } from "@/lib/api/traces";
 
 function StatusDot({ status }: { status: TraceListItem["status"] }) {
@@ -32,6 +32,7 @@ export function TracesTable({ traces }: { traces: TraceListItem[] }) {
             <th className="px-4 py-2.5 font-medium">Errors</th>
             <th className="px-4 py-2.5 font-medium">Duration</th>
             <th className="px-4 py-2.5 font-medium">Model</th>
+            <th className="px-4 py-2.5 font-medium">Analysis</th>
             <th className="px-4 py-2.5 font-medium">Visibility</th>
             <th className="px-4 py-2.5 font-medium">Created</th>
           </tr>
@@ -66,6 +67,9 @@ export function TracesTable({ traces }: { traces: TraceListItem[] }) {
               </td>
               <td className="max-w-48 truncate px-4 py-2.5 font-mono text-xs text-muted-foreground">
                 {trace.model ?? "—"}
+              </td>
+              <td className="px-4 py-2.5">
+                <TraceOutcome trace={trace} />
               </td>
               <td className="px-4 py-2.5">
                 <VisibilityBadge visibility={trace.visibility} />

@@ -18,7 +18,7 @@ The literal click-through that defines done:
 6. Multi-select synced traces on **My Traces** → "List N traces" → one batched-consent confirmation.
 7. (As a consumer) filter the marketplace on label + metric predicates (`outcome = failure`, `confidence ≥ 0.8`, `faithfulness ≥ 0.8`) → **Save as subscription** with backfill preview.
 8. A new matching trace is synced and listed → `subscription_match` notification → feed → multi-select → **bulk acquire** (itemized result).
-9. **/library**: select acquired traces → "Download N" → zip of raw payloads + `labels.jsonl`.
+9. **/library**: select acquired traces → "Download N" → zip of scrubbed payloads + `labels.jsonl` (owners downloading their own traces get raw).
 10. Offline: the validation script reports judge agreement against expert labels on a converted benchmark slice — the headline demo claim.
 
 ## Scope: In
@@ -34,10 +34,11 @@ The literal click-through that defines done:
 - **Bulk actions**: acquire, list/unlist (batched consent), download (zip + `labels.jsonl`).
 - **New pages**: `/review`, `/review/[itemId]`, `/notifications`, `/subscriptions`, `/subscriptions/[id]`, `/settings`, `/uploads`; deltas to existing pages.
 - **Validation**: benchmark→OTLP converter + offline judge-agreement script.
+- **Redaction**: credential + pattern-PII scrubbing at ingestion; owner sees raw, every other surface (inspection, downloads, LLM analyzers) sees deterministic placeholders ([7_redaction.md](7_redaction.md)).
 
 ## Scope: Extensions (Not Base)
 
-Designed-for but explicitly out of the base build: task bounties, desktop notifications, similar-trace subscriptions, on-demand enrichment, few-shot exemplars / evaluator training, judge model selection, session stitching, `estimated_cost`, meta-judge over vote reasonings, hierarchical task categories. SFT/trajectory/pairs export formats are future-work narrative only.
+Designed-for but explicitly out of the base build: task bounties, desktop notifications, similar-trace subscriptions, on-demand enrichment, behavioral novelty scoring (rare-data discovery), few-shot exemplars / evaluator training, judge model selection, session stitching, `estimated_cost`, meta-judge over vote reasonings, hierarchical task categories. SFT/trajectory/pairs export formats are future-work narrative only.
 
 ## Locked Decisions
 
@@ -45,13 +46,15 @@ Designed-for but explicitly out of the base build: task bounties, desktop notifi
 |---|---|
 | Capture | Separate sync CLI; watch mode is base scope, not an extension. Stateless — server-side sha256 dedupe is the source of truth. |
 | Search & matching | Deterministic/rule-based everywhere. Non-determinism only in field *derivation*; rules match on derived fields like any column. No embedding search. |
+| Rare data | Base mechanism: rarity is filterable — sparse label combinations (`task_category` × `failure_mode`, signals, metric predicates) are discoverable and subscribable like any query. *Behavioral* rarity is the designed-for extension ([behavioral novelty](../../extensions/behavioral-novelty.md)); it ranks within a result set and never changes matching. |
 | Label model | Ternary `outcome` (`success \| failure \| indeterminate`); `failure_mode` from the AgentRx 10-category taxonomy; `task_category` closed enum; per-field confidence + provenance. |
 | Confidence | Vote share from N sampled judge runs; capped at 0.5 on signals/judge disagreement; 1.0 on human resolution. |
 | HIL routing | Only the outcome judge routes to review. Low confidence blocks nothing — machine labels are stored and filterable immediately. |
 | Subscriptions | Saved queries over the shared filter language; event-driven matching; **no auto-acquire anywhere**. |
 | Bulk listing | Batched consent: explicit selection only, one dialog naming the exact count, same affirmative ownership checkbox. Listing remains the consent act. |
 | Notifications | In-app, routed page (no popover panel); generated server-side only. |
-| Privacy | Unchanged from stage 1: CLI uploads private by default; listing is the consent act; subscriptions match listed traces only. |
+| Privacy | CLI uploads private by default; listing is the consent act; subscriptions match listed traces only. |
+| Redaction | Scrub at ingestion, pure + versioned: `detect-secrets` for credentials, in-house pattern recognizers for PII (no NER). Owner sees raw (owner-only `span_raw` side table); all other surfaces see deterministic HMAC placeholders. Raw storage objects are never mutated. ([7_redaction.md](7_redaction.md)) |
 | Private-trace LLM analysis | **Per-account opt-out** (`profiles.allow_private_llm_analysis`, default on): when off, LLM analyzers skip the account's private traces (deterministic signals still run). Listed traces are always analyzed — listing is the consent act and covers analysis. |
 | Analyzers without an LLM key | Degrade explicitly: signals run, LLM analyzers skip with a recorded reason, fields stay null. Never a fake "pending". |
 
@@ -65,6 +68,7 @@ Deliberately minimal; everything else in stage 2 is additive (new tables, endpoi
 - `traces.total_tokens` (ingestion-derived, small importer addition + migration).
 - `dead_letters.trace_id` nullable column (analysis tasks are trace-scoped, not upload-scoped).
 - Trace-name derivation check: CLI-synced traces must get scannable names (root-span name or filename), never bare ids.
+- Redaction ([7_redaction.md](7_redaction.md)): scrub step inside the importer; `spans` content columns become scrubbed-by-default with raw copies in the new owner-only `span_raw` table; `uploads` gains `redaction_salt` / `redaction_version` / `redaction_counts`; ingestion materializes a scrubbed payload artifact served to non-owner downloads.
 
 ## Spec Documents
 
@@ -76,7 +80,8 @@ Deliberately minimal; everything else in stage 2 is additive (new tables, endpoi
 | [4_pages.md](4_pages.md) | New routes, page responsibilities, deltas to stage-1 pages, required UI states. |
 | [5_cli.md](5_cli.md) | Sync CLI behavior. |
 | [6_build-order.md](6_build-order.md) | Two parallel build streams with merge points and done criteria. |
+| [7_redaction.md](7_redaction.md) | Credential + PII scrubbing at ingestion: detection rules, placeholder scheme, storage model, access boundaries. |
 
 ## Third-Party Services
 
-Analysis workers call an LLM provider (OpenAI / Anthropic / OpenRouter — env-configured). This is a new external data flow: **trace content is sent to the configured provider** during judging and metric evaluation. It must be documented in the runbook/README; without a key the system degrades per the locked decision above. Contributors can exclude their **private** traces from this flow per account (the `/settings` toggle); listed traces are always analyzed. Provider key, judge model, vote count N, confidence thresholds, rendering token budget, and the default metric set are all env vars with local-demo defaults in `.env.example`.
+Analysis workers call an LLM provider (OpenAI / Anthropic / OpenRouter — env-configured). This is a new external data flow: **trace content is sent to the configured provider** during judging and metric evaluation. Once redaction lands ([7_redaction.md](7_redaction.md)), analyzers read the scrubbed representation, so detected credentials and pattern-PII never reach the provider. It must be documented in the runbook/README; without a key the system degrades per the locked decision above. Contributors can exclude their **private** traces from this flow per account (the `/settings` toggle); listed traces are always analyzed. Provider key, judge model, vote count N, confidence thresholds, rendering token budget, and the default metric set are all env vars with local-demo defaults in `.env.example`.

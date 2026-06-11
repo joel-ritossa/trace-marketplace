@@ -26,7 +26,7 @@ Identical to stage 1 (`docs/buildlog/stage-1/README.md`), with two stage-2 notes
 |---|---|---|
 | [B0](B0/000_implementation.md) | Analyzer contract, trace rendering, offline runner | Done (2026-06-11): implemented, verified, audited |
 | [B1](B1/000_implementation.md) | Deterministic signals + hit-rate report | Done (2026-06-11): implemented, verified, audited |
-| B2 | Outcome judge (composed calls, voting, routing function) | Not started |
+| [B2](B2/000_implementation.md) | Outcome judge (composed calls, voting, routing function) | Done (2026-06-11): implemented, verified, audited |
 | B3 | Quality metrics (critics + RAGAS) | Not started |
 | B4 | Validation (benchmark converter + agreement script) | Not started |
 
@@ -34,10 +34,11 @@ Identical to stage 1 (`docs/buildlog/stage-1/README.md`), with two stage-2 notes
 
 | Slice | Scope | Status |
 |---|---|---|
-| A1 | Machine door: API keys, sync CLI, /uploads, /settings | Not started |
-| A2 | Analysis plumbing: tables, analyze_trace job, states, Analysis section | Not started |
+| [A1](A1/000_implementation.md) | Machine door: API keys, sync CLI, /uploads, /settings | Done (2026-06-11): implemented, verified, CLI e2e test + demo, audited |
+| [A2](A2/000_implementation.md) | Analysis plumbing: tables, analyze_trace job, states, Analysis section | Done (2026-06-11): implemented, verified (incl. live-judge run), audited |
 | A3 | HIL loop: notifications, review queue, resolve, label badges | Not started |
 | A4 | Discovery at scale: filter extension, subscriptions, bulk actions | Not started (blocked on stage-1 slice 3) |
+| [A5](A5/000_implementation.md) | Redaction: importer scrub, span_raw, read/download boundaries | Done (2026-06-11): implemented, verified |
 
 ### Integration
 
@@ -50,3 +51,4 @@ Identical to stage 1 (`docs/buildlog/stage-1/README.md`), with two stage-2 notes
 Amendments made after promotion but before any slice started — recorded here since there is no slice log to carry them yet:
 
 - **2026-06-11 — per-account private-trace LLM-analysis opt-out.** `profiles.allow_private_llm_analysis` (default on); LLM analyzers skip private traces of opted-out accounts (`llm_skip_reason = 'owner_opt_out'`); listing always analyzes (re-run hook in A4); `/settings` toggle in A1, skip enforcement in A2. Touches `docs/spec/stage-2/` 0–4 and 6.
+- **2026-06-11 — Supabase Realtime for live web surfaces (invalidation only).** The web app may subscribe to `postgres_changes` on its own rows purely as a refetch trigger; the API remains the single read path; CLI polling unchanged. Plumbing + first consumer (`/uploads`) land in A1; bell/notifications in A3. Recorded in `4_pages.md` Cross-Cutting.

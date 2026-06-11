@@ -9,6 +9,7 @@ models dumped as JSON to stdout or --out.
     python -m app.cli.analyze run --analyzer all --trace-id <uuid> --out out/
     python -m app.cli.analyze render devdata/*.json --out out/
     python -m app.cli.analyze signals-report devdata/*.json
+    python -m app.cli.analyze route fixtures/*.json
 """
 
 import argparse
@@ -22,11 +23,15 @@ from pydantic import BaseModel
 from app.analysis import (
     ANALYZERS,
     AnalysisSettings,
+    JudgeVerdict,
     RendererConfig,
+    RoutingReason,
     SignalsResult,
     TraceInput,
     render_trace,
+    route,
     run_analyzer,
+    run_judge,
 )
 from app.analysis.signals import run_signals
 
@@ -34,9 +39,10 @@ from app.analysis.signals import run_signals
 def _load_fixture(path: Path) -> list[tuple[str, TraceInput]]:
     """(identifier, trace) per trace in the file, via the ingestion importer."""
     from app.importers.otlp import import_payload
+    from app.redaction import OFFLINE_SALT
 
     payload = json.loads(path.read_text())
-    result = import_payload(payload)
+    result = import_payload(payload, redaction_salt=OFFLINE_SALT)
     return [(f"{path.stem}_{t.source_trace_id}", TraceInput.from_import(t)) for t in result.traces]
 
 
@@ -122,6 +128,29 @@ async def _cmd_signals_report(args: argparse.Namespace) -> int:
     return 0
 
 
+class RouteReport(BaseModel):
+    """`route` subcommand output: the full HIL pipeline for one trace —
+    signals, the final (capped) verdict, and the routing reasons."""
+
+    signals: SignalsResult
+    verdict: JudgeVerdict
+    routing_reasons: list[RoutingReason]
+
+
+async def _cmd_route(args: argparse.Namespace) -> int:
+    settings = AnalysisSettings()
+    for identifier, trace in await _load(args):
+        signals = await run_signals(trace, settings)
+        verdict = await run_judge(trace, settings, signals)
+        if verdict is None:
+            print(f"{identifier}: judge skipped (LLM not configured)", file=sys.stderr)
+            continue
+        reasons = route(signals, verdict, settings.confidence_threshold)
+        report = RouteReport(signals=signals, verdict=verdict, routing_reasons=reasons)
+        _emit(identifier, "route", report, args.out)
+    return 0
+
+
 def _add_input_args(parser: argparse.ArgumentParser, out: bool = True) -> None:
     parser.add_argument("paths", nargs="*", help="OTLP JSON fixture files")
     parser.add_argument("--trace-id", help="load one trace from the local DB instead of files")
@@ -147,6 +176,12 @@ def main() -> None:
     )
     _add_input_args(report_parser, out=False)
     report_parser.set_defaults(handler=_cmd_signals_report)
+
+    route_parser = subparsers.add_parser(
+        "route", help="signals + judge + routing reasons per trace"
+    )
+    _add_input_args(route_parser)
+    route_parser.set_defaults(handler=_cmd_route)
 
     args = parser.parse_args()
     if bool(args.paths) == bool(args.trace_id):

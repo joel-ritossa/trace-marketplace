@@ -13,5 +13,6 @@ Distinct from [`docs/follow-up/`](../follow-up/README.md): follow-up items are e
 | [evaluator-training.md](evaluator-training.md) | The feedback loop: human resolutions → exemplar pool (listed traces only) → better judge |
 | [judge-model-selection.md](judge-model-selection.md) | Systematic selection/evaluation of the judge model beyond the cheap default |
 | [session-stitching.md](session-stitching.md) | Sessions as a first-class grouping over per-turn traces (stage 1 has no session concept) |
+| [behavioral-novelty.md](behavioral-novelty.md) | Rare-data discovery: behavior-skeleton embeddings, result-set-relative kNN novelty, contrastive LLM explanation (validated in `sandbox/anomaly-lab/`) |
 
 Spec-listed extensions still without a design doc (sketch-level in the spec/shaping docs, written up if/when picked up): desktop notifications, similar-trace subscriptions, on-demand enrichment (sketch in `.archive/stage-2-planning/spec-shaping/judging/3_quality-metrics.md`), judge observability.

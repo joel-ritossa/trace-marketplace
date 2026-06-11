@@ -1,12 +1,14 @@
 "use client";
 
 import { SearchX, Store } from "lucide-react";
+import { Pager } from "@/components/shell/pager";
 import { TraceCards } from "@/components/traces/trace-cards";
 import { TraceFiltersBar, hasActiveFilters } from "@/components/traces/trace-filters";
-import { useTraceList } from "@/components/traces/use-trace-list";
+import { TRACE_PAGE_SIZE, useTraceList } from "@/components/traces/use-trace-list";
 
 export default function MarketplacePage() {
-  const { result, error, filters, setFilters, sort, setSort } = useTraceList("marketplace");
+  const { result, error, filters, setFilters, sort, setSort, page, setPage } =
+    useTraceList("marketplace");
   const filtered = hasActiveFilters(filters);
 
   return (
@@ -42,7 +44,17 @@ export default function MarketplacePage() {
             </p>
           </div>
         ) : (
-          <TraceCards traces={result.traces} context="marketplace" />
+          <>
+            <TraceCards traces={result.traces} context="marketplace" />
+            <div className="mt-4">
+              <Pager
+                page={page}
+                pageSize={TRACE_PAGE_SIZE}
+                total={result.total}
+                onPageChange={setPage}
+              />
+            </div>
+          </>
         )}
       </div>
     </div>

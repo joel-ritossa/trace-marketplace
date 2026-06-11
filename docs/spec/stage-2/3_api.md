@@ -6,7 +6,7 @@ Additions to the stage-1 API. Stage-1 conventions hold everywhere: `/v1` version
 
 The `Authorization: Bearer` header accepts **either** a Supabase JWT **or** an API key (format `tmk_` + 32 random chars; matched by SHA-256 against `api_keys.key_hash`). This is the only modification to stage-1 code.
 
-- **API-key principals reach exactly two endpoints:** `POST /v1/uploads` and `GET /v1/uploads/{id}` (upload-only scope). Everything else returns `401 invalid_token` for keys.
+- **API-key principals reach exactly two endpoints:** `POST /v1/uploads` and `GET /v1/uploads/{id}` (upload-only scope). Everything else returns `401 unauthorized` for keys (stage-1's single auth error code; no new code).
 - Revoked keys fail auth. Successful key auth updates `last_used_at` (throttled) and stamps `uploads.source = 'cli'` on created uploads.
 
 ## Filter-Language Extension on GET /v1/traces
@@ -44,7 +44,7 @@ Owner or listed. The full analysis view for the trace-detail Analysis section:
   "signals": { "has_retry_loop": true, "loop_kind": "cycle", "...": "…" },
   "metric_scores": { "faithfulness": 0.82, "hallucination": false },
   "open_review_item_id": "…",
-  "audit": { "analyzers": [ { "analyzer": "judge", "version": "…", "model_id": "…", "votes": ["…"], "rendering_truncated": false } ] }
+  "audit": { "analyzers": [ { "analyzer": "judge", "analyzer_version": "…", "model_id": "…", "votes": ["…"], "rendering_truncated": false } ] }
 }
 ```
 
@@ -91,7 +91,7 @@ All bulk endpoints take `trace_ids[]` (max 100 per call) and return itemized res
 
 - `POST /v1/traces/acquire` — bulk acquire; per-trace semantics identical to the stage-1 single acquire (idempotent, $0, listed-only, non-owner). Itemized statuses: `acquired | already_acquired | not_listed | own_trace | not_found`.
 - `POST /v1/traces/visibility` — bulk list/unlist; owner-only per trace. Body: `{ "trace_ids": […], "visibility": "listed", "confirm_ownership": true }`; `confirm_ownership` required when listing (batched consent — one confirmation covering the named selection), `422 confirmation_required` otherwise. Itemized: `updated | not_found`.
-- `POST /v1/traces/download` — bulk download; every trace must be owner-or-acquired, else `403 acquisition_required` listing the offending ids. Streams a zip: each raw payload under its original filename (id-suffixed on collision) plus one **`labels.jsonl`** — one line per trace: `trace_id`, `outcome`, `failure_mode`, `task_category` (each with confidence + provenance), `metric_scores`, promoted signals, `analyzer versions`. Unanalyzed traces get a line with `trace_id` and nulls. Works for a single id — this is also the labeled-download path for one trace; the stage-1 raw download is unchanged.
+- `POST /v1/traces/download` — bulk download; every trace must be owner-or-acquired, else `403 acquisition_required` listing the offending ids. Streams a zip: each payload under its original filename (id-suffixed on collision) plus one **`labels.jsonl`** — one line per trace: `trace_id`, `outcome`, `failure_mode`, `task_category` (each with confidence + provenance), `metric_scores`, promoted signals, `analyzer versions`. Unanalyzed traces get a line with `trace_id` and nulls. Works for a single id — this is also the labeled-download path for one trace. Payload selection per trace follows the redaction boundary ([7_redaction.md](7_redaction.md)): owner → raw object, acquirer → scrubbed artifact; the stage-1 single download applies the same rule.
 
 ## Conventions
 

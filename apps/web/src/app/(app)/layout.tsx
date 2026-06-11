@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { SignOutButton } from "@/components/auth/sign-out-button";
+import { AccountMenu } from "@/components/shell/account-menu";
 import { NavLinks } from "@/components/shell/nav-links";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -21,8 +21,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <NavLinks />
         </div>
         <div className="flex items-center gap-4">
-          <span className="font-mono text-xs text-muted-foreground">{user.email}</span>
-          <SignOutButton />
+          <AccountMenu email={user.email ?? "?"} />
         </div>
       </header>
       <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-10">{children}</main>

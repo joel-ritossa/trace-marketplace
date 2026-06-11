@@ -22,10 +22,13 @@ Usage:
 import argparse
 import hashlib
 import json
+import sys
 import urllib.parse
 import urllib.request
-from datetime import UTC, datetime
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+from _otlp import attr_list, to_nanos
 
 ROWS_URL = "https://datasets-server.huggingface.co/rows"
 DATASET = "Exgentic/agent-llm-traces"
@@ -44,34 +47,6 @@ def fetch_rows(offset: int, length: int) -> list[dict]:
     )
     with urllib.request.urlopen(f"{ROWS_URL}?{query}", timeout=120) as res:
         return [r["row"] for r in json.load(res)["rows"]]
-
-
-def to_nanos(iso: str) -> int:
-    dt = datetime.fromisoformat(iso)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UTC)
-    return int(dt.timestamp() * 1_000_000_000)
-
-
-def any_value(value) -> dict:
-    if isinstance(value, bool):
-        return {"boolValue": value}
-    if isinstance(value, int):
-        return {"intValue": str(value)}
-    if isinstance(value, float):
-        return {"doubleValue": value}
-    if isinstance(value, list):
-        return {"arrayValue": {"values": [any_value(v) for v in value]}}
-    if isinstance(value, str):
-        try:
-            return {"intValue": str(int(value))} if value.lstrip("-").isdigit() else {"stringValue": value}
-        except ValueError:
-            return {"stringValue": value}
-    return {"stringValue": str(value)}
-
-
-def attr_list(attributes: dict) -> list[dict]:
-    return [{"key": k, "value": any_value(v)} for k, v in attributes.items() if v is not None]
 
 
 def convert_session(row: dict) -> dict:

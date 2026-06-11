@@ -4,9 +4,8 @@
 @import "../components/agent-prism/theme/theme.css";
 @import "../components/agent-prism/theme/tailwind-bridge.css";
 
-/* Defined but never activated: app surfaces are light-only per DESIGN.md.
-   Keeping the variant pins shadcn's dark: classes to a .dark class (which we
-   never set) instead of the OS color scheme. */
+/* Pins dark: classes to the .dark class, which next-themes sets on <html>
+   from the account-menu theme selector (light / dark / system). */
 @custom-variant dark (&:is(.dark *));
 
 /* shadcn semantic variables, resolved to DESIGN.md tokens (see DESIGN.md
@@ -41,26 +40,27 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-/* DESIGN.md domain tokens (surface ladder, status + span-kind palettes). */
-@theme {
-  --color-canvas-soft: #fafafa;
-  --color-link: #0070f3;
-  --color-link-deep: #0761d1;
-  --color-link-soft: #d3e5ff;
-  --color-status-ok: #29bc9b;
-  --color-status-ok-soft: #aaffec;
-  --color-warning: #f5a623;
-  --color-warning-soft: #ffefcf;
-  --color-warning-deep: #ab570a;
-  --color-error: #ee0000;
-  --color-error-soft: #f7d4d6;
-  --color-error-deep: #c50000;
-  --color-span-llm: #7928ca;
-  --color-span-agent: #0070f3;
-  --color-span-tool: #f5a623;
-  --color-span-retriever: #29bc9b;
-  --color-span-embedding: #eb367f;
-  --color-span-other: #a1a1a1;
+/* DESIGN.md domain tokens (surface ladder, status + span-kind palettes),
+   routed through runtime vars so the .dark block can re-resolve them. */
+@theme inline {
+  --color-canvas-soft: var(--canvas-soft);
+  --color-link: var(--link);
+  --color-link-deep: var(--link-deep);
+  --color-link-soft: var(--link-soft);
+  --color-status-ok: var(--status-ok);
+  --color-status-ok-soft: var(--status-ok-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-warning-deep: var(--warning-deep);
+  --color-error: var(--error);
+  --color-error-soft: var(--error-soft);
+  --color-error-deep: var(--error-deep);
+  --color-span-llm: var(--span-llm);
+  --color-span-agent: var(--span-agent);
+  --color-span-tool: var(--span-tool);
+  --color-span-retriever: var(--span-retriever);
+  --color-span-embedding: var(--span-embedding);
+  --color-span-other: var(--span-other);
 }
 
 :root {
@@ -84,6 +84,69 @@
   --border: #ebebeb; /* hairline */
   --input: #ebebeb;
   --ring: #a1a1a1; /* hairline-strong */
+
+  /* Domain tokens, light values (DESIGN.md). */
+  --canvas-soft: #fafafa;
+  --link: #0070f3;
+  --link-deep: #0761d1;
+  --link-soft: #d3e5ff;
+  --status-ok: #29bc9b;
+  --status-ok-soft: #aaffec;
+  --warning: #f5a623;
+  --warning-soft: #ffefcf;
+  --warning-deep: #ab570a;
+  --error: #ee0000;
+  --error-soft: #f7d4d6;
+  --error-deep: #c50000;
+  --span-llm: #7928ca;
+  --span-agent: #0070f3;
+  --span-tool: #f5a623;
+  --span-retriever: #29bc9b;
+  --span-embedding: #eb367f;
+  --span-other: #a1a1a1;
+}
+
+/* Dark scheme: DESIGN.md ink ladder inverted (Vercel-style near-black
+   surfaces). Soft status backgrounds go deep; deep status text goes light. */
+.dark {
+  --background: #0a0a0a; /* canvas */
+  --foreground: #ededed; /* ink */
+  --card: #0a0a0a;
+  --card-foreground: #ededed;
+  --popover: #0a0a0a;
+  --popover-foreground: #ededed;
+  --primary: #ededed; /* primary CTA flips to light-on-dark */
+  --primary-foreground: #0a0a0a;
+  --secondary: #1a1a1a; /* canvas-soft-2 */
+  --secondary-foreground: #ededed;
+  --muted: #1a1a1a;
+  --muted-foreground: #a1a1a1; /* mute */
+  --accent: #1a1a1a;
+  --accent-foreground: #ededed;
+  --destructive: #ff4d4d; /* error */
+  --border: #2e2e2e; /* hairline */
+  --input: #2e2e2e;
+  --ring: #6f6f6f; /* hairline-strong */
+
+  /* Domain tokens, dark values. */
+  --canvas-soft: #000000;
+  --link: #3291ff;
+  --link-deep: #52a8ff;
+  --link-soft: #10243e;
+  --status-ok: #2fd6b2;
+  --status-ok-soft: #0b3b31;
+  --warning: #f5a623;
+  --warning-soft: #341c00;
+  --warning-deep: #ffb224;
+  --error: #ff4d4d;
+  --error-soft: #3c1618;
+  --error-deep: #ff6166;
+  --span-llm: #9750dd;
+  --span-agent: #3291ff;
+  --span-tool: #f5a623;
+  --span-retriever: #2fd6b2;
+  --span-embedding: #eb367f;
+  --span-other: #888888;
 }
 
 @layer base {
@@ -96,5 +159,9 @@
   ::selection {
     background: #171717;
     color: #f2f2f2;
+  }
+  .dark ::selection {
+    background: #f2f2f2;
+    color: #171717;
   }
 }

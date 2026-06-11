@@ -145,4 +145,4 @@ cross_cutting_rules:
   - "Visibility is always visible: every trace rendering carries a private/listed badge"
   - "The UI never enforces access; it renders what the API returns and explains 4xx reasons"
   - "Not-found covers no-access by design (no information leak about private traces)"
-  - "Light-only UI; tokens from DESIGN.md; components from shadcn/ui; icons from lucide-react"
+  - "Light + dark UI (user-selectable via the account menu, .dark class); tokens from DESIGN.md; components from shadcn/ui; icons from lucide-react"

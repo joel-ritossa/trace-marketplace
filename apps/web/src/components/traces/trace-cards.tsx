@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { Download } from "lucide-react";
-import { LibraryBadge, VisibilityBadge } from "@/components/traces/badges";
+import { LibraryBadge, TraceOutcome, VisibilityBadge } from "@/components/traces/badges";
 import { Button } from "@/components/ui/button";
 import { downloadTrace, type TraceListItem } from "@/lib/api/traces";
 import { formatDate, formatDuration } from "@/lib/format";
@@ -64,6 +64,7 @@ export function TraceCards({
                 </Link>
                 {context === "marketplace" && trace.acquired && <LibraryBadge />}
                 {trace.is_owner && <VisibilityBadge visibility={trace.visibility} />}
+                <TraceOutcome trace={trace} placeholder />
               </div>
               <CardMeta trace={trace} />
               {trace.description && (

@@ -8,8 +8,9 @@ Martians and contributors; full license text ships with the npm packages
 
 Local modifications (kept minimal so upstream diffs stay readable):
 
-- `theme/theme.css` — rewritten to light-only token values per DESIGN.md
-  (upstream keys dark mode off `prefers-color-scheme`).
+- `theme/theme.css` — upstream keys light/dark off `prefers-color-scheme`;
+  rewritten so light values live on `:root` and dark values on `.dark`,
+  following the app's next-themes selector.
 - `theme/tailwind-bridge.css` — generated Tailwind 4 `@theme` bridge for
   upstream's Tailwind 3 palette names.
 

@@ -1,0 +1,61 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          { "key": "service.name", "value": { "stringValue": "id-heavy-service" } },
+          { "key": "host.ip", "value": { "stringValue": "10.0.0.12" } }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": { "name": "demo.negative" },
+          "spans": [
+            {
+              "traceId": "55555555555555555555555555555555",
+              "spanId": "e000000000000001",
+              "name": "fetch user record",
+              "kind": 1,
+              "startTimeUnixNano": "1768471500000000000",
+              "endTimeUnixNano": "1768471501000000000",
+              "attributes": [
+                {
+                  "key": "request.id",
+                  "value": { "stringValue": "550e8400-e29b-41d4-a716-446655440000" }
+                },
+                {
+                  "key": "payload.sha256",
+                  "value": {
+                    "stringValue": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                  }
+                },
+                {
+                  "key": "parent.trace",
+                  "value": { "stringValue": "4bf92f3577b34da6a3ce929d0e0e4736" }
+                },
+                {
+                  "key": "event.timestamp_nanos",
+                  "value": { "stringValue": "1768471500000000000" }
+                },
+                {
+                  "key": "event.timestamp_millis",
+                  "value": { "stringValue": "1768471500000" }
+                },
+                {
+                  "key": "http.url",
+                  "value": { "stringValue": "http://127.0.0.1:8080/v1/users?page=2" }
+                },
+                {
+                  "key": "recorded.at",
+                  "value": { "stringValue": "2026-01-15T09:30:00+00:00" }
+                }
+              ],
+              "events": [],
+              "status": { "code": 1 }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

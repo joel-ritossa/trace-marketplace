@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { FlowStatus } from "@/components/uploads/flow-status";
 import { UploadDropzone } from "@/components/uploads/upload-dropzone";
 import { UploadsTable } from "@/components/uploads/uploads-table";
@@ -98,7 +99,15 @@ export function UploadFlow() {
       </div>
 
       <section>
-        <h2 className="text-sm font-semibold">Your uploads</h2>
+        <div className="flex items-baseline justify-between">
+          <h2 className="text-sm font-semibold">Your uploads</h2>
+          <Link
+            href="/uploads"
+            className="text-sm text-muted-foreground underline underline-offset-2 hover:text-foreground"
+          >
+            Full history
+          </Link>
+        </div>
         {uploads === null ? (
           <p className="mt-3 text-sm text-muted-foreground">Loading…</p>
         ) : uploads.length === 0 ? (

@@ -748,7 +748,16 @@ This project is product UI, not a marketing site. Everything above is the base s
 - **Mesh gradient**: landing page (`/`) hero only. Never on app surfaces — the trace inspector, marketplace, and library are gradient-free.
 - **100-px pill CTAs**: landing page only. All in-app buttons use the nav-scale `{rounded.sm}` 6px shape (`nav-cta-signup` / `nav-cta-login` chrome at `form-input` heights).
 - **Section-scale spacing** (`{spacing.4xl}`+ bands): landing page only. App pages use `{spacing.lg}`–`{spacing.xl}` between regions.
-- `showcase-band-dark` polarity flips: not used in-app. App surfaces stay on the light ladder (`{colors.canvas-soft}` page, `{colors.canvas}` cards, `{colors.canvas-soft-2}` insets).
+- `showcase-band-dark` polarity flips: not used in-app. App surfaces use the surface ladder (`{colors.canvas-soft}` page, `{colors.canvas}` cards, `{colors.canvas-soft-2}` insets), in light or dark resolution per the scheme below.
+
+## Color Scheme (Light / Dark)
+
+App surfaces support light and dark schemes. The user picks light / dark / system from the header account menu; next-themes sets the `.dark` class on `<html>`. Both resolutions of the token ladder live in `apps/web/src/app/globals.css`:
+
+- Light is the base system above, unchanged.
+- Dark inverts the ink ladder onto near-black surfaces: page `#000000`, cards `#0a0a0a`, insets `#1a1a1a`, hairline `#2e2e2e`, ink `#ededed`, mute `#a1a1a1`; the primary CTA polarity-flips to light-on-dark.
+- Status and span-kind hues stay recognizable but re-resolve for contrast: soft (`-soft`) badge backgrounds go deep, deep (`-deep`) text tones go light, and saturated accents brighten one step (e.g. link `#0070f3` → `#3291ff`).
+- Components must reference tokens only — never raw hex — so they inherit both schemes; this is the same rule as the base system, now load-bearing.
 
 ## Status Palette
 

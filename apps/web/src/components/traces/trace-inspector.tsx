@@ -7,7 +7,8 @@ import type { TraceSpan } from "@evilmartians/agent-prism-types";
 
 import { DetailsView } from "@/components/agent-prism/DetailsView/DetailsView";
 import { TreeView } from "@/components/agent-prism/TreeView";
-import { VisibilityBadge } from "@/components/traces/badges";
+import { AnalysisSection } from "@/components/traces/analysis-section";
+import { TraceOutcome, VisibilityBadge } from "@/components/traces/badges";
 import { buildSpanTree, defaultExpandedIds, withDetail } from "@/components/traces/span-tree";
 import { TraceActions } from "@/components/traces/trace-actions";
 import { Button } from "@/components/ui/button";
@@ -161,6 +162,7 @@ export function TraceInspector({ traceId }: { traceId: string }) {
     ["Duration", formatDuration(trace.duration_ms)],
     ["Spans", String(trace.span_count)],
     ["Errors", String(trace.error_count)],
+    ["Tokens", trace.total_tokens !== null ? trace.total_tokens.toLocaleString() : "—"],
     ["Provider", trace.provider ?? "—"],
     ["Model", trace.model ?? "—"],
     ["Service", trace.service_name ?? "—"],
@@ -190,6 +192,7 @@ export function TraceInspector({ traceId }: { traceId: string }) {
               />
               <span className="truncate">{trace.name}</span>
               <VisibilityBadge visibility={trace.visibility} />
+              <TraceOutcome trace={trace} />
             </h1>
             {trace.error_types.length > 0 && (
               <p className="mt-1 text-sm text-error-deep">
@@ -243,6 +246,8 @@ export function TraceInspector({ traceId }: { traceId: string }) {
       </div>
 
       <TraceActions trace={trace} onChange={onTraceChange} />
+
+      <AnalysisSection traceId={trace.trace_id} isOwner={trace.is_owner} />
 
       <div className="grid h-[calc(100vh-22rem)] min-h-96 grid-cols-1 gap-4 lg:grid-cols-5">
         <div className="overflow-y-auto rounded-lg border bg-background py-2 lg:col-span-3">

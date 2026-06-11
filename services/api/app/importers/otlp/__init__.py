@@ -23,8 +23,10 @@ from app.importers.otlp.normalize import (
 SOURCE_FORMAT = "otlp_json"
 
 # Bump on any change to decode/mapping/normalize output; stored on every
-# trace row for provenance (2_data-model.md).
-IMPORTER_VERSION = "1.0.0"
+# trace row for provenance (2_data-model.md). 1.1.0: redaction scrub
+# (7_redaction.md) — content fields carry placeholders. 1.2.0: trace
+# total_tokens + bare-id name fallback (A2).
+IMPORTER_VERSION = "1.2.0"
 
 
 def matches(payload: Any) -> bool:

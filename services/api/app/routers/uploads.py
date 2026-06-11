@@ -2,12 +2,13 @@ import hashlib
 import json
 import logging
 import re
+import secrets
 
 import asyncpg
 from fastapi import APIRouter, Query, Request, Response
 from starlette.datastructures import UploadFile
 
-from app.auth import CurrentUser
+from app.auth import AuthUser, CurrentUser, UploadPrincipal
 from app.clients import db, storage
 from app.config import settings
 from app.dev import faults
@@ -46,7 +47,7 @@ async def _read_single_file_part(request: Request) -> tuple[str, bytes]:
 
 
 @router.post("", status_code=201, response_model=UploadCreatedResponse)
-async def create_upload(request: Request, user: CurrentUser) -> UploadCreatedResponse:
+async def create_upload(request: Request, user: UploadPrincipal) -> UploadCreatedResponse:
     # Validate the fault header before any side effects so an invalid value
     # can't leave behind a stored-but-never-enqueued upload.
     fault = request.headers.get("x-fault") if settings.dev_routes else None
@@ -99,6 +100,11 @@ async def create_upload(request: Request, user: CurrentUser) -> UploadCreatedRes
             sha256=sha256,
             storage_path=path,
             source_format=otlp.SOURCE_FORMAT,
+            # Inferred from auth type, never client-set (2_data-model.md).
+            source="cli" if user.via == "api_key" else "web",
+            # Minted once at creation, immutable: keys the deterministic
+            # placeholder HMAC across every (re-)ingest (7_redaction.md).
+            redaction_salt=secrets.token_hex(16),
         )
     except asyncpg.UniqueViolationError:
         # Concurrent duplicate of the same file; surface the winner.
@@ -135,7 +141,10 @@ async def list_uploads(
                 filename=r["filename"],
                 size_bytes=r["size_bytes"],
                 status=r["status"],
+                source=r["source"],
                 error_message=r["error_message"],
+                redaction_counts=r["redaction_counts"],
+                trace_ids=[str(t) for t in r["trace_ids"]],
                 created_at=r["created_at"],
                 processed_at=r["processed_at"],
             )
@@ -146,7 +155,7 @@ async def list_uploads(
 
 
 @router.get("/{upload_id}", response_model=UploadStatusResponse)
-async def get_upload(upload_id: str, user: CurrentUser) -> UploadStatusResponse:
+async def get_upload(upload_id: str, user: UploadPrincipal) -> UploadStatusResponse:
     row = await _owned_or_404(upload_id, user)
     trace_ids = (
         await traces.ids_for_upload(db.pool(), str(row["id"]))
@@ -157,8 +166,10 @@ async def get_upload(upload_id: str, user: CurrentUser) -> UploadStatusResponse:
         upload_id=str(row["id"]),
         filename=row["filename"],
         status=row["status"],
+        source=row["source"],
         error_message=row["error_message"],
         parse_warnings=row["parse_warnings"],
+        redaction_counts=row["redaction_counts"],
         trace_ids=trace_ids,
         created_at=row["created_at"],
         processed_at=row["processed_at"],
@@ -179,7 +190,7 @@ async def download_upload(upload_id: str, user: CurrentUser) -> Response:
     )
 
 
-async def _owned_or_404(upload_id: str, user: CurrentUser) -> asyncpg.Record:
+async def _owned_or_404(upload_id: str, user: AuthUser) -> asyncpg.Record:
     try:
         row = await uploads.get_owned(db.pool(), upload_id, user.id)
     except asyncpg.DataError:  # not a UUID

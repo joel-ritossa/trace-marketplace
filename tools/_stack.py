@@ -62,18 +62,59 @@ def _request(
     raise AssertionError("unreachable")
 
 
+def allow_email(env: dict[str, str], entry: str) -> None:
+    """Add a full email or a whole domain ('@example.com') to the signup
+    allowlist (service-role PostgREST upsert)."""
+    supabase = env.get("SUPABASE_URL", "http://127.0.0.1:55321")
+    key = env.get("SUPABASE_SERVICE_ROLE_KEY")
+    if not key:
+        raise StackError("SUPABASE_SERVICE_ROLE_KEY not set (copy .env.example to .env)")
+    status, body = _request(
+        f"{supabase}/rest/v1/allowed_emails",
+        method="POST",
+        headers={
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "Prefer": "resolution=ignore-duplicates",
+        },
+        body=json.dumps({"entry": entry.lower()}).encode(),
+    )
+    if status not in (200, 201):
+        raise StackError(f"allowlist insert failed for {entry}: {status} {body.decode()[:200]}")
+
+
 def sign_in(env: dict[str, str], email: str, password: str) -> str:
     """Sign up (or sign in, when the user already exists) and return a JWT."""
     supabase = env.get("SUPABASE_URL", "http://127.0.0.1:55321")
     key = env.get("SUPABASE_SERVICE_ROLE_KEY")
     if not key:
         raise StackError("SUPABASE_SERVICE_ROLE_KEY not set (copy .env.example to .env)")
-    creds = json.dumps({"email": email, "password": password}).encode()
-    headers = {"apikey": key, "Content-Type": "application/json"}
-    for path in ("/auth/v1/signup", "/auth/v1/token?grant_type=password"):
-        status, body = _request(f"{supabase}{path}", method="POST", headers=headers, body=creds)
-        if status == 200:
-            return json.loads(body)["access_token"]
+    allow_email(env, email)
+    headers = {
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+    }
+    # Email confirmation is on, so /signup would not return a session;
+    # admin-create the user pre-confirmed (422 = already exists, fine) and
+    # sign in with the password grant.
+    status, body = _request(
+        f"{supabase}/auth/v1/admin/users",
+        method="POST",
+        headers=headers,
+        body=json.dumps({"email": email, "password": password, "email_confirm": True}).encode(),
+    )
+    if status not in (200, 201, 422):
+        raise StackError(f"user create failed for {email}: {status} {body.decode()[:200]}")
+    status, body = _request(
+        f"{supabase}/auth/v1/token?grant_type=password",
+        method="POST",
+        headers={"apikey": key, "Content-Type": "application/json"},
+        body=json.dumps({"email": email, "password": password}).encode(),
+    )
+    if status == 200:
+        return json.loads(body)["access_token"]
     raise StackError(f"auth failed for {email}: {body.decode(errors='replace')[:200]}")
 
 

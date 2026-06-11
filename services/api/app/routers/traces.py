@@ -4,14 +4,24 @@ from datetime import datetime
 from typing import Annotated
 
 import asyncpg
+import httpx
 from fastapi import APIRouter, Query, Response
 
 from app.auth import CurrentUser
 from app.clients import db, storage
 from app.errors import ApiError
 from app.queries import acquisitions as acquisitions_q
+from app.queries import analysis as analysis_q
 from app.queries import spans as spans_q
 from app.queries import traces as traces_q
+from app.schemas.analysis import (
+    AnalysisAudit,
+    AnalysisLabels,
+    AnalysisSignals,
+    AuditAnalyzer,
+    LabelValue,
+    TraceAnalysisResponse,
+)
 from app.schemas.span import SpanDetailResponse, SpanListItem, SpanListResponse
 from app.schemas.trace import (
     AcquireResponse,
@@ -79,6 +89,10 @@ async def list_traces(
                 is_owner=r["is_owner"],
                 acquired=r["acquired"],
                 acquired_at=r["acquired_at"],
+                outcome=r["outcome"],
+                outcome_confidence=r["outcome_confidence"],
+                outcome_provenance=r["outcome_provenance"],
+                analysis_state=analysis_q.derive_state(r["llm_status"], r["analysis_failed"]),
             )
             for r in rows
         ],
@@ -153,10 +167,12 @@ async def delete_trace(trace_id: str, user: CurrentUser) -> Response:
     if orphaned_object is not None:
         # After commit, best-effort: an orphaned storage object is tolerable
         # (invisible, content-addressed); a dangling uploads row is not.
-        try:
-            await storage.delete(orphaned_object)
-        except Exception:
-            logger.exception("failed to delete storage object %s", orphaned_object)
+        # The scrubbed artifact rides along with its raw sibling.
+        for path in (orphaned_object, storage.scrubbed_path(orphaned_object)):
+            try:
+                await storage.delete(path)
+            except Exception:
+                logger.exception("failed to delete storage object %s", path)
     return Response(status_code=204)
 
 
@@ -184,6 +200,78 @@ async def acquire_trace(trace_id: str, user: CurrentUser, response: Response) ->
     )
 
 
+@router.get("/{trace_id}/analysis", response_model=TraceAnalysisResponse)
+async def get_trace_analysis(trace_id: str, user: CurrentUser) -> TraceAnalysisResponse:
+    """The full analysis view for the trace-detail Analysis section
+    (3_api.md). Owner or listed — same visibility rule as the trace."""
+    await _visible_or_404(trace_id, user)
+    pool = db.pool()
+    ta = await analysis_q.fetch_analysis(pool, trace_id)
+    dead_letter = await analysis_q.fetch_open_dead_letter(pool, trace_id)
+    state = analysis_q.derive_state(
+        ta["llm_status"] if ta is not None else None, dead_letter is not None
+    )
+
+    labels = AnalysisLabels()
+    signals = None
+    metric_scores = None
+    reasoning = None
+    if ta is not None:
+        labels = AnalysisLabels(
+            **{
+                field: (
+                    LabelValue(
+                        value=ta[field],
+                        confidence=ta[f"{field}_confidence"],
+                        provenance=ta[f"{field}_provenance"],
+                    )
+                    if ta[field] is not None
+                    else None
+                )
+                for field in analysis_q.LABEL_FIELDS
+            }
+        )
+        signals = AnalysisSignals(
+            has_retry_loop=ta["has_retry_loop"],
+            loop_kind=ta["loop_kind"],
+            recovered_from_error=ta["recovered_from_error"],
+            truncation_suspected=ta["truncation_suspected"],
+            llm_call_count=ta["llm_call_count"],
+            tool_call_count=ta["tool_call_count"],
+        )
+        metric_scores = ta["metric_scores"]
+
+    analyzers = []
+    for run in await analysis_q.fetch_results(pool, trace_id):
+        output = run["output"]
+        if run["analyzer"] == "judge":
+            reasoning = output.get("reasoning")
+        analyzers.append(
+            AuditAnalyzer(
+                analyzer=run["analyzer"],
+                analyzer_version=run["analyzer_version"],
+                model_id=run["model_id"],
+                confidence=run["confidence"],
+                votes=output.get("votes") if run["analyzer"] == "judge" else None,
+                rendering_truncated=(
+                    output.get("rendering_truncated") if run["analyzer"] == "judge" else None
+                ),
+            )
+        )
+
+    return TraceAnalysisResponse(
+        analysis_state=state,
+        skip_reason=ta["llm_skip_reason"] if ta is not None and state == "skipped" else None,
+        failed_reason=dead_letter["last_error"] if dead_letter is not None else None,
+        labels=labels,
+        reasoning=reasoning,
+        signals=signals,
+        metric_scores=metric_scores,
+        open_review_item_id=None,  # A3 wires review items
+        audit=AnalysisAudit(analyzers=analyzers),
+    )
+
+
 @router.get("/{trace_id}/spans", response_model=SpanListResponse)
 async def list_spans(
     trace_id: str,
@@ -198,17 +286,22 @@ async def list_spans(
 
 @router.get("/{trace_id}/spans/{span_id}", response_model=SpanDetailResponse)
 async def get_span(trace_id: str, span_id: str, user: CurrentUser) -> SpanDetailResponse:
-    await _visible_or_404(trace_id, user)
+    trace = await _visible_or_404(trace_id, user)
     try:
-        row = await spans_q.get(db.pool(), trace_id, span_id)
+        row = await spans_q.get(db.pool(), trace_id, span_id, include_raw=trace["is_owner"])
     except asyncpg.DataError:  # not a UUID
         row = None
     if row is None:
         raise ApiError("not_found", "Span not found.", status=404)
     base = _span_item(row)
-    return SpanDetailResponse(
-        **base.model_dump(), attributes=row["attributes"], events=row["events"]
-    )
+    attributes, events = row["attributes"], row["events"]
+    # Owners see their original content (7_redaction.md); everyone else gets
+    # the scrubbed columns. Pre-A5 spans have no span_raw row — fall through
+    # to the stored (unscrubbed-at-the-time) columns.
+    if trace["is_owner"] and row["raw_attributes"] is not None:
+        attributes, events = row["raw_attributes"], row["raw_events"]
+        base = base.model_copy(update={"status_message": row["raw_status_message"]})
+    return SpanDetailResponse(**base.model_dump(), attributes=attributes, events=events)
 
 
 @router.get("/{trace_id}/download")
@@ -225,7 +318,22 @@ async def download_trace(trace_id: str, user: CurrentUser) -> Response:
             "Acquire this trace to download it.",
             status=403,
         )
-    data = await storage.get(row["storage_path"])
+    if row["is_owner"]:
+        data = await storage.get(row["storage_path"])
+    else:
+        # Acquirers get the scrubbed artifact (7_redaction.md). Uploads
+        # ingested before redaction shipped have none until re-ingested.
+        try:
+            data = await storage.get(storage.scrubbed_path(row["storage_path"]))
+        except httpx.HTTPStatusError as exc:
+            if exc.response.is_client_error:
+                raise ApiError(
+                    "not_found",
+                    "No scrubbed copy exists for this trace yet; "
+                    "ask the owner to re-ingest the upload.",
+                    status=404,
+                ) from exc
+            raise
     # Same header hygiene as the uploads download: client-supplied filename.
     safe_name = re.sub(r'[^\x20-\x7e]|"', "", row["filename"]) or "trace.json"
     return Response(
@@ -263,6 +371,11 @@ def _detail(row: asyncpg.Record) -> TraceDetailResponse:
         is_owner=row["is_owner"],
         acquired=row["acquired"],
         can_download=row["is_owner"] or row["acquired"],
+        total_tokens=row["total_tokens"],
+        outcome=row["outcome"],
+        outcome_confidence=row["outcome_confidence"],
+        outcome_provenance=row["outcome_provenance"],
+        analysis_state=analysis_q.derive_state(row["llm_status"], row["analysis_failed"]),
     )
 
 

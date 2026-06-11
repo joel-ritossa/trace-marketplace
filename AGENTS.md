@@ -27,9 +27,10 @@
 ### Stack
 
 - Python (`services/api`, one codebase with API and worker entrypoints): uv for packaging, ruff for lint + format, pytest. Type hints everywhere; Pydantic models at every boundary (requests, responses, task payloads).
+- LLM access: litellm (pinned in `services/api`) is the only provider layer, wrapped by a single client module in the analysis package. Never import provider SDKs directly; model names are env vars; record per-call latency/tokens/cost via litellm in result metadata.
 - TypeScript (`apps/web`): pnpm, strict `tsconfig`, Next.js App Router. API types derive from the FastAPI OpenAPI schema — never hand-write duplicates.
 - UI follows `DESIGN.md` (Vercel-derived system + the Trace Marketplace Adaptation section, which wins on conflict). Use its tokens; do not invent colors, radii, or type scales.
-- Components come from shadcn/ui (`pnpm dlx shadcn add <name>` into `src/components/ui/`), themed via the CSS variables in `globals.css`, which resolve to DESIGN.md tokens — DESIGN.md decides how things look, shadcn decides how they behave. Icons are `lucide-react`; no ad hoc SVG files. App surfaces are light-only (the `.dark` class is never set).
+- Components come from shadcn/ui (`pnpm dlx shadcn add <name>` into `src/components/ui/`), themed via the CSS variables in `globals.css`, which resolve to DESIGN.md tokens — DESIGN.md decides how things look, shadcn decides how they behave. Icons are `lucide-react`; no ad hoc SVG files. App surfaces support light and dark schemes: next-themes sets the `.dark` class from the account-menu theme selector (light/dark/system), and both token ladders live in `globals.css`.
 - All tunables (size limits, rate limits, retry counts) are env vars with local-demo defaults, documented in a single `.env.example`.
 
 ### Code Organization

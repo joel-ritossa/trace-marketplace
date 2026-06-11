@@ -8,6 +8,7 @@ from pathlib import Path
 from app.analysis import render_trace
 from app.analysis.signals import run_signals
 from app.importers import otlp
+from app.redaction import OFFLINE_SALT
 from tests.unit.analysis_factories import load_fixture_trace
 from tests.unit.test_importer_golden import FIXTURES, FIXTURES_DIR, GOLDEN_DIR, result_to_dict
 from tests.unit.test_renderer_golden import GOLDEN_CONFIG, RENDER_FIXTURES
@@ -17,7 +18,7 @@ from tests.unit.test_signals_golden import SIGNALS_FIXTURES, SIGNALS_SETTINGS
 def main() -> None:
     for name in FIXTURES:
         payload = json.loads((FIXTURES_DIR / f"{name}.json").read_text())
-        out = result_to_dict(otlp.import_payload(payload))
+        out = result_to_dict(otlp.import_payload(payload, redaction_salt=OFFLINE_SALT))
         path = GOLDEN_DIR / f"{name}.expected.json"
         path.write_text(json.dumps(out, indent=2) + "\n")
         print(f"wrote {path.relative_to(Path.cwd())}")

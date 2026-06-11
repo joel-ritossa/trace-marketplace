@@ -1,0 +1,94 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          { "key": "service.name", "value": { "stringValue": "redaction-demo" } },
+          {
+            "key": "process.env",
+            "value": {
+              "kvlistValue": {
+                "values": [
+                  { "key": "AWS_ACCESS_KEY_ID", "value": { "stringValue": "AKIAIOSFODNN7EXAMPLE" } },
+                  { "key": "password", "value": { "stringValue": "correct-horse-battery" } }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": { "name": "demo.redaction" },
+          "spans": [
+            {
+              "traceId": "44444444444444444444444444444444",
+              "spanId": "d000000000000001",
+              "name": "chat alice@example.com",
+              "kind": 1,
+              "startTimeUnixNano": "1768471400000000000",
+              "endTimeUnixNano": "1768471401000000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.prompt",
+                  "value": {
+                    "stringValue": "Email alice@example.com and call +1 415 555 2671 about the order."
+                  }
+                },
+                {
+                  "key": "gen_ai.completion",
+                  "value": {
+                    "stringValue": "Card 4111 1111 1111 1111, SSN 219-09-9999, server 8.8.8.8."
+                  }
+                }
+              ],
+              "events": [
+                {
+                  "name": "gen_ai.content.completion",
+                  "timeUnixNano": "1768471400500000000",
+                  "attributes": [
+                    {
+                      "key": "session.token",
+                      "value": {
+                        "stringValue": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkFsaWNlIn0.sflKxwRJSMeKKF2QT4fwpMeJf36POk6yJVadQssw5c"
+                      }
+                    }
+                  ]
+                }
+              ],
+              "status": { "code": 2, "message": "auth failed for alice@example.com" }
+            },
+            {
+              "traceId": "44444444444444444444444444444444",
+              "spanId": "d000000000000002",
+              "parentSpanId": "d000000000000001",
+              "name": "deploy-key",
+              "kind": 3,
+              "startTimeUnixNano": "1768471400200000000",
+              "endTimeUnixNano": "1768471400700000000",
+              "attributes": [
+                {
+                  "key": "tool.arguments",
+                  "value": {
+                    "stringValue": "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA0Z3VS5JJcds3xfn\n-----END RSA PRIVATE KEY-----"
+                  }
+                },
+                {
+                  "key": "http.headers",
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        { "stringValue": "x-api-key: sk_live_4eC39HqLyjWDarjtT1zdp7dc" }
+                      ]
+                    }
+                  }
+                }
+              ],
+              "events": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -16,6 +16,7 @@
         "get_weather"
       ],
       "error_types": [],
+      "total_tokens": 3805,
       "spans": [
         {
           "source_span_id": "a000000000000001",
@@ -38,7 +39,13 @@
             "gen_ai.operation.name": "invoke_agent",
             "gen_ai.agent.name": "demo-agent"
           },
-          "events": []
+          "events": [],
+          "raw_attributes": {
+            "gen_ai.operation.name": "invoke_agent",
+            "gen_ai.agent.name": "demo-agent"
+          },
+          "raw_events": [],
+          "raw_status_message": null
         },
         {
           "source_span_id": "a000000000000002",
@@ -69,7 +76,21 @@
             "gen_ai.input.messages": "[{\"role\": \"user\", \"parts\": [{\"type\": \"text\", \"content\": \"What's the weather in Paris? Use the docs if needed.\"}]}]",
             "gen_ai.output.messages": "[{\"role\": \"assistant\", \"finish_reason\": \"tool_calls\", \"parts\": [{\"type\": \"tool_call\", \"id\": \"call_1\", \"name\": \"get_weather\", \"arguments\": {\"location\": \"Paris\"}}]}]"
           },
-          "events": []
+          "events": [],
+          "raw_attributes": {
+            "gen_ai.operation.name": "chat",
+            "gen_ai.provider.name": "openai",
+            "gen_ai.request.model": "gpt-5",
+            "gen_ai.usage.input_tokens": 1200,
+            "gen_ai.usage.output_tokens": 85,
+            "gen_ai.response.finish_reasons": [
+              "tool_calls"
+            ],
+            "gen_ai.input.messages": "[{\"role\": \"user\", \"parts\": [{\"type\": \"text\", \"content\": \"What's the weather in Paris? Use the docs if needed.\"}]}]",
+            "gen_ai.output.messages": "[{\"role\": \"assistant\", \"finish_reason\": \"tool_calls\", \"parts\": [{\"type\": \"tool_call\", \"id\": \"call_1\", \"name\": \"get_weather\", \"arguments\": {\"location\": \"Paris\"}}]}]"
+          },
+          "raw_events": [],
+          "raw_status_message": null
         },
         {
           "source_span_id": "a000000000000003",
@@ -92,7 +113,13 @@
             "traceloop.span.kind": "task",
             "traceloop.entity.name": "prepare_context"
           },
-          "events": []
+          "events": [],
+          "raw_attributes": {
+            "traceloop.span.kind": "task",
+            "traceloop.entity.name": "prepare_context"
+          },
+          "raw_events": [],
+          "raw_status_message": null
         },
         {
           "source_span_id": "a000000000000004",
@@ -115,7 +142,13 @@
             "openinference.span.kind": "RETRIEVER",
             "retrieval.documents": 3
           },
-          "events": []
+          "events": [],
+          "raw_attributes": {
+            "openinference.span.kind": "RETRIEVER",
+            "retrieval.documents": 3
+          },
+          "raw_events": [],
+          "raw_status_message": null
         },
         {
           "source_span_id": "a000000000000005",
@@ -138,7 +171,13 @@
             "gen_ai.operation.name": "embeddings",
             "gen_ai.request.model": "text-embedding-4"
           },
-          "events": []
+          "events": [],
+          "raw_attributes": {
+            "gen_ai.operation.name": "embeddings",
+            "gen_ai.request.model": "text-embedding-4"
+          },
+          "raw_events": [],
+          "raw_status_message": null
         },
         {
           "source_span_id": "a000000000000006",
@@ -163,7 +202,15 @@
             "gen_ai.tool.call.arguments": "{\"location\": \"Paris\"}",
             "gen_ai.tool.call.result": "{\"temperature_c\": 18, \"conditions\": \"cloudy\"}"
           },
-          "events": []
+          "events": [],
+          "raw_attributes": {
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.tool.name": "get_weather",
+            "gen_ai.tool.call.arguments": "{\"location\": \"Paris\"}",
+            "gen_ai.tool.call.result": "{\"temperature_c\": 18, \"conditions\": \"cloudy\"}"
+          },
+          "raw_events": [],
+          "raw_status_message": null
         },
         {
           "source_span_id": "a000000000000007",
@@ -190,7 +237,17 @@
             "llm.token_count.completion": 120,
             "llm.token_count.total": 2520
           },
-          "events": []
+          "events": [],
+          "raw_attributes": {
+            "openinference.span.kind": "LLM",
+            "llm.provider": "openai",
+            "llm.model_name": "gpt-5",
+            "llm.token_count.prompt": 2400,
+            "llm.token_count.completion": 120,
+            "llm.token_count.total": 2520
+          },
+          "raw_events": [],
+          "raw_status_message": null
         }
       ]
     }

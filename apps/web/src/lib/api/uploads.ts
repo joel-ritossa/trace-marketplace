@@ -3,6 +3,7 @@ import { apiDownload, apiFetch } from "@/lib/api/client";
 // Types mirror services/api/app/schemas/upload.py — keep in sync.
 
 export type UploadStatus = "received" | "processing" | "complete" | "failed";
+export type UploadSource = "cli" | "web";
 
 export type UploadCreated = {
   upload_id: string;
@@ -14,8 +15,10 @@ export type Upload = {
   upload_id: string;
   filename: string;
   status: UploadStatus;
+  source: UploadSource;
   error_message: string | null;
   parse_warnings: Record<string, unknown> | null;
+  redaction_counts: Record<string, number> | null;
   trace_ids: string[];
   created_at: string;
   processed_at: string | null;
@@ -26,7 +29,10 @@ export type UploadListItem = {
   filename: string;
   size_bytes: number;
   status: UploadStatus;
+  source: UploadSource;
   error_message: string | null;
+  redaction_counts: Record<string, number> | null;
+  trace_ids: string[];
   created_at: string;
   processed_at: string | null;
 };
@@ -51,8 +57,8 @@ export async function getUpload(uploadId: string): Promise<Upload> {
   return apiFetch<Upload>(`/v1/uploads/${uploadId}`);
 }
 
-export async function listUploads(): Promise<UploadList> {
-  return apiFetch<UploadList>("/v1/uploads");
+export async function listUploads(limit = 25, offset = 0): Promise<UploadList> {
+  return apiFetch<UploadList>(`/v1/uploads?limit=${limit}&offset=${offset}`);
 }
 
 export async function downloadUpload(uploadId: string, filename: string): Promise<void> {

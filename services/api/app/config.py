@@ -22,11 +22,12 @@ class Settings(BaseSettings):
 
     # Rate limits (6_architecture.md). Token buckets in Redis; tuned for a
     # local demo, env-overridable for anything else.
-    rate_limit_global_rate: float = 50  # req/s
-    rate_limit_global_burst: int = 100
-    rate_limit_user_rate: float = 10  # req/s
-    rate_limit_user_burst: int = 20
-    rate_limit_upload_per_minute: int = 10
+    rate_limit_global_rate: float = 100  # req/s
+    rate_limit_global_burst: int = 200
+    rate_limit_user_rate: float = 20  # req/s
+    rate_limit_user_burst: int = 40
+    rate_limit_upload_per_minute: int = 60
+    rate_limit_upload_global_per_minute: int = 300
 
     # Ingestion reliability (6_architecture.md).
     ingest_max_attempts: int = 5

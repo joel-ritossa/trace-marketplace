@@ -3,9 +3,14 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, StringConstraints
 
+from app.schemas.analysis import AnalysisState, Provenance
+
 # Mirrors the traces.status check constraint and the frontend types
 # (apps/web/src/lib/api/traces.ts).
 TraceStatus = Literal["ok", "error"]
+
+# The ternary label vocabulary (1_analysis.md label model).
+Outcome = Literal["success", "failure", "indeterminate"]
 
 TraceSort = Literal["created_at", "duration_ms", "span_count"]
 
@@ -34,6 +39,12 @@ class TraceListItem(BaseModel):
     acquired: bool
     # Set when acquired; the library card shows it.
     acquired_at: datetime | None
+    # Label-at-list-level fields (3_api.md result cards): outcome triplet +
+    # the derived analysis state. has_open_review_item lands with A3.
+    outcome: Outcome | None
+    outcome_confidence: float | None
+    outcome_provenance: Provenance | None
+    analysis_state: AnalysisState
 
 
 class TraceListResponse(BaseModel):
@@ -69,6 +80,13 @@ class TraceDetailResponse(BaseModel):
     is_owner: bool
     acquired: bool
     can_download: bool
+    total_tokens: int | None
+    # Header label strip (4_pages.md); the Analysis section fetches the
+    # full view from GET /v1/traces/{id}/analysis.
+    outcome: Outcome | None
+    outcome_confidence: float | None
+    outcome_provenance: Provenance | None
+    analysis_state: AnalysisState
 
 
 # Bounded: tags ride along on every result card, and lexemes past ~2KB are

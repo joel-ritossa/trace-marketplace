@@ -1,0 +1,4 @@
+# Copy to terraform.tfvars and fill in.
+domain_name  = "example.com"
+supabase_url = "https://abcdefghijklmnop.supabase.co"
+aws_region   = "us-west-2"

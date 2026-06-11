@@ -37,6 +37,12 @@ def raw_path(owner_id: str, sha256: str) -> str:
     return f"raw/{owner_id}/{sha256}.json"
 
 
+def scrubbed_path(raw: str) -> str:
+    """Path of the scrubbed payload artifact materialized at ingestion
+    (7_redaction.md) — what non-owner downloads serve."""
+    return "scrubbed/" + raw.removeprefix("raw/")
+
+
 async def put(path: str, data: bytes) -> None:
     # Upsert keeps a retried upload request idempotent: the object content is
     # keyed by sha256, so rewriting it is always byte-identical.

@@ -3,19 +3,24 @@
 import Link from "next/link";
 import { ScrollText, SearchX } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Pager } from "@/components/shell/pager";
 import { TracesTable } from "@/components/traces/traces-table";
 import { TraceFiltersBar, hasActiveFilters } from "@/components/traces/trace-filters";
-import { useTraceList } from "@/components/traces/use-trace-list";
+import { TRACE_PAGE_SIZE, useTraceList } from "@/components/traces/use-trace-list";
 
 export default function TracesPage() {
-  const { result, error, filters, setFilters, sort, setSort } = useTraceList("mine");
+  const { result, error, filters, setFilters, sort, setSort, page, setPage } = useTraceList("mine");
   const filtered = hasActiveFilters(filters);
 
   return (
     <div>
       <h1 className="text-2xl font-semibold tracking-tight">My Traces</h1>
       <p className="mt-1 text-sm text-muted-foreground">
-        Traces parsed from your uploads, private and listed.
+        Traces parsed from{" "}
+        <Link href="/uploads" className="underline underline-offset-2 hover:text-foreground">
+          your uploads
+        </Link>
+        , private and listed.
       </p>
 
       <div className="mt-6">
@@ -47,7 +52,17 @@ export default function TracesPage() {
             </Button>
           </div>
         ) : (
-          <TracesTable traces={result.traces} />
+          <>
+            <TracesTable traces={result.traces} />
+            <div className="mt-4">
+              <Pager
+                page={page}
+                pageSize={TRACE_PAGE_SIZE}
+                total={result.total}
+                onPageChange={setPage}
+              />
+            </div>
+          </>
         )}
       </div>
     </div>

@@ -7,8 +7,13 @@ import pytest
 from app.importers import otlp
 from app.importers.errors import PermanentIngestError
 from app.importers.otlp.decode import decode_any_value, decode_attributes
+from app.redaction import OFFLINE_SALT
 
 TRACE_ID = "11111111111111111111111111111111"
+
+
+def import_payload(payload: dict, fallback_name: str | None = None) -> otlp.ImportResult:
+    return otlp.import_payload(payload, redaction_salt=OFFLINE_SALT, fallback_name=fallback_name)
 
 
 def make_span(span_id: str = "a000000000000001", **overrides) -> dict:
@@ -69,29 +74,29 @@ class TestIds:
             traceId=base64.b64encode(bytes.fromhex(trace_hex)).decode(),
             spanId=base64.b64encode(bytes.fromhex(span_hex)).decode(),
         )
-        result = otlp.import_payload(payload_of(span))
+        result = import_payload(payload_of(span))
         assert result.traces[0].source_trace_id == trace_hex
         assert result.traces[0].spans[0].source_span_id == span_hex
 
     def test_uppercase_hex_normalizes(self) -> None:
         span = make_span(traceId=TRACE_ID.upper())
-        result = otlp.import_payload(payload_of(span))
+        result = import_payload(payload_of(span))
         assert result.traces[0].source_trace_id == TRACE_ID
 
     def test_missing_parent_is_none(self) -> None:
-        result = otlp.import_payload(payload_of(make_span()))
+        result = import_payload(payload_of(make_span()))
         assert result.traces[0].spans[0].source_parent_span_id is None
 
 
 class TestValidation:
     def test_no_valid_spans_is_permanent(self) -> None:
         with pytest.raises(PermanentIngestError):
-            otlp.import_payload(payload_of(make_span(spanId=None)))
+            import_payload(payload_of(make_span(spanId=None)))
 
     def test_out_of_range_timestamp_skips_span(self) -> None:
         """Absurd nanos overflow datetime; the span must skip, not crash."""
         bad = make_span("b000000000000001", startTimeUnixNano="9" * 30)
-        result = otlp.import_payload(payload_of(make_span(), bad))
+        result = import_payload(payload_of(make_span(), bad))
         assert len(result.traces[0].spans) == 1
         assert result.parse_warnings["skipped_spans"] == 1
         assert "timestamps" in result.parse_warnings["samples"][0]
@@ -99,16 +104,16 @@ class TestValidation:
     def test_skip_samples_truncate_payload_content(self) -> None:
         """Skip reasons reach error messages and logs; a giant value crammed
         into spanId must not ride along unbounded."""
-        result = otlp.import_payload(payload_of(make_span(), make_span(spanId="x" * 10_000)))
+        result = import_payload(payload_of(make_span(), make_span(spanId="x" * 10_000)))
         assert len(result.parse_warnings["samples"][0]) < 200
 
     def test_empty_resource_spans_is_permanent(self) -> None:
         with pytest.raises(PermanentIngestError):
-            otlp.import_payload({"resourceSpans": []})
+            import_payload({"resourceSpans": []})
 
     def test_status_enum_names_accepted(self) -> None:
         span = make_span(status={"code": "STATUS_CODE_ERROR", "message": "boom"})
-        result = otlp.import_payload(payload_of(span))
+        result = import_payload(payload_of(span))
         assert result.traces[0].spans[0].status == "error"
         assert result.traces[0].status == "error"
 
@@ -125,7 +130,7 @@ class TestGrouping:
                 endTimeUnixNano="1768471301000000000",
             ),
         ]
-        result = otlp.import_payload(payload_of(*spans))
+        result = import_payload(payload_of(*spans))
         assert [t.source_trace_id for t in result.traces] == [TRACE_ID, other_trace]
         assert all(t.span_count == 1 for t in result.traces)
 
@@ -145,12 +150,12 @@ class TestGrouping:
                 endTimeUnixNano="1768471201000000000",
             ),
         ]
-        result = otlp.import_payload(payload_of(*spans))
+        result = import_payload(payload_of(*spans))
         assert result.traces[0].name == "root"
 
     def test_orphan_parent_still_imports(self) -> None:
         span = make_span(parentSpanId="feedfeedfeedfeed")
-        result = otlp.import_payload(payload_of(span))
+        result = import_payload(payload_of(span))
         assert result.traces[0].spans[0].source_parent_span_id == "feedfeedfeedfeed"
 
 
@@ -162,7 +167,7 @@ class TestKindPrecedence:
                 {"key": "openinference.span.kind", "value": {"stringValue": "LLM"}},
             ]
         )
-        result = otlp.import_payload(payload_of(span))
+        result = import_payload(payload_of(span))
         assert result.traces[0].spans[0].kind == "tool"
 
     def test_unknown_operation_falls_through(self) -> None:
@@ -172,7 +177,7 @@ class TestKindPrecedence:
                 {"key": "traceloop.span.kind", "value": {"stringValue": "workflow"}},
             ]
         )
-        result = otlp.import_payload(payload_of(span))
+        result = import_payload(payload_of(span))
         assert result.traces[0].spans[0].kind == "chain"
 
     def test_legacy_token_aliases(self) -> None:
@@ -182,6 +187,66 @@ class TestKindPrecedence:
                 {"key": "gen_ai.usage.completion_tokens", "value": {"intValue": "5"}},
             ]
         )
-        result = otlp.import_payload(payload_of(span))
+        result = import_payload(payload_of(span))
         s = result.traces[0].spans[0]
         assert (s.input_tokens, s.output_tokens, s.total_tokens) == (10, 5, 15)
+
+
+def tokens_attr(total: int) -> list[dict]:
+    return [{"key": "gen_ai.usage.total_tokens", "value": {"intValue": str(total)}}]
+
+
+class TestTraceTotals:
+    """A2 importer deltas: trace-level token sum (2_data-model.md)."""
+
+    def test_total_tokens_sums_spans_with_tokens(self) -> None:
+        spans = [
+            make_span("a000000000000001", attributes=tokens_attr(100)),
+            make_span("a000000000000002"),  # tokenless span doesn't zero the sum
+            make_span("a000000000000003", attributes=tokens_attr(50)),
+        ]
+        assert import_payload(payload_of(*spans)).traces[0].total_tokens == 150
+
+    def test_total_tokens_null_when_no_span_has_tokens(self) -> None:
+        assert import_payload(payload_of(make_span())).traces[0].total_tokens is None
+
+
+class TestNameFallback:
+    """A2 importer deltas: bare-id trace names fall back to the source
+    filename (2_data-model.md trace-name check)."""
+
+    def test_hex_id_name_falls_back(self) -> None:
+        span = make_span(name="0af7651916cd43dd8448eb211c80319c")
+        result = import_payload(payload_of(span), fallback_name="checkout-run")
+        assert result.traces[0].name == "checkout-run"
+
+    def test_uuid_name_falls_back(self) -> None:
+        span = make_span(name="b3a4f8a2-1c2d-4e5f-8a9b-0c1d2e3f4a5b")
+        result = import_payload(payload_of(span), fallback_name="checkout-run")
+        assert result.traces[0].name == "checkout-run"
+
+    def test_numeric_name_falls_back(self) -> None:
+        span = make_span(name="1234567")
+        result = import_payload(payload_of(span), fallback_name="checkout-run")
+        assert result.traces[0].name == "checkout-run"
+
+    def test_empty_name_falls_back(self) -> None:
+        span = make_span(name="  ")
+        result = import_payload(payload_of(span), fallback_name="checkout-run")
+        assert result.traces[0].name == "checkout-run"
+
+    def test_real_name_kept(self) -> None:
+        span = make_span(name="plan trip to osaka")
+        result = import_payload(payload_of(span), fallback_name="checkout-run")
+        assert result.traces[0].name == "plan trip to osaka"
+
+    def test_short_hex_word_kept(self) -> None:
+        # "deadbeef" is hex-shaped but short; only id-length strings fall back.
+        span = make_span(name="deadbeef")
+        result = import_payload(payload_of(span), fallback_name="checkout-run")
+        assert result.traces[0].name == "deadbeef"
+
+    def test_no_fallback_keeps_bare_id(self) -> None:
+        span = make_span(name="0af7651916cd43dd8448eb211c80319c")
+        result = import_payload(payload_of(span))
+        assert result.traces[0].name == "0af7651916cd43dd8448eb211c80319c"

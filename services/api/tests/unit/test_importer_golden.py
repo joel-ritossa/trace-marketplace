@@ -13,11 +13,19 @@ from typing import Any
 import pytest
 
 from app.importers import otlp
+from app.redaction import OFFLINE_SALT
 
 FIXTURES_DIR = Path(__file__).parents[4] / "fixtures"
 GOLDEN_DIR = Path(__file__).parent / "golden"
 
-FIXTURES = ["agent-session", "failure-trace", "minimal", "malformed-spans"]
+FIXTURES = [
+    "agent-session",
+    "failure-trace",
+    "minimal",
+    "malformed-spans",
+    "redaction-seeded",
+    "redaction-negative",
+]
 
 
 def result_to_dict(result: otlp.ImportResult) -> dict[str, Any]:
@@ -33,11 +41,11 @@ def result_to_dict(result: otlp.ImportResult) -> dict[str, Any]:
 def test_fixture_matches_golden(name: str) -> None:
     payload = json.loads((FIXTURES_DIR / f"{name}.json").read_text())
     expected = json.loads((GOLDEN_DIR / f"{name}.expected.json").read_text())
-    assert result_to_dict(otlp.import_payload(payload)) == expected
+    assert result_to_dict(otlp.import_payload(payload, redaction_salt=OFFLINE_SALT)) == expected
 
 
 def test_import_is_deterministic() -> None:
     payload = json.loads((FIXTURES_DIR / "agent-session.json").read_text())
-    assert result_to_dict(otlp.import_payload(payload)) == result_to_dict(
-        otlp.import_payload(payload)
-    )
+    assert result_to_dict(
+        otlp.import_payload(payload, redaction_salt=OFFLINE_SALT)
+    ) == result_to_dict(otlp.import_payload(payload, redaction_salt=OFFLINE_SALT))

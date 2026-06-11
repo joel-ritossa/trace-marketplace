@@ -50,6 +50,19 @@ pnpm-debug.log*
 # committed fixtures are synthetic (fixtures/).
 devdata/
 
+# Experiment data dirs (real benchmark traces, embeddings) — never committed;
+# experiment scripts/findings in sandbox/ are tracked. Raw run outputs derived
+# from real traces stay out; the summary.md compression is tracked.
+sandbox/**/data/
+sandbox/**/results/**/*.json
+!sandbox/**/results/**/meta.json
+
+# Terraform (machine-local state, plugins, and var values)
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+
 # Local tooling
 .DS_Store
 Thumbs.db
@@ -57,3 +70,4 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+infra/tfplan

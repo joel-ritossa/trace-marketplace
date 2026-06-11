@@ -1,0 +1,129 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write # OIDC token for AssumeRoleWithWebIdentity
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-west-2
+  ECR_API: trace-marketplace/api
+  ECR_WEB: trace-marketplace/web
+  CLUSTER: trace-marketplace
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push api image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          docker build -t "$REGISTRY/$ECR_API:$GITHUB_SHA" services/api
+          docker push "$REGISTRY/$ECR_API:$GITHUB_SHA"
+
+      - name: Build and push web image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        # NEXT_PUBLIC_* are baked into the bundle at build time. The anon key
+        # is browser-public by design, so a repo variable is fine.
+        run: |
+          docker build -t "$REGISTRY/$ECR_WEB:$GITHUB_SHA" \
+            -f apps/web/Dockerfile \
+            --build-arg NEXT_PUBLIC_SUPABASE_URL='${{ vars.NEXT_PUBLIC_SUPABASE_URL }}' \
+            --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY='${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}' \
+            --build-arg NEXT_PUBLIC_API_URL='${{ vars.APP_URL }}' \
+            .
+          docker push "$REGISTRY/$ECR_WEB:$GITHUB_SHA"
+
+      - name: Fetch current task definitions
+        run: |
+          for family in api worker scheduler web; do
+            aws ecs describe-task-definition \
+              --task-definition "trace-marketplace-$family" \
+              --query taskDefinition --output json > "td-$family.json"
+          done
+
+      - name: Render api task definition
+        id: td-api
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: td-api.json
+          container-name: api
+          image: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_API }}:${{ github.sha }}
+
+      - name: Render worker task definition
+        id: td-worker
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: td-worker.json
+          container-name: worker
+          image: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_API }}:${{ github.sha }}
+
+      - name: Render scheduler task definition
+        id: td-scheduler
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: td-scheduler.json
+          container-name: scheduler
+          image: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_API }}:${{ github.sha }}
+
+      - name: Render web task definition
+        id: td-web
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: td-web.json
+          container-name: web
+          image: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_WEB }}:${{ github.sha }}
+
+      - name: Deploy api
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.td-api.outputs.task-definition }}
+          service: api
+          cluster: ${{ env.CLUSTER }}
+          wait-for-service-stability: true
+
+      - name: Deploy worker
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.td-worker.outputs.task-definition }}
+          service: worker
+          cluster: ${{ env.CLUSTER }}
+          wait-for-service-stability: true
+
+      - name: Deploy scheduler
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.td-scheduler.outputs.task-definition }}
+          service: scheduler
+          cluster: ${{ env.CLUSTER }}
+          wait-for-service-stability: true
+
+      - name: Deploy web
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.td-web.outputs.task-definition }}
+          service: web
+          cluster: ${{ env.CLUSTER }}
+          wait-for-service-stability: true

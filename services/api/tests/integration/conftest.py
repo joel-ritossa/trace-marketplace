@@ -20,13 +20,32 @@ API_URL = os.environ.get("API_URL", "http://localhost:8000")
 
 async def signup_token() -> str:
     """Create a fresh user and return its access token."""
+    email = f"it-{uuid.uuid4().hex[:12]}@example.com"
+    password = "integration-test-pw"
+    service_headers = {
+        "apikey": settings.supabase_service_role_key,
+        "Authorization": f"Bearer {settings.supabase_service_role_key}",
+    }
     async with httpx.AsyncClient() as client:
+        # Signup is gated on the allowlist (migration 6); register the fresh
+        # email first via service-role PostgREST.
         res = await client.post(
-            f"{settings.supabase_url}/auth/v1/signup",
-            json={
-                "email": f"it-{uuid.uuid4().hex[:12]}@example.com",
-                "password": "integration-test-pw",
-            },
+            f"{settings.supabase_url}/rest/v1/allowed_emails",
+            json={"entry": email},
+            headers={**service_headers, "Prefer": "resolution=ignore-duplicates"},
+        )
+        res.raise_for_status()
+        # Email confirmation is on (config.toml), so /signup would not return a
+        # session; admin-create the user pre-confirmed and sign in normally.
+        res = await client.post(
+            f"{settings.supabase_url}/auth/v1/admin/users",
+            json={"email": email, "password": password, "email_confirm": True},
+            headers=service_headers,
+        )
+        res.raise_for_status()
+        res = await client.post(
+            f"{settings.supabase_url}/auth/v1/token?grant_type=password",
+            json={"email": email, "password": password},
             headers={"apikey": settings.supabase_service_role_key},
         )
         res.raise_for_status()

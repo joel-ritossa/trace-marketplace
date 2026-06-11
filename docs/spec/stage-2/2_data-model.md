@@ -92,6 +92,17 @@ One row per analyzer run per trace. Audit + reproducibility layer; never queried
 
 A re-run of `analyze_trace` deletes and rewrites the trace's rows (with `trace_analysis`, one transaction).
 
+### span_raw
+
+Owner-only raw copies of the scrubbed span content fields ([7_redaction.md](7_redaction.md)). After redaction lands, `spans.attributes` / `events` / `status_message` hold the scrubbed representation; this table is the only place original values exist in Postgres. Written in the same ingestion transaction as `spans`.
+
+| Column | Type | Notes |
+|---|---|---|
+| `span_id` | uuid PK | References `spans.id`, cascade delete. |
+| `attributes` | jsonb | Original OTLP attributes. |
+| `events` | jsonb | Original OTLP events. |
+| `status_message` | text | Original status message. |
+
 ### trace_analysis
 
 The 1:1 side table holding everything filterable. **One writer:** the analysis job (and human resolution) own this table; ingestion owns `traces`. No row = not yet analyzed; within a row, null = the analyzer didn't produce the field. Null never matches any predicate.
@@ -138,6 +149,10 @@ All additive, via new migrations:
 - `traces.total_tokens` integer nullable — ingestion-derived sum of span tokens (importer addition; like `duration_ms`).
 - `dead_letters.trace_id` uuid nullable — analysis tasks are trace-scoped; ingestion rows leave it null.
 - Importer check (not a schema change): trace `name` derivation must produce scannable names (root-span name, falling back to source filename), never a bare id — CLI sync makes this visible at volume.
+- `uploads.redaction_salt` text — random hex set at upload creation, immutable; keys the deterministic placeholder HMAC ([7_redaction.md](7_redaction.md)).
+- `uploads.redaction_version` text nullable, `uploads.redaction_counts` jsonb nullable — ruleset version and per-type replacement counts from the last ingestion; rewritten on re-ingest.
+- `spans.attributes` / `events` / `status_message` and trace/span `name` become scrubbed-by-default once redaction lands; raw copies move to `span_raw` (no column changes — a semantic delta plus the new table).
+- Storage: ingestion materializes a scrubbed payload artifact at `scrubbed/{owner_id}/{sha256}.json` in the `raw-traces` bucket, overwritten idempotently per ingest; non-owner downloads serve it.
 
 ## Indexes
 
@@ -155,5 +170,7 @@ Enforced in API queries; mirrored as RLS policies (stage-1 rule).
 | `subscriptions`, `subscription_matches` | Owner only. |
 | `analyzer_results` | Mirrors the referenced trace (owner, or anyone if listed). |
 | `trace_analysis` | Mirrors `traces` exactly: owner, or any authenticated user when the trace is listed. |
+| `span_raw` | Owner of the referenced trace only — never readable by non-owners regardless of visibility. |
+| Download (delta to stage 1) | Owner gets the raw storage object; an acquirer gets the scrubbed artifact. |
 
 API-key principals are scoped to upload endpoints only ([3_api.md](3_api.md)) regardless of row-level access.
