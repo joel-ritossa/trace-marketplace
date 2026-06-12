@@ -1,7 +1,8 @@
 # Subscriptions — Saved Searches That Watch the Marketplace
 
 A consumer saves a filtered marketplace search; from then on, every trace
-that becomes listed (or finishes analysis while listed) is evaluated against
+that becomes listed (or finishes analysis or gets human-relabeled while
+listed) is evaluated against
 it — a first match notifies once, ever, and floods digest into one unread
 notification per subscription. The feed runs the stored query live, marks
 what's new since the last look, and bulk-acquires into a labeled download.
@@ -50,7 +51,8 @@ Discovery at scale is a polling problem by default: a consumer hunting for
 it — the query becomes a stored object (`subscriptions.query`, validated at
 write time against the same Pydantic model the API parses, so it can never
 fail to execute later), and matching becomes event-driven: a trace is
-evaluated exactly when it becomes listed or when its analysis completes
+evaluated exactly when it becomes listed, when its analysis completes, or
+when a review resolve relabels it while listed
 (`app/worker/tasks/match.py`). No cron sweep, no re-polling, no missed
 window between "listed" and "analyzed" — an `owner_opt_out` trace that gets
 listed re-enqueues analysis first and matches when its labels land.

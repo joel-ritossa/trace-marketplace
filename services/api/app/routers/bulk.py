@@ -68,8 +68,6 @@ async def _acquire_one(pool: asyncpg.Pool, trace_id: str, caller_id: str) -> str
         return "not_found"
     if row is None:
         return "not_found"
-    if row["is_owner"]:
-        return "own_trace"
     acq = await acquisitions_q.create(pool, caller_id, trace_id)
     if acq is None:  # unlisted between the visibility check and the insert
         return "not_listed"

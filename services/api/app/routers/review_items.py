@@ -1,3 +1,5 @@
+import logging
+
 import asyncpg
 from fastapi import APIRouter, Query, Response
 
@@ -17,6 +19,9 @@ from app.schemas.review import (
     ReviewResolveResponse,
     ReviewTraceSummary,
 )
+from app.worker.tasks import match_trace
+
+logger = logging.getLogger(__name__)
 
 # No shared prefix: the collection lives at /review-items, the owner-relabel
 # creation hangs off the trace (3_api.md).
@@ -88,9 +93,9 @@ async def resolve_review_item(
         if (value := getattr(body, field)) is not None
     }
     try:
-        status, _, updates = await review_items_q.resolve(db.pool(), item_id, user.id, answer)
+        status, item, updates = await review_items_q.resolve(db.pool(), item_id, user.id, answer)
     except asyncpg.DataError:  # not a UUID
-        status, updates = "not_found", None
+        status, item, updates = "not_found", None, None
     if status == "not_found":
         raise ApiError("not_found", "Review item not found.", status=404)
     if status == "already_resolved":
@@ -116,6 +121,21 @@ async def resolve_review_item(
         for field in analysis_q.LABEL_FIELDS
         if updates is not None and updates.get(field) is not None
     }
+    # Subscription trigger (c), 3_api.md: the resolve rewrote labels — a
+    # relabel can newly satisfy a stored query, so re-evaluate matching when
+    # the trace is listed. Best-effort like the analyze-complete kick:
+    # matching is idempotent, a lost kick costs a notification, not
+    # correctness (A4 decision 6).
+    visibility = await db.pool().fetchval(
+        "select visibility from traces where id = $1", item["trace_id"]
+    )
+    if visibility == "listed":
+        try:
+            await match_trace.kiq(str(item["trace_id"]))
+        except Exception:
+            logger.exception(
+                "resolve: failed to enqueue matching for trace %s", item["trace_id"]
+            )
     # Re-read with the trace summary for the uniform response shape.
     row = await _owned_or_404(item_id, user)
     return ReviewResolveResponse(item=_item(row), labels=labels)

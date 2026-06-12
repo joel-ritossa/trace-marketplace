@@ -387,6 +387,64 @@ async def test_listing_reruns_opt_out_analysis(
     await wait_until(matched, 30.0, "trigger (b) never matched the re-analyzed trace")
 
 
+async def test_resolve_fires_matching(
+    api: httpx.AsyncClient, consumer: httpx.AsyncClient, db: asyncpg.Connection
+) -> None:
+    """Trigger (c): a review resolve that relabels a listed trace re-fires
+    matching, so a human label change can land a match record and a
+    notification — not just appear in the live feed."""
+    marker = f"m_{uuid.uuid4().hex[:10]}"
+    sub = (
+        await consumer.post(
+            "/v1/subscriptions",
+            json={
+                "name": "relabel",
+                "query": {
+                    "failure_mode": "plan_adherence_failure",
+                    "metric": [f"{marker}:0.5"],
+                },
+            },
+        )
+    ).json()
+    sub_id = sub["subscription_id"]
+
+    # Machine labels miss the query (no failure_mode); listing fires trigger
+    # (a), which must not match.
+    trace_id = await analyzed_trace(api, db, metric_scores={marker: 0.9})
+    assert (await list_trace(api, trace_id)).status_code == 200
+    await wait_until(
+        lambda: db.fetchval(
+            "select case when count(*) = 0 then true end from subscription_matches"
+            " where subscription_id = $1",
+            uuid.UUID(sub_id),
+        ),
+        10.0,
+        "listing matched before the relabel",
+    )
+
+    # Owner relabel: the human failure_mode satisfies the query; the resolve
+    # kick must produce the match record and the digest.
+    item = (await api.post(f"/v1/traces/{trace_id}/review-items")).json()
+    res = await api.post(
+        f"/v1/review-items/{item['review_item_id']}/resolve",
+        json={"failure_mode": "plan_adherence_failure"},
+    )
+    assert res.status_code == 200, res.text
+    digest = await wait_for_digest(consumer, sub_id, 1)
+    assert digest["payload"]["trace_id"] == trace_id
+    assert await db.fetchval(
+        "select true from subscription_matches where subscription_id = $1 and trace_id = $2",
+        uuid.UUID(sub_id),
+        uuid.UUID(trace_id),
+    )
+
+    await db.execute(
+        "update trace_analysis set metric_scores = metric_scores - $1::text"
+        " where metric_scores ? $1::text",
+        marker,
+    )
+
+
 async def test_bulk_acquire_and_visibility(
     api: httpx.AsyncClient, consumer: httpx.AsyncClient, db: asyncpg.Connection
 ) -> None:
@@ -427,7 +485,7 @@ async def test_bulk_acquire_and_visibility(
         listed: "acquired",
         private: "not_found",  # invisible == absent
         ghost: "not_found",
-        own: "own_trace",
+        own: "not_listed",  # own private trace: visible to its owner, but not acquirable
     }
     # Idempotent re-acquire.
     res = await consumer.post("/v1/traces/acquire", json={"trace_ids": [listed]})

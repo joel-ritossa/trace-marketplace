@@ -36,8 +36,8 @@ The core inspection surface. Three sections:
 2. **Span tree**: full hierarchy reconstructed from parent IDs, every span shown. Each node: name, kind badge, duration, status. Selecting a span opens a detail panel: timings, status message, error type, model/provider/tool, token counts, full raw `attributes` (pretty-printed JSON), and `events` list. No span data is hidden from users with access.
 3. **Actions**, driven by the `is_owner` / `acquired` / `can_download` flags from the API:
    - Owner: edit tags/description; visibility toggle private ↔ listed with the ownership-confirmation checkbox; delete with confirm; download.
-   - Non-owner, listed, not acquired: **Acquire** button (labeled as a free acquisition) → `POST /v1/traces/{id}/acquire`; download button shown disabled with "acquire to download".
-   - Non-owner, acquired: **Download** button → `GET /v1/traces/{id}/download`, plus an "saved" badge.
+   - Listed, not acquired (owner or not): **Acquire** button (labeled as a free acquisition) → `POST /v1/traces/{id}/acquire`; for non-owners the download button shows disabled with "acquire to download".
+   - Acquired: **Download** button → `GET /v1/traces/{id}/download`, plus an "saved" badge.
 
 States: loading, not found (covers no-access by design), error-status trace (error spans visually flagged in the tree), large trace (spans paginated/lazy-loaded past 500).
 

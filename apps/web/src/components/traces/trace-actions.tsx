@@ -45,12 +45,13 @@ export function TraceHeaderActions({
   return (
     <div className="flex flex-col items-end gap-1">
       <div className="flex flex-wrap items-center justify-end gap-2">
-        {!trace.is_owner &&
-          (trace.acquired ? (
-            <LibraryBadge />
-          ) : (
+        {trace.acquired ? (
+          <LibraryBadge />
+        ) : (
+          trace.visibility === "listed" && (
             <AcquireButton trace={trace} onChange={onChange} onError={setError} />
-          ))}
+          )
+        )}
         <SimilarBehaviorButton trace={trace} />
         <DownloadButton trace={trace} onError={setError} />
         {trace.is_owner && <VisibilityButton trace={trace} onChange={onChange} onError={setError} />}

@@ -245,7 +245,6 @@ export type BulkAcquireStatus =
   | "acquired"
   | "already_acquired"
   | "not_listed"
-  | "own_trace"
   | "not_found";
 
 export type BulkAcquireResult = { trace_id: string; status: BulkAcquireStatus }[];

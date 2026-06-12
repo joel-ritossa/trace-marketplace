@@ -13,8 +13,9 @@ logger = logging.getLogger(__name__)
 @broker.task()
 async def match_trace(trace_id: str) -> None:
     """Evaluate every subscription against one trace (3_api.md: event-driven
-    matching, fired when a trace becomes listed or when analyze_trace
-    completes on a listed trace).
+    matching, fired when a trace becomes listed, when analyze_trace
+    completes on a listed trace, or when a review resolve relabels a
+    listed trace).
 
     Deliberately no retry/DLQ (A4 decision 6): trace-scoped dead letters
     derive the UI's analysis-failed state, and a matching hiccup must never

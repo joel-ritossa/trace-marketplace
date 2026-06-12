@@ -302,7 +302,7 @@ class MetricKeysResponse(BaseModel):
 # Bulk operations (3_api.md): ≤100 ids per call, itemized results — partial
 # success is normal, never all-or-nothing.
 
-BulkAcquireStatus = Literal["acquired", "already_acquired", "not_listed", "own_trace", "not_found"]
+BulkAcquireStatus = Literal["acquired", "already_acquired", "not_listed", "not_found"]
 
 BulkVisibilityStatus = Literal["updated", "not_found"]
 

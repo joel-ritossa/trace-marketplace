@@ -91,7 +91,7 @@ Consumer "purchase" without exchange logic. Creates an acquisition for the calle
 { "acquisition_id": "…", "trace_id": "…", "price_usd": 0, "acquired_at": "…" }
 ```
 
-Failure cases: `404` (trace not visible to caller), `409 own_trace` (owners don't acquire their own traces), `409 not_listed` (trace is private).
+Failure cases: `404` (trace not visible to caller), `409 not_listed` (trace is private). Owners may acquire their own listed traces — the acquisition lands the trace in their library.
 
 ### GET /v1/traces/{trace_id}/download
 

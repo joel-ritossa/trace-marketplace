@@ -100,6 +100,7 @@ would cut routing to 2.9%, but the 0.6-share band is only 5/8 correct vs
 94/109 at unanimity — the confidence ladder is well-calibrated (1.0 → 86%,
 0.8 → 75%, 0.6 → 63%), so 0.7 stays the right floor. N=5 is a pure
 runtime knob (`JUDGE_VOTES`); scoped accounts barely need it (1.8% at N=3).
+**Adopted: N=5 is now the stack default** (`config.py` + `.env.example`).
 
 ## Result 5 — Where the remaining misses live
 

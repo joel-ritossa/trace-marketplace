@@ -214,11 +214,7 @@ async def delete_trace(trace_id: str, user: CurrentUser) -> Response:
     responses={201: {"model": AcquireResponse, "description": "Acquisition created"}},
 )
 async def acquire_trace(trace_id: str, user: CurrentUser, response: Response) -> AcquireResponse:
-    row = await _visible_or_404(trace_id, user)
-    if row["is_owner"]:
-        raise ApiError(
-            "own_trace", "You already own this trace; ownership grants access.", status=409
-        )
+    await _visible_or_404(trace_id, user)
     acq = await acquisitions_q.create(db.pool(), user.id, trace_id)
     if acq is None:  # unlisted between the visibility check and the insert
         raise ApiError("not_listed", "This trace is no longer listed.", status=409)

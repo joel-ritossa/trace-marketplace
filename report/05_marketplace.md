@@ -50,7 +50,7 @@ The anchor stays inside the deterministic-matching rule: at match time it is a S
 
 Acquisition is free and idempotent: the `acquisitions` row carries `price_usd` defaulting to 0 (pricing is future-work narrative, not built), and a unique `(consumer_id, trace_id)` pair makes re-acquiring a no-op. Acquired traces appear in the library (`/library`, the `acquired` scope of the same list endpoint).
 
-Bulk acquire takes up to 100 trace ids and returns an itemized status per trace — `acquired`, `already_acquired`, `own_trace`, `not_listed`, `not_found` — partial success is normal, never all-or-nothing (`app/routers/bulk.py`). Each item loops the single-trace primitive, so per-trace semantics are identical by construction.
+Bulk acquire takes up to 100 trace ids and returns an itemized status per trace — `acquired`, `already_acquired`, `not_listed`, `not_found` — partial success is normal, never all-or-nothing (`app/routers/bulk.py`). Each item loops the single-trace primitive, so per-trace semantics are identical by construction.
 
 Bulk download streams a zip containing:
 

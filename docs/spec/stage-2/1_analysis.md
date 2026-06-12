@@ -92,7 +92,7 @@ Prompt text lives in versioned prompt files; the three calls are one worker step
 
 ### Self-consistency voting
 
-Each call runs N times (env-var, default 3, temperature > 0):
+Each call runs N times (env-var, default 5, temperature > 0 — at the 0.7 routing threshold a single defecting vote routes at N=3 (2/3 = 0.67) but survives at N=5 (4/5 = 0.8), which measured as half the routing rate for the same accuracy; see the task-scope buildlog):
 
 - **Outcome:** majority over a consensus threshold → label; a split or abstention-majority → `indeterminate`. Confidence = vote share.
 - **Failure-mode:** plurality → label; none → `inconclusive` (the taxonomy's built-in abstention).

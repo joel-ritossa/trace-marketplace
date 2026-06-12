@@ -40,7 +40,6 @@ const ACQUIRE_LABELS: Record<string, string> = {
   acquired: "acquired",
   already_acquired: "already in library",
   not_listed: "no longer listed",
-  own_trace: "your own (ownership grants access)",
   not_found: "not found",
 };
 

@@ -88,3 +88,11 @@ label flips, cost +69% (~$0.004/trace). Accepting bare 3/5 pluralities
 (threshold 0.6) cuts routing to 2.9% but that band is only 5/8 correct —
 the share ladder is calibrated (1.0 → 86%, 0.8 → 75%, 0.6 → 63%), so the
 0.7 floor stands. `JUDGE_VOTES` env var; no code change to adopt.
+
+Adopted (user-approved): `judge_votes` default 3 → 5 (`config.py`,
+`.env.example`, spec Self-consistency section). The knob is shared by all
+three composed calls, so total judge spend scales ~5/3 — including the
+full-rendering outcome votes, the expensive ones. No `JUDGE_VERSION` bump:
+vote count is runtime voting config, not prompt/composition identity, and
+each verdict's actual N is auditable from its stored votes. Not
+retroactive; verified live (`judge_votes = 5` in the worker container).

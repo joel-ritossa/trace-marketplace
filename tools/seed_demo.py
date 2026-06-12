@@ -284,10 +284,9 @@ def seed_library(api: Api, env: dict, contributor: dict) -> None:
         _, trace_ids = seed_upload(c_api, env, c_user_id, entry)
         for trace_id in trace_ids:
             status, body = api.request("POST", f"/v1/traces/{trace_id}/acquire")
-            if status in (200, 201):
-                acquired += 1
-            elif not (status == 409 and body["error"]["code"] == "own_trace"):
+            if status not in (200, 201):
                 raise StackError(f"acquiring trace {trace_id} failed: {status} {body}")
+            acquired += 1
     print(f"acquired {acquired} contributor trace(s) into the library")
 
 

@@ -163,10 +163,10 @@ async def test_acquire_and_download_gating(
     assert res.status_code == 403
     assert res.json()["error"]["code"] == "acquisition_required"
 
-    # Owners don't acquire their own traces.
+    # Owners may acquire their own listed traces — lands in their library.
     res = await api.post(f"/v1/traces/{trace_id}/acquire")
-    assert res.status_code == 409
-    assert res.json()["error"]["code"] == "own_trace"
+    assert res.status_code == 201
+    assert res.json()["price_usd"] == 0
 
     # Acquire, then acquire again: idempotent, same record.
     first = await consumer.post(f"/v1/traces/{trace_id}/acquire")
@@ -188,8 +188,9 @@ async def test_acquire_and_download_gating(
     library = (await consumer.get("/v1/traces", params={"scope": "acquired"})).json()
     card = next(t for t in library["traces"] if t["trace_id"] == trace_id)
     assert card["acquired"] and card["acquired_at"]
-    # ... and the owner's library is empty.
-    assert (await api.get("/v1/traces", params={"scope": "acquired"})).json()["total"] == 0
+    # ... and the owner's self-acquisition shows in their library too.
+    owner_library = (await api.get("/v1/traces", params={"scope": "acquired"})).json()
+    assert trace_id in {t["trace_id"] for t in owner_library["traces"]}
 
     # Private traces can't be acquired (invisible: 404).
     private_id = (await ingest_fixture(api, "agent-session"))["trace_ids"][0]

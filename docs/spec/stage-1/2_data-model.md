@@ -91,7 +91,7 @@ One row per consumer-trace entitlement. The "purchase" object: in Stage 1 every 
 | `price_usd` | numeric | Always `0` in Stage 1; column exists so the shape is honest. |
 | `acquired_at` | timestamptz | |
 
-Constraints: unique `(consumer_id, trace_id)` — acquiring is idempotent. Owners do not acquire their own traces (API rejects; ownership already grants access). `trace_id` references `traces.id` with `on delete cascade`: deleting a trace deletes its acquisitions. For $0 acquisitions orphaned entitlement rows are dead weight; retention gets revisited when licensing becomes real. Unlisting keeps acquisition rows but the trace no longer resolves for non-owners (`404`, downloads included) — visibility is the contributor's kill switch over sensitive data. Relisting restores access to existing acquirers.
+Constraints: unique `(consumer_id, trace_id)` — acquiring is idempotent. Owners may acquire their own listed traces — ownership already grants access, but the acquisition puts the trace in their library (useful for demos and for exercising the consumer flow on one's own data). `trace_id` references `traces.id` with `on delete cascade`: deleting a trace deletes its acquisitions. For $0 acquisitions orphaned entitlement rows are dead weight; retention gets revisited when licensing becomes real. Unlisting keeps acquisition rows but the trace no longer resolves for non-owners (`404`, downloads included) — visibility is the contributor's kill switch over sensitive data. Relisting restores access to existing acquirers.
 
 ### dead_letters
 
@@ -129,7 +129,7 @@ Enforced in the API; mirrored as RLS policies for defense in depth.
 | Read upload, private trace, its spans | Owner only. |
 | Read listed trace and its spans (inspection) | Any authenticated user. |
 | Download raw payload | Owner, or consumer with an acquisition for the trace. |
-| Acquire a trace | Any authenticated non-owner, trace must be `listed`. |
+| Acquire a trace | Any authenticated user (owner included), trace must be `listed`. |
 | Read own acquisitions / library | Consumer only. |
 | Search / marketplace results | Own traces + listed traces. |
 | Create upload | Any authenticated user. |

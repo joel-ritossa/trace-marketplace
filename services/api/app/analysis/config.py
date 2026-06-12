@@ -37,7 +37,10 @@ class AnalysisSettings(BaseSettings):
     # and task_category triggers. Misconfiguration fails at settings load,
     # not mid-analysis.
     judge_model: str = "openai/gpt-5-mini"
-    judge_votes: int = Field(3, ge=1)
+    # 5, not 3: at the 0.7 routing threshold one defecting vote routes at
+    # N=3 (2/3) but survives at N=5 (4/5) — measured as half the routing
+    # rate, flat accuracy (task-scope buildlog vote-count probe).
+    judge_votes: int = Field(5, ge=1)
     judge_consensus: float = Field(0.5, ge=0.5, lt=1)
     confidence_threshold: float = 0.7
 
