@@ -20,7 +20,11 @@ finance-agents/
     ├── cb-modules/                    ← fed, ecb, boe, boj + scaffolds (SNB, BoC, RBA,
     │                                     RBNZ, PBoC, Nordics)
     ├── 04-commodities.md
-    └── 05-economic-releases.md
+    ├── 05-economic-releases.md
+    ├── 06-red-team.md
+    ├── 07-filings-insider-monitor.md
+    ├── 08-portfolio-risk-hedging.md
+    └── 09-earnings-analyzer.md
 ```
 
 **To deploy an agent:** system prompt = `core/CORE-OPERATING-BLOCK.md` + that agent's
@@ -58,31 +62,34 @@ of a shared per-morning data cache across agents — without any spoke changing.
 ### Hand-off graph
 
 ```
-                       ┌──────────────────┐
-   mandate ──────────▶ │ 02 EQ SCREENER   │
-                       └────────┬─────────┘
-                        Tier-1 names + trap risks
-                                ▼
-                       ┌──────────────────┐   commodity-producer equity angle
-   ticker ───────────▶ │ 01 EQ DEEP-DIVE  │ ◀─────────────────────────────┐
-                       └────────┬─────────┘                               │
-              transcript Qs / options expression                          │
-                        (future agents)                                   │
-                                                                          │
-                       ┌──────────────────┐  print → reaction function    │
-   release ──────────▶ │ 05 ECO RELEASES  │ ─────────────┐                │
-                       └──────────────────┘              ▼                │
-                                                ┌──────────────────┐      │
-   speech/minutes ────────────────────────────▶ │ 03 CB COMMS      │      │
-                                                └────────┬─────────┘      │
-                                          USD / real-rate / path impulse  │
-                                                         ▼                │
-                       growth & inflation pulse ┌──────────────────┐      │
-   commodity ─────────────────────────────────▶ │ 04 COMMODITIES   │ ─────┘
-                                                └──────────────────┘
+   mandate ──▶ ┌──────────────────┐  Tier-1 names   ┌──────────────────┐ ◀── ticker
+               │ 02 EQ SCREENER   │ ───────────────▶│ 01 EQ DEEP-DIVE  │
+               └───────┬──────────┘                 └───┬──────────▲───┘
+                       │ add names to coverage          │ thesis   │ probability
+                       ▼                                │ KPIs +   │ updates,
+               ┌──────────────────┐  8-K 2.02 trigger   ▼ 3 Qs     │ read-throughs
+               │ 07 FILINGS &     │ ───────────────▶┌──────────────┴───┐
+               │ INSIDER MONITOR  │  P1 re-underwrite│ 09 EARNINGS      │◀─ transcript/
+               └───────┬──────────┘ ──▶ 01           │ ANALYZER         │   release
+               dilution/activist on held names       └──────────────────┘
+                       │
+                       ▼
+   positions ─▶┌──────────────────┐◀── duplication findings ── 06 RED-TEAM ◀── any note
+               │ 08 PORTFOLIO     │                            (standard gate before
+               │ RISK & HEDGING   │◀── thesis tags from all     sizing anything big)
+               └──────────────────┘    analysis agents
+
+   release ──▶ ┌──────────────────┐ print → reaction fn ┌──────────────────┐◀─ speech/
+               │ 05 ECO RELEASES  │ ──────────────────▶ │ 03 CB COMMS      │  minutes
+               └──────────────────┘                     └────────┬─────────┘
+                       │ growth & inflation pulse   USD/real-rate/path impulse
+                       ▼                                         ▼
+               ┌──────────────────┐◀────────────────────────────┘
+   commodity ─▶│ 04 COMMODITIES   │──▶ producer-equity angle ──▶ 01
+               └──────────────────┘
 
    ALL agents ──▶ (future) 00 MORNING-NOTE ORCHESTRATOR ──▶ one cross-asset note
-   ALL agents ──▶ (future) VOLATILITY/OPTIONS for expression refinement
+   01/03/04/08 ─▶ (future) VOLATILITY/OPTIONS for strikes & structures
 ```
 
 ### Build order (recommended)
@@ -95,42 +102,42 @@ of a shared per-morning data cache across agents — without any spoke changing.
 3. **01 Equity Deep-Dive** — biggest single prompt; test on one name you know cold, so
    you can grade it.
 4. **04 Commodities** — after 03/05 exist, its macro-impulse handoffs have live senders.
-5. **02 Equity Screener** — last of the five; it needs Deep-Dive downstream to be useful.
-6. Then roadmap #1–3 below.
+5. **02 Equity Screener** — last of the original five; it needs Deep-Dive downstream to
+   be useful.
+6. **Second wave (built):** 06 Red-Team (deploy immediately — it needs no data and
+   upgrades every other agent's output), 09 Earnings Analyzer (next earnings season is
+   its test bed), 07 Filings Monitor (once the EDGAR MCP is wired), 08 Portfolio Risk
+   (once you're willing to paste the book).
+7. Then the remaining roadmap below.
 
 ## Additional agents (ordered by leverage across macro / equities / commodities books)
 
+Promoted to built: ~~Red-Team~~ (06), ~~Earnings-Call/Transcript~~ (09, expanded to
+full earnings-event coverage), ~~Filings & Insider Monitor~~ (07), plus the
+PM-requested **Portfolio Risk & Hedging** (08). Remaining, re-ranked:
+
 1. **Cross-Asset Morning Note (orchestrator)** — one pre-open note that fans in
-   overnight moves + agents 03/04/05 outputs and ranks what actually matters today;
+   overnight moves + agents 03/04/05/08 outputs and ranks what actually matters today;
    compounds the value of every other agent.
-2. **Red-Team / Pre-Mortem** — adversarially attacks any note before it reaches the
-   book: strongest refutation of the thesis, pre-mortem ("it's 6 months on and this
-   lost money — why?"), crowding/consensus check; cheapest error-catcher in the suite
-   (pattern validated by TradingAgents' debate stage — see INTEGRATIONS.md).
-3. **Positioning & Flows** — CFTC (free Socrata API — see INTEGRATIONS.md), ETF flows,
+2. **Positioning & Flows** — CFTC (free Socrata API — see INTEGRATIONS.md), ETF flows,
    put/call, CTA-trend proxies, prime-broker survey color; crowding is the common risk
-   factor across all three books and currently lives only inside per-agent sections.
-4. **Earnings-Call / Transcript Analyzer** — quarter-over-quarter language deltas,
-   guidance choreography, Q&A evasion detection; feeds Deep-Dive and scales your
-   single-name coverage 10x in earnings season. De-risked: Aiera connector or EDGAR
-   transcripts make this mostly assembly (INTEGRATIONS.md §2–3).
-5. **Rates & FX Relative Value** — curve/butterfly/cross-market RV conditioned on CB
+   factor across all three books, and 08's crowding-overlap check (§7) needs it as a
+   live feed.
+3. **Volatility & Options Surface** — vol-adjusted expression selection: strikes,
+   structures, and cost for the views of 01/03/04 and the hedges of 08 (four agents now
+   explicitly defer to it — its leverage rose with the second wave).
+4. **Rates & FX Relative Value** — curve/butterfly/cross-market RV conditioned on CB
    Comms output; the natural monetization layer for agent 03's Axis-2 verdicts.
-6. **Filings & Insider Monitor** — event-driven watcher on the coverage list via the
-   free EDGAR MCP: new 8-Ks, insider Form-4 clusters, 13F deltas, ownership shifts;
-   turns Deep-Dive §6 from a snapshot into a stream.
-7. **Event-Risk Calendar** — forward 2-week map of dated risk (CB meetings, data,
-   OPEC+, elections, expiries, auctions) with what's priced per event; cheap to build,
-   prevents the expensive surprise.
-8. **Volatility & Options Surface** — vol-adjusted expression selection for the other
-   agents' views (all of 01/03/04 currently defer options structuring to this).
-9. **Credit** — IG/HY spreads, index skew, primary-market tone as an early risk signal
+5. **Event-Risk Calendar** — forward 2-week map of dated risk (CB meetings, data,
+   OPEC+, elections, expiries, auctions) with what's priced per event; also feeds 08's
+   gap-risk section.
+6. **Credit** — IG/HY spreads, index skew, primary-market tone as an early risk signal
    for equities and a recession thermometer for macro.
-10. **Research Digest** — batch-summarize sell-side/street PDFs into claims + evidence +
-    who-disagrees; if the fund licenses AlphaSense/Hebbia, build this as an orchestrator
-    over their API rather than from scratch (INTEGRATIONS.md).
-11. **Post-Mortem / Trade Journal** — structured review of closed trades vs. the original
-    kill criteria the agents shipped; the compounding loop that improves every prompt.
+7. **Research Digest** — batch-summarize sell-side/street PDFs into claims + evidence +
+   who-disagrees; if the fund licenses AlphaSense/Hebbia, build this as an orchestrator
+   over their API rather than from scratch (INTEGRATIONS.md).
+8. **Post-Mortem / Trade Journal** — structured review of closed trades vs. the original
+   kill criteria the agents shipped; the compounding loop that improves every prompt.
 
 ## What was assumed (defaults chosen — override any and I'll revise)
 

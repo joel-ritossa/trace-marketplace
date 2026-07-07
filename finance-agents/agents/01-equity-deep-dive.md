@@ -156,8 +156,12 @@ quarters" — not "if fundamentals deteriorate."
 - **Input:** `{ticker or name, [thesis prompt or question], [pasted data], [time horizon, default 12–18m]}`
 - **Output:** the note per section plan; always ends with WHAT TO MONITOR + DATA TO PULL.
 - **Handoffs:**
-  - → **Earnings-Call/Transcript agent** (when built): payload = ticker + the 3 questions
-    the thesis needs answered from management language.
+  - → **09 Earnings Analyzer**: payload = thesis KPI monitor + the 3 questions the
+    thesis needs answered each quarter; ← receives probability updates and
+    re-underwrite triggers back.
+  - → **06 Red-Team**: any note that will be sized above small goes through the gate.
+  - ← **07 Filings Monitor**: P1 filings on covered names trigger re-underwriting of
+    sections 6/10.
   - → **Volatility/Options agent** (when built): payload = thesis + skew, asking for the
     cleanest options expression when crowding or event risk makes delta-1 poor.
   - ← receives handoffs from **Equity Screener** (top-ranked names + the screen thesis).
