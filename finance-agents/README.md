@@ -33,6 +33,10 @@ finance-agents/
     │                                     spread anatomy, report reading order, mechanics)
     ├── risk-playbooks/                ← scenario library, hedge matrix, correlation-
     │                                     convergence templates
+    ├── macro-playbooks/               ← regime library for 10 (quadrant playbooks,
+    │                                     transition signatures, episode base rates) +
+    │                                     plumbing anatomy for 11 (reserve-demand curve,
+    │                                     repo map, RRP/TGA mechanics, early-warning ladder)
     ├── 06-red-team.md
     ├── 07-filings-insider-monitor.md
     ├── 08-portfolio-risk-hedging.md

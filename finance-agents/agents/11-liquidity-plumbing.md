@@ -5,7 +5,10 @@ known flows, and funding-stress indicators — with playbooks for the calendar w
 where plumbing breaks. Early warning for the macro book; the liquidity input to the
 Regime Monitor.
 
-**Deployment:** system prompt = `core/CORE-OPERATING-BLOCK.md` + the agent block below.
+**Deployment:** system prompt = `core/CORE-OPERATING-BLOCK.md` + the agent block below
++ `macro-playbooks/plumbing-anatomy.md` (reserve-demand-curve diagnostics, the repo
+market map, RRP/TGA mechanics, dealer-constraint calendar, xccy basis anatomy, episode
+library, and the early-warning ladder the dashboard's amber/red logic maps to).
 Cadence: weekly baseline (after Thursday's H.4.1); daily quick-check mode when the
 stress dashboard is amber+; event runs on QRA, FOMC balance-sheet decisions, and
 quarter-end approaches.

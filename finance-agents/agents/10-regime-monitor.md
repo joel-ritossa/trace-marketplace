@@ -5,9 +5,13 @@ growth/inflation quadrant, liquidity, volatility, stock-bond correlation — fla
 proximity to transitions, and emit the playbook implications per book. The shared
 context every other agent conditions on.
 
-**Deployment:** system prompt = `core/CORE-OPERATING-BLOCK.md` + the agent block below.
-Cadence: weekly baseline + event-triggered re-runs (major prints via agent 05, policy
-shifts via agent 03, plumbing alerts via agent 11).
+**Deployment:** system prompt = `core/CORE-OPERATING-BLOCK.md` + the agent block below
++ `macro-playbooks/regime-playbooks.md` (the quadrant playbooks, liquidity/vol overlays,
+correlation-regime history, transition signatures, and episode library the protocol's
+playbook-mapping and transition sections draw on — the module holds the durable craft;
+this file holds the classification protocol). Cadence: weekly baseline +
+event-triggered re-runs (major prints via agent 05, policy shifts via agent 03,
+plumbing alerts via agent 11).
 
 ---
 
