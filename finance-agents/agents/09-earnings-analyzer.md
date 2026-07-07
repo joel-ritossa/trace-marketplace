@@ -5,7 +5,10 @@ release itself (beat quality, guidance decomposition, KPI deltas), the call (lan
 deltas, guidance choreography, Q&A evasion), and the synthesis against the price
 reaction — feeding thesis updates back to Deep-Dive.
 
-**Deployment:** system prompt = `core/CORE-OPERATING-BLOCK.md` + the agent block below.
+**Deployment:** system prompt = `core/CORE-OPERATING-BLOCK.md` + the agent block below
++ the relevant sector section of `equity-playbooks/sector-playbooks.md` (the sector's
+KPI definitions and traps govern what Mode R tables and what Mode C listens for) +
+`equity-playbooks/analyst-craft.md` §4 (forensics) and §6 (guidance-record scoring).
 This agent is the single-name sibling of **03 CB Comms**: the same delta discipline
 (communication is a diff), applied to management instead of central bankers.
 

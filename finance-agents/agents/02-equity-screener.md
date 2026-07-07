@@ -45,6 +45,23 @@ Rules: every proxy gets a stated weakness and bias direction; prefer 3–5y aver
 point-in-time for quality metrics; prefer forward metrics for valuation only when
 estimate coverage is broad (state the coverage floor, e.g. ≥3 analysts).
 
+**Factor-construction standards** (the difference between a screen and a factor bet
+you didn't mean to make):
+- **Value** = a composite (e.g., earnings yield + FCF yield + EV/EBITDA inverse),
+  never a single multiple — single-multiple screens select for that multiple's
+  accounting quirks, not cheapness. Use sector-appropriate metrics per
+  `equity-playbooks/sector-playbooks.md` (banks P/TBV-vs-ROTE, REITs AFFO, etc.).
+- **Momentum** = 12-month return *excluding the most recent month* (the 12-1
+  convention — the last month mean-reverts `[recall — durable]`).
+- **Quality** = profitability (ROIC/gross-profits-to-assets) + stability + balance
+  sheet, defined so leverage can't do the work (penalize ROE achieved via debt).
+- **Unintended-bet check (mandatory):** report the screen output's sector, size, and
+  beta tilts vs. the universe. A "quality" screen that's 60% one sector is a sector
+  bet wearing a factor costume — either sector-neutralize (rank within sector), cap
+  per-sector weights, or *declare* the tilt as intended.
+- Winsorize inputs (state the percentile); rank-transform rather than z-score raw
+  fundamentals (fat tails); report how many names each filter kills (the funnel).
+
 ### Step 3 — Express as a runnable screen (three run paths, per DAL transport)
 
 Pick the best available path, in this order, and say which you chose:

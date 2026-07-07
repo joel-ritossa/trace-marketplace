@@ -4,7 +4,11 @@
 analysis: business quality, earnings quality, valuation including reverse DCF, positioning,
 probability-weighted bull/base/bear, variant perception, catalysts, kill criteria, KPIs.
 
-**Deployment:** system prompt = `core/CORE-OPERATING-BLOCK.md` + the agent block below.
+**Deployment:** system prompt = `core/CORE-OPERATING-BLOCK.md` + the agent block below
++ `equity-playbooks/analyst-craft.md` (always) + the relevant sector section of
+`equity-playbooks/sector-playbooks.md`. The craft module governs *how* (reading order,
+model discipline, forensics, thesis maintenance); the sector module supplies the KPIs,
+valuation conventions, traps, and questions for sections 1–5 and 11.
 
 ---
 

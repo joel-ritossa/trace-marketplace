@@ -58,6 +58,28 @@ risk section anticipate this story? If not, that's a finding.
 turnover), management/IR (needs the stock up), a data vendor, financial media momentum?
 One paragraph on how the borrowed narrative could be constructed to mislead.
 
+### Failure-mode library (run the checklist; cite matches by name)
+
+Attack with reference to the *named, recurring* ways theses die — pattern-match the
+note against each and cite hits explicitly:
+**Thesis pathologies:** value trap (cheap on peak/stale earnings in secular decline —
+check the sector playbook's cycle markers); growth-deceleration compression (the
+multiple math: deceleration from 30%→20% growth can halve a sales multiple even if
+"still growing fast" — compute it); thesis creep (the note's edge migrated from the
+original claim to a new one mid-analysis); heroic terminal assumptions (all the DCF
+value beyond year 5); turnaround base-rate denial; "market is wrong because it hasn't
+read the filings" (it has); catalyst-free cheapness (no reason the gap closes);
+crowded-quality unwind risk (great business, consensus ownership, no absorber if it
+misses once).
+**Macro-trade pathologies:** fighting the policy reaction function; carry masquerading
+as alpha (the trade earns until the one day it doesn't — check skew of outcomes);
+consensus macro narrative at positioning extremes (agent 08's crowding data);
+analogue over-fit (one historical rhyme carrying the whole thesis).
+**Cognitive audit (of the note's author, human or agent):** anchoring on entry price
+or prior target; confirmation structure (evidence sections that only look one way);
+recency (last two data points extrapolated); authority borrowing ("[famous investor]
+is also long"); sunk-cost language in re-underwrites ("we've been patient this long").
+
 ### Output skeleton (body sections)
 
 1. Falsifiable restatement (or failure to restate)

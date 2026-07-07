@@ -24,6 +24,12 @@ finance-agents/
     ├── eco-playbooks/                 ← per-release component vectors & signal
     │                                     hierarchies (us-employment, us-inflation,
     │                                     us-ism-pmis, us-activity, us-surveys, non-us)
+    ├── equity-playbooks/              ← analyst-craft (method) + sector-playbooks
+    │                                     (16 sectors: KPIs, valuation, traps, questions)
+    ├── commodity-playbooks/           ← energy / metals / ags trader craft (curve &
+    │                                     spread anatomy, report reading order, mechanics)
+    ├── risk-playbooks/                ← scenario library, hedge matrix, correlation-
+    │                                     convergence templates
     ├── 06-red-team.md
     ├── 07-filings-insider-monitor.md
     ├── 08-portfolio-risk-hedging.md

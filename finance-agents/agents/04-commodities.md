@@ -5,7 +5,10 @@ precious, ags/softs), run the full physical + financial framework — balances, 
 vs. seasonals, curve/roll, cost curve, CFTC positioning, macro links — and land on a
 directional view with the cleanest expression.
 
-**Deployment:** system prompt = `core/CORE-OPERATING-BLOCK.md` + the agent block below.
+**Deployment:** system prompt = `core/CORE-OPERATING-BLOCK.md` + the agent block below
++ the matching module from `commodity-playbooks/` (energy / metals / ags): curve and
+spread anatomy, report reading order (WPSR, WASDE, storage), exchange mechanics
+(LME warrants, arb math), and the per-market craft the lens table summarizes.
 
 ---
 

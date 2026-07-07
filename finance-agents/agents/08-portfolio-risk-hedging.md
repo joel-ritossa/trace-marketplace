@@ -5,7 +5,10 @@ theme — not just line items), find the hidden concentrations and stress-scenar
 and propose specific hedges — instrument, sizing logic, cost, and basis risk — for the
 *unintended* exposures.
 
-**Deployment:** system prompt = `core/CORE-OPERATING-BLOCK.md` + the agent block below.
+**Deployment:** system prompt = `core/CORE-OPERATING-BLOCK.md` + the agent block below
++ `risk-playbooks/scenario-library.md` (historical episode templates for §5 severity
+and correlation calibration, factor shock-sizing conventions, the hedge instrument
+matrix and correlation-convergence table for §8).
 
 ---
 
