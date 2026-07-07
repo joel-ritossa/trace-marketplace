@@ -8,6 +8,7 @@ commodities; Bloomberg terminal today, more data services over time).
 ```
 finance-agents/
 ├── README.md                          ← architecture, handoffs, build order, roadmap
+├── INTEGRATIONS.md                    ← vetted external agents/tools & what to wire in
 ├── core/
 │   ├── CORE-OPERATING-BLOCK.md        ← shared block, prepended to every agent (v1.1)
 │   └── DATA-ACCESS-LAYER.md           ← transport spec (API / Excel / terminal), field-map
@@ -102,25 +103,34 @@ of a shared per-morning data cache across agents — without any spoke changing.
 1. **Cross-Asset Morning Note (orchestrator)** — one pre-open note that fans in
    overnight moves + agents 03/04/05 outputs and ranks what actually matters today;
    compounds the value of every other agent.
-2. **Positioning & Flows** — CFTC, ETF flows, put/call, CTA-trend proxies, prime-broker
-   survey color; crowding is the common risk factor across all three books and currently
-   lives only inside per-agent sections.
-3. **Earnings-Call / Transcript Analyzer** — quarter-over-quarter language deltas,
+2. **Red-Team / Pre-Mortem** — adversarially attacks any note before it reaches the
+   book: strongest refutation of the thesis, pre-mortem ("it's 6 months on and this
+   lost money — why?"), crowding/consensus check; cheapest error-catcher in the suite
+   (pattern validated by TradingAgents' debate stage — see INTEGRATIONS.md).
+3. **Positioning & Flows** — CFTC (free Socrata API — see INTEGRATIONS.md), ETF flows,
+   put/call, CTA-trend proxies, prime-broker survey color; crowding is the common risk
+   factor across all three books and currently lives only inside per-agent sections.
+4. **Earnings-Call / Transcript Analyzer** — quarter-over-quarter language deltas,
    guidance choreography, Q&A evasion detection; feeds Deep-Dive and scales your
-   single-name coverage 10x in earnings season.
-4. **Rates & FX Relative Value** — curve/butterfly/cross-market RV conditioned on CB
+   single-name coverage 10x in earnings season. De-risked: Aiera connector or EDGAR
+   transcripts make this mostly assembly (INTEGRATIONS.md §2–3).
+5. **Rates & FX Relative Value** — curve/butterfly/cross-market RV conditioned on CB
    Comms output; the natural monetization layer for agent 03's Axis-2 verdicts.
-5. **Event-Risk Calendar** — forward 2-week map of dated risk (CB meetings, data,
+6. **Filings & Insider Monitor** — event-driven watcher on the coverage list via the
+   free EDGAR MCP: new 8-Ks, insider Form-4 clusters, 13F deltas, ownership shifts;
+   turns Deep-Dive §6 from a snapshot into a stream.
+7. **Event-Risk Calendar** — forward 2-week map of dated risk (CB meetings, data,
    OPEC+, elections, expiries, auctions) with what's priced per event; cheap to build,
    prevents the expensive surprise.
-6. **Volatility & Options Surface** — vol-adjusted expression selection for the other
+8. **Volatility & Options Surface** — vol-adjusted expression selection for the other
    agents' views (all of 01/03/04 currently defer options structuring to this).
-7. **Credit** — IG/HY spreads, index skew, primary-market tone as an early risk signal
+9. **Credit** — IG/HY spreads, index skew, primary-market tone as an early risk signal
    for equities and a recession thermometer for macro.
-8. **Research Digest** — batch-summarize sell-side/street PDFs into claims + evidence +
-   who-disagrees; kills your reading backlog and feeds consensus sections in 01/04.
-9. **Post-Mortem / Trade Journal** — structured review of closed trades vs. the original
-   kill criteria the agents shipped; the compounding loop that improves every prompt.
+10. **Research Digest** — batch-summarize sell-side/street PDFs into claims + evidence +
+    who-disagrees; if the fund licenses AlphaSense/Hebbia, build this as an orchestrator
+    over their API rather than from scratch (INTEGRATIONS.md).
+11. **Post-Mortem / Trade Journal** — structured review of closed trades vs. the original
+    kill criteria the agents shipped; the compounding loop that improves every prompt.
 
 ## What was assumed (defaults chosen — override any and I'll revise)
 
@@ -129,10 +139,11 @@ of a shared per-morning data cache across agents — without any spoke changing.
    orchestrated framework with shared context from day one, the HANDOFF blocks become
    actual message passing — prompts unchanged, only routing changes.
 2. **Data reality: three Bloomberg transports** — live API, terminal round-trip, and the
-   Excel add-in — routed per the DAL. The API transport assumes a thin tool layer (an
-   MCP server wrapping BLPAPI is the natural build; `DATA-ACCESS-LAYER.md` is its spec).
-   Until that exists, Excel formula round-trips are the workhorse for anything
-   grid-shaped and the terminal covers screens/documents.
+   Excel add-in — routed per the DAL. The API transport no longer needs building from
+   scratch: fork a community Bloomberg MCP server (see `INTEGRATIONS.md` §1), review it,
+   and self-host next to the terminal; `DATA-ACCESS-LAYER.md` is the acceptance spec.
+   EDGAR, CFTC, and FRED wire for free the same way. Excel round-trips remain the
+   fallback for grids; the terminal covers screens/documents.
 3. **Output: markdown, one-screen exec summary, ET timestamps, USD default,** 12–18m
    equity horizon, tactical macro horizon; conviction as explicit probabilities.
 4. **Bloomberg mnemonics:** functions marked *(verify)* were deliberately not asserted —
