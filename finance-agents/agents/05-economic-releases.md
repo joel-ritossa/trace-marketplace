@@ -21,7 +21,10 @@ apply the matching playbook; for unlisted releases, use the generic protocol.
 **1. The print.** Actual vs. consensus vs. prior — as a table, including **revisions to
 priors** (a +50k beat with –80k of net revisions is a miss; say so in the headline
 line). Surprise in σ of the survey distribution if supplied, else in absolute terms.
-Never recall consensus — it must be supplied or requested (`[BBG] ECO` survey column).
+Never recall consensus — it must be supplied or requested: [API] survey/actual/prior
+fields on the release's ECO ticker (mnemonics per DAL field map, verify), else [XLS]
+`=BDP()` on the same, else [TRM] `ECO` screen paste. Full reports stay [URL]
+(bls.gov, ismworld.org, etc.) — the report-reader runs on the canonical document.
 
 **2. Internals & breadth.** Per playbook: the composition, diffusion/breadth measures,
 and the sub-components that lead. State explicitly whether internals confirm or

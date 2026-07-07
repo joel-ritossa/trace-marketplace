@@ -22,7 +22,10 @@ executive summary; depth over breadth — cut anything that doesn't change the d
 2. Determine mode. In Mode B/C, emit the standard data request below (trim to what's
    missing) **before** the analysis, then produce the skeleton with `[PENDING]` slots.
 
-**Standard data request (Mode B/C):**
+**Standard data request** (route per DAL: financial history and estimates are
+grid-shaped → [API] when wired, else emit as [XLS] `=BDH()`/`=BDP()` blocks; MODL, BI,
+SPLC, transcripts are screen/document content → always [TRM]; the list below shows the
+[TRM] rendering — re-render lines by transport at emit time):
 
 ```
 === DATA REQUEST — <TICKER> ===

@@ -9,7 +9,9 @@ commodities; Bloomberg terminal today, more data services over time).
 finance-agents/
 ├── README.md                          ← architecture, handoffs, build order, roadmap
 ├── core/
-│   └── CORE-OPERATING-BLOCK.md        ← shared block, prepended to every agent (v1.0)
+│   ├── CORE-OPERATING-BLOCK.md        ← shared block, prepended to every agent (v1.1)
+│   └── DATA-ACCESS-LAYER.md           ← transport spec (API / Excel / terminal), field-map
+│                                         registry, guardrails; build spec for the API tool layer
 └── agents/
     ├── 01-equity-deep-dive.md
     ├── 02-equity-screener.md
@@ -28,15 +30,29 @@ prompts drop into an orchestrated multi-agent system later without rewriting.
 ## Architecture
 
 **Hub-less federation with a shared contract.** Every agent inherits one Core Operating
-Block (data-integrity protocol, three degradation modes, DATA REQUEST and HANDOFF
+Block (data-integrity protocol, transport-aware degradation, DATA REQUEST and HANDOFF
 formats, output skeleton, variant-perception and kill-criteria standards) — so agents
 never disagree about *how* to work, only analyze different things. Agents are stateless
 and independently deployable; coordination happens through typed HANDOFF blocks that the
-PM (today) or an orchestrator (later) routes. This was chosen over a shared-context
-orchestrated system because (a) it degrades gracefully while data wiring is incomplete —
-each agent's Mode C emits an executable Bloomberg data request instead of failing, and
-(b) prompt quality is auditable per agent. The future Morning-Note orchestrator (roadmap
-#1) becomes the hub without any spoke changing.
+PM (today) or an orchestrator (later) routes.
+
+**Data access is transport-agnostic.** Bloomberg reaches the agents three ways — live
+API, terminal round-trip, or the Excel add-in — and the Data Access Layer
+(`core/DATA-ACCESS-LAYER.md`) makes that invisible to the analysis: agents express every
+data need once in canonical form (security + field mnemonic + period) and the request
+renders as an API call `[API]`, a paste-ready `=BDP/BDH/BDS` formula block `[XLS]`, or a
+terminal function to run and paste back `[TRM]`. Routing defaults: field-shaped + wired →
+API; bulk grids → Excel; screens/documents (MODL, BI, transcripts) → terminal, always;
+public canonical sources (CFTC, EIA, USDA, central-bank sites) → URL regardless. The DAL
+also owns the verified field-map registry (mnemonics get verified once, used everywhere)
+and the API guardrails (hit budgets, no polling, snapshot logging). A transport failure
+downgrades to the next transport — it never becomes an estimated value.
+
+This was chosen over a shared-context orchestrated system because (a) it degrades
+gracefully at every stage of data wiring — terminal-only today, Excel workbook tomorrow,
+full API later, with zero prompt rewrites — and (b) prompt quality is auditable per
+agent. The future Morning-Note orchestrator (roadmap #1) becomes the hub — and the owner
+of a shared per-morning data cache across agents — without any spoke changing.
 
 ### Hand-off graph
 
@@ -112,9 +128,11 @@ each agent's Mode C emits an executable Bloomberg data request instead of failin
    typed handoff protocol; no shared memory assumed. *If* you're deploying into an
    orchestrated framework with shared context from day one, the HANDOFF blocks become
    actual message passing — prompts unchanged, only routing changes.
-2. **Data reality: Mode B/C today.** Bloomberg terminal operated by you, results pasted
-   back; no live API wiring assumed. Every agent leads with an executable DATA REQUEST.
-   When you wire BQL/API/MCP tools, flip agents to Mode A — the prompts already handle it.
+2. **Data reality: three Bloomberg transports** — live API, terminal round-trip, and the
+   Excel add-in — routed per the DAL. The API transport assumes a thin tool layer (an
+   MCP server wrapping BLPAPI is the natural build; `DATA-ACCESS-LAYER.md` is its spec).
+   Until that exists, Excel formula round-trips are the workhorse for anything
+   grid-shaped and the terminal covers screens/documents.
 3. **Output: markdown, one-screen exec summary, ET timestamps, USD default,** 12–18m
    equity horizon, tactical macro horizon; conviction as explicit probabilities.
 4. **Bloomberg mnemonics:** functions marked *(verify)* were deliberately not asserted —
@@ -128,6 +146,11 @@ each agent's Mode C emits an executable Bloomberg data request instead of failin
 - One **real worked example per agent** from your terminal (paste a real EQS export, a
   real ISM report, a real speech) — I'll run each agent's T2 test against real inputs
   and calibrate the prompts' section weights.
-- Verdicts on the **(verify)-flagged mnemonics** so the prompts can assert them cleanly.
+- Verdicts on the **(verify)-flagged mnemonics and Excel option tokens** — resolve once
+  via `FLDS <GO>` / one test formula, record them in the DAL field-map registry, and the
+  inline flags get deleted everywhere.
+- Your **Bloomberg license type** (Desktop API vs. Data License vs. B-PIPE) — it sets
+  the metering model and entitlement boundaries the DAL guardrails should encode
+  precisely instead of conservatively.
 - Which **CB scaffolds to promote** to full modules first (PBoC and BoC are the likeliest
   candidates given your books).

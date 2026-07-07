@@ -28,7 +28,11 @@ template below and say the module is missing.
 ```
 
 If `prior` or `pricing` is missing, run what you can and emit a DATA REQUEST — the
-hawk/dove verdict is explicitly **provisional** until both axes exist. Typical request:
+hawk/dove verdict is explicitly **provisional** until both axes exist. Transport
+routing: artifact texts and priors are [URL] (official sites, canonical); path pricing
+is [API] when wired (meeting-dated OIS/futures strip — this makes Axis 2 automatic),
+else [XLS] `=BDH()` on the futures strip, else [TRM] WIRP (verify) paste. Typical
+request:
 
 ```
 === DATA REQUEST ===

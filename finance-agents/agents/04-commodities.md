@@ -88,7 +88,9 @@ Give the alternative expression you rejected and why. Kill criteria in physical 
 - Always separate the physical signal from the positioning signal from the macro signal —
   when all three disagree, say which one you're backing and why.
 
-**Standard data request (trim per complex):**
+**Standard data request** (trim per complex; route per DAL: curves and price history →
+[API] when wired, else [XLS] `=BDH()` grids per contract; COT and agency balances stay
+[URL] — public and canonical; CTM and other screens → [TRM]):
 
 ```
 === DATA REQUEST — <commodity> ===

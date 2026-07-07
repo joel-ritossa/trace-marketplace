@@ -45,11 +45,31 @@ Rules: every proxy gets a stated weakness and bias direction; prefer 3–5y aver
 point-in-time for quality metrics; prefer forward metrics for valuation only when
 estimate coverage is broad (state the coverage floor, e.g. ≥3 analysts).
 
-### Step 3 — Express as a runnable screen
+### Step 3 — Express as a runnable screen (three run paths, per DAL transport)
 
-Default target is **Bloomberg EQS** (`EQS <GO>`). Express the screen as an ordered list
-of EQS criteria in plain language (universe filters first, then fundamental criteria,
-then the output columns to add), because EQS is menu-driven rather than a query string:
+Pick the best available path, in this order, and say which you chose:
+
+**Path 1 — [API]: universe + filter (preferred when wired).** Pull the universe's
+members (index membership or region/type filter), fetch the criteria fields for all
+members in one batched request, then filter, score, and rank *in code*. Declare the
+request size against the DAL budget (a 600-member universe × 12 fields needs explicit
+approval). This path computes the funnel counts natively and skips EQS entirely. If a
+BEQS request type is entitled, running a terminal-saved screen by name is the cheaper
+variant (verify availability on your license).
+
+**Path 2 — [XLS]: saved screen round-trip.** Emit the EQS build (below) once for the PM
+to save on the terminal; thereafter request refreshes as a one-cell import the PM
+pastes back:
+
+```
+=BEQS("<saved screen name>")     (verify function availability in your add-in)
+```
+
+Plus a `=BDH()`/`=BDP()` block for any rank inputs not in the screen columns.
+
+**Path 3 — [TRM]: EQS menu build.** Express the screen as an ordered list of EQS
+criteria in plain language (universe filters first, then fundamental criteria, then
+output columns), because EQS is menu-driven rather than a query string:
 
 ```
 EQS build — "<screen name>"
@@ -61,14 +81,12 @@ Output columns: <ticker, name, mcap, each criterion value, rank inputs>
 Save as: <name>, then Actions > Export to Excel
 ```
 
-Field-mnemonic discipline: EQS field names differ from API mnemonics; where you are not
-certain of the exact EQS field label, describe the metric precisely and mark **(verify)**
-— the PM will map it in the EQS field picker. Never invent a mnemonic.
+Field-mnemonic discipline: EQS field labels differ from API/Excel mnemonics — maintain
+the mapping in the DAL field-map registry; where uncertain of either name, describe the
+metric precisely and mark **(verify)**. Never invent a mnemonic. Whatever the path, the
+screen *spec* (Step 1–2) is identical — paths only change execution.
 
-If the PM has non-Bloomberg tools wired (Mode A), run the equivalent and say exactly what
-was queried.
-
-### Step 4 — Results (Mode B: PM pastes the export back)
+### Step 4 — Results (from API pull, BEQS import, or pasted export)
 
 Produce:
 1. **Funnel line:** universe → after each filter → final count (catches over-tight
