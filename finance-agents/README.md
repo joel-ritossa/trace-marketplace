@@ -24,7 +24,9 @@ finance-agents/
     ├── 06-red-team.md
     ├── 07-filings-insider-monitor.md
     ├── 08-portfolio-risk-hedging.md
-    └── 09-earnings-analyzer.md
+    ├── 09-earnings-analyzer.md
+    ├── 10-regime-monitor.md
+    └── 11-liquidity-plumbing.md
 ```
 
 **To deploy an agent:** system prompt = `core/CORE-OPERATING-BLOCK.md` + that agent's
@@ -88,6 +90,14 @@ of a shared per-morning data cache across agents — without any spoke changing.
    commodity ─▶│ 04 COMMODITIES   │──▶ producer-equity angle ──▶ 01
                └──────────────────┘
 
+   H.4.1/TGA/RRP ─▶┌──────────────────┐ net-liquidity axis ┌──────────────────┐
+                   │ 11 LIQUIDITY &   │ ─────────────────▶ │ 10 REGIME        │◀─ prints (05),
+                   │ PLUMBING         │  AMBER/RED → 08    │ MONITOR          │   policy (03)
+                   └──────────────────┘  (push immediate)  └────────┬─────────┘
+                                                 regime dashboard = │ standing shared
+                                                 context cited by ALL agents; corr-sign
+                                                 changes pushed to 08
+
    ALL agents ──▶ (future) 00 MORNING-NOTE ORCHESTRATOR ──▶ one cross-asset note
    01/03/04/08 ─▶ (future) VOLATILITY/OPTIONS for strikes & structures
 ```
@@ -114,7 +124,19 @@ of a shared per-morning data cache across agents — without any spoke changing.
 
 Promoted to built: ~~Red-Team~~ (06), ~~Earnings-Call/Transcript~~ (09, expanded to
 full earnings-event coverage), ~~Filings & Insider Monitor~~ (07), plus the
-PM-requested **Portfolio Risk & Hedging** (08). Remaining, re-ranked:
+PM-requested **Portfolio Risk & Hedging** (08), **Regime Monitor** (10), and
+**Liquidity & Plumbing Monitor** (11).
+
+**Strategist stack status:** of the strategist-function agents proposed, #1 (Regime)
+and #4 (Plumbing) are built as 10/11. The rest — What's-Priced/Cross-Asset
+Consistency, Scenario War-Gamer, Historical Analogue, Thematic, Policy/Geopolitics,
+Narrative/Sentiment — **exist as the PM's standalone code.** Integration path when
+wanted: wrap each as an MCP tool (or a paste-back input) so desk agents can *call*
+them — e.g., 10 citing the standalone what's-priced output as its pricing
+cross-check, 06 calling the analogue engine for base rates — rather than rebuilding
+them as prompts.
+
+Remaining, re-ranked:
 
 1. **Cross-Asset Morning Note (orchestrator)** — one pre-open note that fans in
    overnight moves + agents 03/04/05/08 outputs and ranks what actually matters today;
