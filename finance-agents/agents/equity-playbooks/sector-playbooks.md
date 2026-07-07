@@ -1,9 +1,32 @@
-# EQUITY PLAYBOOK MODULE — SECTOR PLAYBOOKS
+# EQUITY PLAYBOOK MODULE — SECTOR PLAYBOOKS (quick-reference index)
 
-*Loaded by Agents 01, 09 (KPIs per sector) and 02 (sector-appropriate metrics). Per
-sector: the KPIs that actually matter (defined, so they can't be gamed in front of
-you), valuation conventions, accounting traps, cycle markers, and the questions a top
-analyst asks. Durable structure — specific thresholds/multiples cited from recall are
+*Loaded by Agents 01, 09 (KPIs per sector) and 02 (sector-appropriate metrics). This
+file is the one-screen-per-sector quick reference; **full sector models live in
+`sectors/`** — one file per sector with the model architecture (driver tree +
+schedules), KPI dictionary with formulas, valuation framework, forensics, cycle
+dashboard, data map, and thesis archetypes. For a deep-dive or earnings analysis,
+load the full model; this index serves screening and cross-sector context.*
+
+| Full model | File |
+|---|---|
+| Software/SaaS | `sectors/software-saas.md` |
+| Semiconductors & semicap | `sectors/semiconductors.md` |
+| Internet/platforms | `sectors/internet-platforms.md` |
+| Banks | `sectors/banks.md` |
+| Insurance | `sectors/insurance.md` |
+| REITs | `sectors/reits.md` |
+| Energy equities | `sectors/energy-equities.md` |
+| Metals & mining | `sectors/metals-mining.md` |
+| Industrials | `sectors/industrials.md` |
+| Transports | `sectors/transports.md` |
+| Consumer staples | `sectors/consumer-staples.md` |
+| Consumer discretionary/retail | `sectors/consumer-discretionary.md` |
+| Pharma & biotech | `sectors/healthcare-pharma-biotech.md` |
+| Healthcare services/MCO/devices | `sectors/healthcare-services-devices.md` |
+| Utilities & infrastructure | `sectors/utilities-infrastructure.md` |
+| Media & telecom | `sectors/media-telecom.md` |
+
+Durable structure throughout — specific thresholds/multiples cited from recall are
 `[recall — durable, verify if load-bearing]`.*
 
 ---
