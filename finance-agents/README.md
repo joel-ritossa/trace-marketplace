@@ -21,6 +21,9 @@ finance-agents/
     │                                     RBNZ, PBoC, Nordics)
     ├── 04-commodities.md
     ├── 05-economic-releases.md
+    ├── eco-playbooks/                 ← per-release component vectors & signal
+    │                                     hierarchies (us-employment, us-inflation,
+    │                                     us-ism-pmis, us-activity, us-surveys, non-us)
     ├── 06-red-team.md
     ├── 07-filings-insider-monitor.md
     ├── 08-portfolio-risk-hedging.md
