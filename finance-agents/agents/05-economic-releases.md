@@ -30,20 +30,52 @@ fields on the release's ECO ticker (mnemonics per DAL field map, verify), else [
 and the sub-components that lead. State explicitly whether internals confirm or
 contradict the headline — the divergences are the alpha.
 
-**3. Trend placement.** 3m/6m annualized or 3m average vs. 12m, so one print never
+**3. Component anomaly scan (z vs. EWMA).** For every component in the release's
+playbook **component vector**, standardize the latest print against its own history:
+
+```
+z_trend(i) = (x_i − EWMA_h(x_i)) / EWMSD_h(x_i)
+```
+
+computed on each component's defined transform (m/m change for flow series like
+payrolls; simple change for rates/levels like U3 or participation — the transform per
+component is fixed in the playbook, not chosen ad hoc). Default half-life **h = 24
+months**, minimum 36 observations (both stated in the output; flag any component run
+on less). Where a survey exists, also report `z_consensus = surprise / EWMSD of past
+surprises` — a print can be normal vs. its trend yet a big surprise vs. consensus, or
+vice versa; the two z's disagreeing is itself information.
+
+Output a table sorted by |z_trend|: component · latest · EWMA baseline · z_trend ·
+z_consensus · contribution. Flags: **|z| ≥ 2 = ANOMALY**, 1.5–2 = notable. Where the
+release decomposes additively (payrolls by sector; CPI by category weight), the
+**contribution column** allocates the headline's deviation from its own trend across
+components — "what's driving the release" answered arithmetically *before* any
+narrative. Every ANOMALY gets one line of interpretation: genuine signal vs. known
+distortion (strike, weather, SA quirk, methodology change — check the playbook's
+distortion list first); an anomaly with a mechanical explanation is labeled as such,
+not traded. Vintage caveat: computing on *revised* history flatters the baseline —
+note it, and use point-in-time vintages (ALFRED (verify)) where the finding is
+load-bearing.
+
+Compute **only** from supplied or pulled history — parameters shown, never from
+recall. No history → output the table skeleton plus the per-release series request
+(FRED preferred: free, and the component ids are stable).
+
+**4. Trend placement.** 3m/6m annualized or 3m average vs. 12m, so one print never
 masquerades as a trend. Note known distortions in *this* month's print (weather, strikes,
 holidays, seasonal-adjustment quirks per playbook).
 
-**4. Reaction function.** Map to the relevant central bank's current priorities: does
+**5. Reaction function.** Map to the relevant central bank's current priorities: does
 this print move the variables *they* condition on (hand off to CB Comms module logic)?
 One line: "for the Fed, this argues X; the bar for it to matter is Y."
 
-**5. Vs. market pricing.** Given supplied pricing (or request it): did this print
+**6. Vs. market pricing.** Given supplied pricing (or request it): did this print
 justify the market move, overshoot, or go unpriced? The trade is the gap between the
 print's information and the repricing.
 
-**6. Verdict.** One paragraph: what changed in the world, what to do (or "noise, fade
-the move"), kill criteria for that read.
+**7. Verdict.** One paragraph: what changed in the world, what to do (or "noise, fade
+the move"), kill criteria for that read. Lead with the anomaly-scan headline when one
+exists ("headline in line, but the composition is a 2.4σ outlier — driven by X").
 
 ### Report-reader mode (when the full document is supplied/fetchable)
 
@@ -70,6 +102,15 @@ surveys, JOLTS detail, UMich, NFIB, Beige Book, and non-US equivalents.
   hourly earnings m/m *with composition caveat*; average weekly hours (the quiet
   aggregate-income lever); birth-death contribution `[note, not subtract]`; strike/weather
   effects (BLS strike report). Trend = 3m avg payrolls.
+  **Component vector for the §3 anomaly scan** (transform · FRED id, marked (verify)
+  where uncertain): headline payrolls Δ (`PAYEMS`), private Δ (`USPRIV`), manufacturing
+  Δ (`MANEMP`), construction Δ (`USCONS` (verify)), government Δ (`USGOVT` (verify)),
+  AHE m/m % (CES series (verify id)), avg weekly hours change (verify id), U3 change
+  (`UNRATE`), participation change (`CIVPART`), household employment Δ (`CE16OV`), U6
+  change (verify id), diffusion index level (BLS table B, (verify FRED availability)),
+  net 2-month revision (BLS archives/ALFRED — point-in-time by construction).
+  Contribution decomposition: sector Δs vs. their own EWMAs, allocated against the
+  headline's deviation from its EWMA.
 - **CPI (8:30 ET, bls.gov):** core vs. headline m/m to 3 decimals; **supercore**
   (core services ex-housing); OER + rents (the lag machinery — market rents lead ~12m
   `[recall — durable]`); core goods; the "one-offs" audit (airfares, lodging, used cars
@@ -134,6 +175,7 @@ bank's priority variables and translate to *that* reaction function, not the Fed
 | Full reports | bls.gov, bea.gov, census.gov, dol.gov, ismworld.org, + non-US per mapping | verified URLs |
 | Market pricing for §5 | `WIRP` (verify), `FF` futures, `USGG2YR Index`, `DXY Curncy` | mixed |
 | Nowcasts | Atlanta Fed GDPNow, Cleveland Fed inflation nowcast (public URLs) | verified |
+| Component history for §3 anomaly scan | FRED via MCP (free) — per-playbook series ids; ALFRED for vintages (verify) | wired path |
 | Historical release series | BBG tickers per release (e.g. `NFP TCH Index` (verify), `CPI YOY Index` (verified)) | mixed |
 
 ## Input / output contract
@@ -162,3 +204,15 @@ respondent comments summarized by industry with ≥2 verbatim quotes; divergence
 computed (explicitly checks Prices-Paid-vs-New-Orders and orders-minus-inventories);
 GDP-mapping sentence pulled from the report text itself, not from memory; handoff block
 to CB Comms if Prices Paid moved materially.
+
+**T3 — Component anomaly scan (NFP), Mode B.** Input: NFP print + pasted 10y monthly
+history for the playbook component vector + survey history. Expected: z-table sorted by
+|z_trend| with half-life and observation count stated; both z_trend and z_consensus
+columns, with any disagreement between them called out; contribution column reconciling
+the headline's deviation from trend to the sector drivers (e.g., "headline +0.3σ but
+government contributed +80% of the beat — private trend intact/weaker"); every |z|≥2
+row carries a signal-vs-distortion label citing the playbook distortion list (strike,
+weather, birth-death); any component whose history wasn't pasted shows a skeleton row
+and a FRED series request, not a computed z. **Fail conditions:** a z-score on
+unstated history or parameters; an ANOMALY headline that skipped the distortion check;
+narrative "drivers" that contradict the contribution arithmetic.
