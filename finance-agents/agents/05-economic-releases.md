@@ -102,15 +102,37 @@ surveys, JOLTS detail, UMich, NFIB, Beige Book, and non-US equivalents.
   hourly earnings m/m *with composition caveat*; average weekly hours (the quiet
   aggregate-income lever); birth-death contribution `[note, not subtract]`; strike/weather
   effects (BLS strike report). Trend = 3m avg payrolls.
-  **Component vector for the §3 anomaly scan** (transform · FRED id, marked (verify)
-  where uncertain): headline payrolls Δ (`PAYEMS`), private Δ (`USPRIV`), manufacturing
-  Δ (`MANEMP`), construction Δ (`USCONS` (verify)), government Δ (`USGOVT` (verify)),
-  AHE m/m % (CES series (verify id)), avg weekly hours change (verify id), U3 change
-  (`UNRATE`), participation change (`CIVPART`), household employment Δ (`CE16OV`), U6
-  change (verify id), diffusion index level (BLS table B, (verify FRED availability)),
+  **Component vector for the §3 anomaly scan** — two tiers, all Δ (m/m change in
+  thousands) unless noted; FRED ids marked (verify) where uncertain; BLS Employment
+  Situation **Table B** is the canonical source when FRED ids fail.
+  *Tier 1 — aggregates:* headline (`PAYEMS`), private (`USPRIV`), government
+  (`USGOVT` (verify)) with federal/state/local split from Table B; AHE m/m %
+  (CES avg-hourly-earnings series (verify id)), avg weekly hours change (verify id),
+  U3 change (`UNRATE`), participation change (`CIVPART`), household employment Δ
+  (`CE16OV`), U6 change (verify id), diffusion index level (Table B/FRED (verify)),
   net 2-month revision (BLS archives/ALFRED — point-in-time by construction).
-  Contribution decomposition: sector Δs vs. their own EWMAs, allocated against the
-  headline's deviation from its EWMA.
+  *Tier 2 — industry detail (each z-scored and in the contribution table):*
+  mining & logging (`USMINE` (verify)); construction (`USCONS` (verify)), residential
+  vs. nonresidential split from Table B where cited (rates-sensitivity read);
+  manufacturing (`MANEMP`) with durable/nondurable split; wholesale trade
+  (`USWTRADE` (verify)); **retail trade** (`USTRADE` (verify)); transportation &
+  warehousing (verify id); utilities; information (`USINFO` (verify)); financial
+  activities (`USFIRE` (verify)); professional & business services (`USPBS` (verify))
+  **with temporary-help services broken out** (`TEMPHELPS` (verify)) — temp help leads
+  the cycle `[recall — durable]`; private education & health (`USEHS` (verify)) **with
+  health care & social assistance broken out** (CES id (verify)); leisure &
+  hospitality (`USLAH` (verify)); other services (verify id).
+  *Derived aggregates (compute and z-score alongside):* **cyclical-core payrolls** =
+  private ex-(health care & social assistance) ex-(private education) — strips the
+  acyclical employers so the cyclical signal isn't masked by them `[recall — durable
+  pattern: recent-cycle job gains concentrate in health/government/leisure catch-up]`;
+  goods vs. services split; government share of the headline gain.
+  *Interpretation notes for the scan:* a headline beat driven by health + government
+  is a *weaker* labor market than the same number driven by cyclical industries — the
+  contribution table must say which it was; temp-help and diffusion turning together
+  outrank any single industry anomaly; retail and courier/warehousing are SA-quirky
+  around holiday seasons (distortion list, not signal); a construction z-break is a
+  rates-transmission datapoint — route it to the reaction-function section.
 - **CPI (8:30 ET, bls.gov):** core vs. headline m/m to 3 decimals; **supercore**
   (core services ex-housing); OER + rents (the lag machinery — market rents lead ~12m
   `[recall — durable]`); core goods; the "one-offs" audit (airfares, lodging, used cars
@@ -209,8 +231,10 @@ to CB Comms if Prices Paid moved materially.
 history for the playbook component vector + survey history. Expected: z-table sorted by
 |z_trend| with half-life and observation count stated; both z_trend and z_consensus
 columns, with any disagreement between them called out; contribution column reconciling
-the headline's deviation from trend to the sector drivers (e.g., "headline +0.3σ but
-government contributed +80% of the beat — private trend intact/weaker"); every |z|≥2
+the headline's deviation from trend to the industry drivers, tier-2 detail included,
+with the derived cyclical-core aggregate reported next to the headline (e.g., "headline
++0.3σ but health care + government contributed 80% of the beat — cyclical core at
+−0.4σ, weakest since [dated from supplied history]"); every |z|≥2
 row carries a signal-vs-distortion label citing the playbook distortion list (strike,
 weather, birth-death); any component whose history wasn't pasted shows a skeleton row
 and a FRED series request, not a computed z. **Fail conditions:** a z-score on
