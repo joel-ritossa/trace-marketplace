@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -41,6 +42,7 @@ def _any_value(value: Any) -> dict:
 
 
 _LEAD = NANO // 1_000_000
+_PASTE_TAG = re.compile(r"</?pasted_content\b[^>]*>")
 
 
 def _attr_list(attributes: dict) -> list[dict]:
@@ -54,9 +56,11 @@ def _usage_attrs(usage: dict[str, int]) -> dict[str, int | None]:
 
 
 def clean_user_text(text: str) -> str:
-    """Harnesses wrap the real ask in <user_query> tags; titles want one line."""
+    """Harnesses wrap the real ask in <user_query> tags and pastes in
+    <pasted_content> tags (content kept); titles want one line."""
     if "<user_query>" in text:
         text = text.split("<user_query>", 1)[1].split("</user_query>", 1)[0]
+    text = _PASTE_TAG.sub(" ", text)
     return " ".join(text.split())
 
 

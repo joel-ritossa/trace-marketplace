@@ -126,6 +126,34 @@ def test_idless_tool_use_emits_in_place():
     assert by_id[tool.source_parent_span_id].attributes["turn.index"] == 0
 
 
+def test_claude_harness_messages_do_not_open_turns():
+    """Claude Code tags who produced each user record; task notifications are
+    model input, not asks. Paste wrapper tags never reach titles."""
+    records = [
+        {
+            "type": "user",
+            "origin": {"kind": "human"},
+            "message": {
+                "content": 'deploy it <pasted_content id="a">log line</pasted_content id="a">'
+            },
+        },
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "started"}]}},
+        {
+            "type": "user",
+            "origin": {"kind": "task-notification"},
+            "message": {"content": "<task-notification>build done</task-notification>"},
+        },
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "it is live"}]}},
+    ]
+    payload = sessions.convert("anthropic_jsonl", records, session_id="s", anchor=ANCHOR)
+    (trace,) = otlp.import_payload(payload, redaction_salt=OFFLINE_SALT).traces
+    (turn,) = [s for s in trace.spans if "turn.index" in s.attributes]
+    assert turn.attributes["turn.user_message"] == "deploy it log line"
+    llms = [s for s in trace.spans if s.kind == "llm"]
+    assert len(llms) == 2
+    assert "build done" in llms[1].attributes["input.value"]
+
+
 # --- golden-corpus semantics (fixtures/golden/, real-log shapes) ----------------
 
 

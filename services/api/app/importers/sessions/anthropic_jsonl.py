@@ -12,7 +12,9 @@ the parser absorbs (shapes verified against real logs):
   (or timestamps, usage, model ids) and group per record.
 - Claude Code interleaves sub-agent ("sidechain") transcripts and meta
   records (`isMeta`, compaction summaries) into the session file; both are
-  skipped — they are not part of the main conversation.
+  skipped — they are not part of the main conversation. User records whose
+  `origin.kind` is not `human` (task notifications, peer messages) stay
+  model input but never open a turn.
 - Anthropic usage splits input across `input_tokens` +
   `cache_read_input_tokens` + `cache_creation_input_tokens`; all three count
   toward the call's input.
@@ -41,6 +43,14 @@ def matches(records: list[dict]) -> bool:
         and isinstance(r.get("message"), dict)
         for r in records
     )
+
+
+def _is_injected(record: dict) -> bool:
+    """Harness-produced user record (task notifications, peer messages):
+    model input, but not a human ask, so it never opens a turn. Logs without
+    `origin` count every user record as human."""
+    origin = record.get("origin")
+    return isinstance(origin, dict) and origin.get("kind", "human") != "human"
 
 
 def _block_text(content: Any) -> str:
@@ -103,7 +113,8 @@ def parse(records: list[dict], session_id: str) -> SessionBuilder:
             text = _block_text(content)
             if text:
                 last_user = text
-                builder.user_message(text)
+                if not _is_injected(record):
+                    builder.user_message(text)
             for block in content if isinstance(content, list) else []:
                 if isinstance(block, dict) and block.get("type") == "tool_result":
                     call = open_tools.pop(block.get("tool_use_id", ""), None)

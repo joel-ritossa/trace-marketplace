@@ -28,7 +28,10 @@ pointed at the directories the tools already write.
     `message.id`; responses group by id into exactly one llm span each —
     including tool-only responses, whose usage is real spend. Sidechain
     (sub-agent) and meta records (`isSidechain`, `isMeta`,
-    `isCompactSummary`, `isVisibleInTranscriptOnly`) are skipped.
+    `isCompactSummary`, `isVisibleInTranscriptOnly`) are skipped. User
+    records with `origin.kind` other than `human` (task notifications, peer
+    messages) remain llm input but never open a turn; `<pasted_content>`
+    wrapper tags are stripped from asks (content kept).
   - Token accounting: Anthropic input = `input_tokens` +
     `cache_read_input_tokens` + `cache_creation_input_tokens`. Codex usage
     arrives as `token_count` events (per model request, not per message);
@@ -46,7 +49,7 @@ pointed at the directories the tools already write.
   at ingest (e.g. a detected schema yielding zero turns) are
   `PermanentIngestError`s — verbatim on `/uploads`, never retried.
 - `uploads.source_format` and `traces.source_format` record the detected
-  format; session-converted traces carry the sessions importer version (`2.0.0`: one trace per session).
+  format; session-converted traces carry the sessions importer version (`2.0.0`: one trace per session; `2.1.0`: harness-injected user records no longer open turns).
 
 ## Per-Session Granularity
 
