@@ -64,6 +64,7 @@ export function traceSpanPanel(
           parentLabel={parent ? (parent.description ?? "a subagent") : "the main agent"}
           brief={ctx.attributes ? spawnBrief(ctx.attributes) : undefined}
           report={ctx.finalReply === undefined && report === null ? undefined : report}
+          onShowSpan={nav.showSpan}
           action={
             spawn.linked && nav.openAgent ? (
               <Button size="xs" variant="outline" onClick={() => nav.openAgent?.(spawn.span_id)}>

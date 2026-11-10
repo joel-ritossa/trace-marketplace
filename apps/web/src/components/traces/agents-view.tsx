@@ -5,7 +5,7 @@
 // background agents run past the turn's end marker). A lane opens the
 // subagent (scopes the evidence pane to its subtree).
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { ChevronRight, GitFork } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -17,7 +17,9 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { ExpandableText } from "@/components/ui/expandable-text";
-import type { AgentSpawn } from "@/lib/api/traces";
+import { OutcomeBadge } from "@/components/traces/badges";
+import { EvidencePill } from "@/components/traces/label-popovers";
+import type { AgentSpawn, AgentVerdict } from "@/lib/api/traces";
 import { formatCompact, formatDuration } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -26,6 +28,9 @@ export const SubagentIcon = GitFork;
 
 /** A turn's ask and time span, from its turn span. */
 export type TurnInfo = { ask: string; start: number; end: number };
+
+// Failure-mode pills shown on a verdict before "+N".
+const PILL_CAP = 2;
 
 // Lanes rendered per group before "Show N more".
 const LANE_WINDOW = 25;
@@ -88,11 +93,13 @@ export function AgentsView({
   agents,
   turns,
   onOpen,
+  onShowSpan,
   focus,
 }: {
   agents: AgentSpawn[];
   turns: Map<number, TurnInfo>;
   onOpen: (spanId: string) => void;
+  onShowSpan?: (spanId: string) => void;
   // Scroll to a turn's group (turn-row markers); seq re-fires.
   focus?: { turn: number; seq: number } | null;
 }) {
@@ -203,6 +210,7 @@ export function AgentsView({
           agents={nestedOrder(list, sort)}
           foldUnlinked={withTranscript}
           onOpen={onOpen}
+          onShowSpan={onShowSpan}
           focus={focus && focus.turn === turn ? focus.seq : 0}
         />
       ))}
@@ -222,6 +230,7 @@ function TurnGroup({
   agents,
   foldUnlinked,
   onOpen,
+  onShowSpan,
   focus,
 }: {
   turn: number | null;
@@ -229,6 +238,7 @@ function TurnGroup({
   agents: AgentSpawn[];
   foldUnlinked: boolean;
   onOpen: (spanId: string) => void;
+  onShowSpan?: (spanId: string) => void;
   focus: number;
 }) {
   const linked = agents.filter((a) => a.linked);
@@ -315,6 +325,7 @@ function TurnGroup({
                 marker={turnEnd}
                 showBg={bgMixed}
                 onOpen={onOpen}
+                onShowSpan={onShowSpan}
               />
             ))}
           </ol>
@@ -430,12 +441,14 @@ function AgentLane({
   marker,
   showBg,
   onOpen,
+  onShowSpan,
 }: {
   agent: AgentSpawn;
   pct: (t: number) => number;
   marker: number | null;
   showBg: boolean;
   onOpen: (spanId: string) => void;
+  onShowSpan?: (spanId: string) => void;
 }) {
   const error = a.status === "error" || a.error_count > 0;
   const body = (
@@ -500,7 +513,64 @@ function AgentLane({
       ) : (
         <div className="py-0.5 opacity-70">{body}</div>
       )}
+      {a.verdict && onShowSpan && (
+        // Beside the lane button, not inside it: the pills are controls too.
+        <AgentVerdictRow
+          verdict={a.verdict}
+          onShowSpan={onShowSpan}
+          className="pb-0.5"
+          style={{ paddingLeft: a.depth * 12 }}
+        />
+      )}
     </li>
+  );
+}
+
+/** A judged subagent's verdict on one line: outcome, summary (click to
+ *  expand), failure-mode pills with "+N" for the rest. */
+function AgentVerdictRow({
+  verdict: v,
+  onShowSpan,
+  className,
+  style,
+}: {
+  verdict: AgentVerdict;
+  onShowSpan: (spanId: string) => void;
+  className?: string;
+  style?: CSSProperties;
+}) {
+  const [all, setAll] = useState(false);
+  const modes = all ? v.failure_modes : v.failure_modes.slice(0, PILL_CAP);
+  const hidden = v.failure_modes.length - modes.length;
+  return (
+    <div className={cn("flex items-baseline gap-2 text-xs", className)} style={style}>
+      <OutcomeBadge outcome={v.outcome} />
+      <ExpandableText text={v.summary} lines={1} className="min-w-0 flex-1 text-muted-foreground" />
+      {modes.length > 0 && (
+        <span className="flex max-w-[50%] shrink-0 flex-wrap justify-end gap-1">
+          {modes.map((m) => (
+            <EvidencePill
+              key={m.value}
+              value={m.value}
+              reason={m.reason}
+              spanIds={m.span_ids}
+              showSpan={onShowSpan}
+            />
+          ))}
+          {hidden > 0 && (
+            <button
+              type="button"
+              data-pill="more"
+              onClick={() => setAll(true)}
+              className="shrink-0 rounded-sm px-0.5 font-mono text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
+              title={`Show all ${v.failure_modes.length} failure modes`}
+            >
+              +{hidden}
+            </button>
+          )}
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -513,6 +583,7 @@ export function SubagentCard({
   brief,
   report,
   action,
+  onShowSpan,
   compact = false,
 }: {
   agent: AgentSpawn;
@@ -521,6 +592,7 @@ export function SubagentCard({
   brief: string | null | undefined;
   report: string | null | undefined;
   action?: ReactNode;
+  onShowSpan?: (spanId: string) => void;
   // One stats line and one-line brief/report (expandable): the scope header,
   // where the conversation below needs the room.
   compact?: boolean;
@@ -564,6 +636,7 @@ export function SubagentCard({
             spawned in {turnLabel} by {parentLabel}
           </span>
         </p>
+      {a.verdict && onShowSpan && <AgentVerdictRow verdict={a.verdict} onShowSpan={onShowSpan} />}
         {prose("Brief", brief)}
         {prose("Final report", report)}
       </div>
@@ -593,6 +666,7 @@ export function SubagentCard({
           </div>
         ))}
       </dl>
+      {a.verdict && onShowSpan && <AgentVerdictRow verdict={a.verdict} onShowSpan={onShowSpan} />}
       {prose("Brief", brief)}
       {prose("Final report", report)}
     </div>

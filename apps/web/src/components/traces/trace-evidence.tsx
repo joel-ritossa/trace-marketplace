@@ -182,6 +182,7 @@ export function TraceEvidence({
   agents,
   agentScope = null,
   onScope,
+  onShowSpan,
   view: controlledView,
   onViewChange,
   agentFocus = null,
@@ -200,6 +201,8 @@ export function TraceEvidence({
   // The subagent (spawn span's source id) the pane is scoped to.
   agentScope?: string | null;
   onScope?: (spanId: string | null) => void;
+  // Reveal a span cited by a subagent verdict (the host navigates).
+  onShowSpan?: (spanId: string) => void;
   // Controlled by the host (the trace page keeps it in the URL); internal
   // state otherwise (the similar-trace preview).
   view?: EvidenceView;
@@ -585,6 +588,7 @@ export function TraceEvidence({
           onTurn={onShowAgents}
           brief={scopeBrief}
           report={scopeReport}
+          onShowSpan={onShowSpan}
         />
       )}
       <ViewToggle view={view} onChange={setView} agentCount={scopedAgents.length} />
@@ -595,6 +599,7 @@ export function TraceEvidence({
             agents={scopedAgents}
             turns={turnInfo}
             onOpen={(id) => onScope?.(id)}
+            onShowSpan={onShowSpan}
             focus={agentFocus}
           />
         </div>
@@ -717,6 +722,7 @@ function ScopeHeader({
   onTurn,
   brief,
   report,
+  onShowSpan,
 }: {
   spawn: AgentSpawn;
   agents: AgentSpawn[];
@@ -725,6 +731,7 @@ function ScopeHeader({
   onTurn?: (turnIndex: number) => void;
   brief: string | null | undefined;
   report: string | null | undefined;
+  onShowSpan?: (spanId: string) => void;
 }) {
   const parents: AgentSpawn[] = [];
   for (let p = spawn.parent_span_id; p; ) {
@@ -778,6 +785,7 @@ function ScopeHeader({
           parentLabel={parents.length ? (parents[parents.length - 1].description ?? "a subagent") : "the main agent"}
           brief={brief}
           report={report}
+          onShowSpan={onShowSpan}
         />
       </div>
     </div>

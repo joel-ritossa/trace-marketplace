@@ -249,6 +249,48 @@ function TurnList({
   );
 }
 
+/** A failure-mode pill with its own cited reason and evidence (a subagent
+ *  verdict has no turns to list). */
+export function EvidencePill({
+  value,
+  reason,
+  spanIds,
+  showSpan,
+}: {
+  value: string;
+  reason: string;
+  spanIds: string[];
+  showSpan: (id: string) => void;
+}) {
+  const description = describe(value);
+  return (
+    <Popover>
+      <PopoverTrigger asChild onClick={stop}>
+        <LabelChip
+          field="failure_mode"
+          value={value}
+          title={description}
+          data-pill="failure_mode"
+          className="min-w-0 max-w-32"
+        />
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        collisionPadding={{ top: HEADER_CLEARANCE, bottom: 12, left: 12, right: 12 }}
+        className="flex w-80 flex-col gap-1"
+        onClick={stop}
+      >
+        <p className="text-sm font-medium">{humanize(value)}</p>
+        {description && <p className="text-xs text-muted-foreground">{description}</p>}
+        <ExpandableText text={reason} lines={3} className="text-sm" />
+        <div className="flex flex-wrap gap-1 pt-1">
+          <EvidenceActions spanIds={spanIds} showSpan={showSpan} />
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 /** A label's popover body: title + turn count, its description, its turns. */
 function LabelBody({ field, value, resolved }: { field: Field; value: string; resolved: Resolved }) {
   const description = describe(value);

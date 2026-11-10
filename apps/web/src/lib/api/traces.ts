@@ -126,6 +126,15 @@ export type AgentSpawn = {
   error_count: number;
   input_tokens: number;
   output_tokens: number;
+  // The judge's verdict on the subagent's own transcript; null/absent when
+  // unlinked or not judged yet.
+  verdict?: AgentVerdict | null;
+};
+
+export type AgentVerdict = {
+  outcome: Outcome;
+  summary: string;
+  failure_modes: { value: string; span_ids: string[]; reason: string }[];
 };
 
 export async function listAgents(traceId: string): Promise<AgentSpawn[]> {

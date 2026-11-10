@@ -231,6 +231,7 @@ export function TraceInspector({
       agents={subagentCount > 0 ? agents : undefined}
       agentScope={agentScope}
       onScope={setAgentScope}
+      onShowSpan={nav.showSpan}
       view={view}
       onViewChange={(next) => navigate({ view: next === "conversation" ? null : next })}
       agentFocus={agentFocus}
