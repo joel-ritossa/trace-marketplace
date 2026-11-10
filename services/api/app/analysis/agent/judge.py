@@ -37,7 +37,7 @@ from app.analysis.prompts.agent import roll_up as roll_up_prompt
 from app.analysis.rendering import middle_out
 from app.analysis.trace_input import TraceInput
 
-AGENT_VERSION = "4"
+AGENT_VERSION = "5"
 
 _CITABLE_KINDS = ("llm", "tool")
 
@@ -113,7 +113,7 @@ async def judge_turn_with_meta(
     agent = Agent(
         name="turn_judge",
         hooks=_NewRound(usage),
-        instructions=judge_prompt.build_v3(allowed),
+        instructions=judge_prompt.build_v4(allowed),
         model=settings.judge_model,
         tools=_function_tools(trace, turns, config, usage),
         output_type=_Answer,

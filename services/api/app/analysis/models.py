@@ -47,7 +47,7 @@ TASK_CATEGORY_GROUPS: dict[str, dict[str, str]] = {
         "code_review": "Reviewing code changes for correctness and quality",
         "testing_qa": "Writing or running tests; quality assurance",
         "devops_infra": "Cloud resources, hosts, secrets, networking, infrastructure-as-code",
-        "ci_cd": "Pull requests, merges, CI checks, build and release pipelines",
+        "ci_cd": "CI checks, merge queues, build and release pipelines",
         "database_admin": "Schema, migration, and query administration",
         "security_engineering": "Vulnerability analysis, hardening, secrets handling",
         "ml_engineering": "Training, evaluating, or deploying ML models",

@@ -31,13 +31,18 @@ SPECS: list[dict[str, Any]] = [
             "One turn's spans in order, one row each: span_id, kind, name/tool, status, "
             "duration, input/output previews. Subagent spans are indented under the call "
             f"that spawned them. Paged, {READ_TURN_PAGE_SPANS} spans per page; the first "
-            "page also lists the turn's error spans with their offsets."
+            "page also lists the turn's error spans and subagents (size, errors) with their "
+            "offsets. Pass `under` to page through one subagent's own spans."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "turn_index": {"type": "integer"},
                 "offset": {"type": "integer", "description": "First span to show (default 0)."},
+                "under": {
+                    "type": "string",
+                    "description": "A span_id: show only the spans nested under it.",
+                },
             },
             "required": ["turn_index"],
         },
@@ -81,30 +86,42 @@ def list_turns(turns: list[TurnView]) -> str:
 
 
 def read_turn(
-    turns: list[TurnView], turn_index: int, config: RendererConfig, offset: int = 0
+    turns: list[TurnView],
+    turn_index: int,
+    config: RendererConfig,
+    offset: int = 0,
+    under: str | None = None,
 ) -> str:
     turn = _turn(turns, turn_index)
+    nested = _nested(turn)
+    if under is not None and under not in nested:
+        raise ValueError(f"{under!r} is not a subagent call in turn {turn.index}")
+    spans = turn.spans if under is None else nested[under]
+    scope = f"turn {turn.index} ({turn.origin})" + (f" under {under}" if under else "")
     offset = max(offset, 0)
-    if offset and offset >= len(turn.spans):
-        raise ValueError(f"turn {turn.index} has {len(turn.spans)} spans; offset is past the end")
-    page = turn.spans[offset : offset + READ_TURN_PAGE_SPANS]
-    lines = [
-        f"turn {turn.index} ({turn.origin}): spans {offset}-{offset + len(page) - 1} "
-        f"of {len(turn.spans)}"
-    ]
+    if offset and offset >= len(spans):
+        raise ValueError(f"{scope} has {len(spans)} spans; offset is past the end")
+    page = spans[offset : offset + READ_TURN_PAGE_SPANS]
+    lines = [f"{scope}: spans {offset}-{offset + len(page) - 1} of {len(spans)}"]
     if offset == 0:
-        ask = middle_out(turn.ask, config.conversation_cap_chars)[0] if turn.ask else None
-        lines.append(f"ask: {ask or '(not recorded)'}")
-        lines.extend(_error_index(turn))
+        if under is None:
+            ask = middle_out(turn.ask, config.conversation_cap_chars)[0] if turn.ask else None
+            lines.append(f"ask: {ask or '(not recorded)'}")
+        lines.extend(
+            _index("error spans", [(i, s) for i, s in enumerate(spans) if s.status == "error"])
+        )
+        subagents = [(i, s) for i, s in enumerate(spans) if s.source_span_id in nested]
+        lines.extend(_index("subagents", subagents, nested))
     for span in page:
         indent = "  " * turn.depth[span.source_span_id]
-        lines.append(f"{indent}{_row(span)}")
+        lines.append(f"{indent}{_row(span)}{_size(nested.get(span.source_span_id))}")
         for label, text in (("in", content.input_text(span)), ("out", content.output_text(span))):
             if text:
                 lines.append(f"{indent}  {label}: {preview(text)}")
-    rest = len(turn.spans) - offset - len(page)
+    rest = len(spans) - offset - len(page)
     if rest > 0:
-        lines.append(f"({rest} more: read_turn({turn.index}, offset={offset + len(page)}))")
+        more = f", under={under!r}" if under else ""
+        lines.append(f"({rest} more: read_turn({turn.index}, offset={offset + len(page)}{more}))")
     return "\n".join(lines)
 
 
@@ -133,13 +150,42 @@ def final_message(turn: TurnView, config: RendererConfig) -> str | None:
     )
 
 
-def _error_index(turn: TurnView) -> list[str]:
-    errors = [(i, s) for i, s in enumerate(turn.spans) if s.status == "error"]
-    if not errors:
+def _nested(turn: TurnView) -> dict[str, list[SpanInput]]:
+    """span_id -> every span nested under it, chronological, for the
+    non-llm spans that have any (subagent calls; an llm span's own tool
+    calls are not a subagent)."""
+    by_id = {s.source_span_id: s for s in turn.spans}
+    nested: dict[str, list[SpanInput]] = {}
+    for span in turn.spans:
+        parent = by_id.get(span.source_parent_span_id or "")
+        while parent is not None:
+            if parent.kind != "llm":
+                nested.setdefault(parent.source_span_id, []).append(span)
+            parent = by_id.get(parent.source_parent_span_id or "")
+    return nested
+
+
+def _size(spans: list[SpanInput] | None) -> str:
+    if not spans:
+        return ""
+    llm = sum(1 for s in spans if s.kind == "llm")
+    errors = sum(1 for s in spans if s.status == "error")
+    return f" [subagent: {len(spans)} spans, {llm} llm, {errors} errors]"
+
+
+def _index(
+    title: str,
+    hits: list[tuple[int, SpanInput]],
+    nested: dict[str, list[SpanInput]] | None = None,
+) -> list[str]:
+    if not hits:
         return []
-    shown = [f"  offset {i}: {_row(s)}" for i, s in errors[:SEARCH_MAX_HITS]]
-    more = len(errors) - len(shown)
-    return [f"error spans ({len(errors)}):", *shown] + ([f"  ({more} more)"] if more else [])
+    shown = [
+        f"  offset {i}: {_row(s)}{_size((nested or {}).get(s.source_span_id))}"
+        for i, s in hits[:SEARCH_MAX_HITS]
+    ]
+    more = len(hits) - len(shown)
+    return [f"{title} ({len(hits)}):", *shown] + ([f"  ({more} more)"] if more else [])
 
 
 def search(turns: list[TurnView], query: str, turn_index: int | None = None) -> str:
@@ -179,7 +225,14 @@ def run(
         if name == "list_turns":
             return list_turns(turns)
         if name == "read_turn":
-            return read_turn(turns, int(args["turn_index"]), config, int(args.get("offset") or 0))
+            under = args.get("under")
+            return read_turn(
+                turns,
+                int(args["turn_index"]),
+                config,
+                int(args.get("offset") or 0),
+                None if under is None else str(under),
+            )
         if name == "read_span":
             return read_span(trace, str(args["span_id"]), config)
         if name == "search":

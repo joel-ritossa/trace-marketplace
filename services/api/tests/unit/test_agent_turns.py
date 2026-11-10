@@ -95,3 +95,14 @@ def test_fingerprint_ignores_the_upload_salt_but_not_content() -> None:
     assert one != two
     assert _with_output(one) == _with_output(two)
     assert _with_output(one) != _with_output(scrub_text(raw + " twice", "salt-a")[0])
+
+
+def test_read_turn_sizes_subagents_and_pages_under_one() -> None:
+    from app.analysis.agent import tools
+    from app.analysis.config import AnalysisSettings, RendererConfig
+
+    turns, config = split(session()), RendererConfig.from_settings(AnalysisSettings())
+    page = tools.read_turn(turns, 0, config)
+    assert "subagents (1):" in page and "[subagent: 2 spans, 1 llm, 0 errors]" in page
+    nested = tools.read_turn(turns, 0, config, under=f"{3:016x}")
+    assert "spans 0-1 of 2" in nested and f"{2:016x}" not in nested
