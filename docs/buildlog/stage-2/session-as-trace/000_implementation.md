@@ -19,4 +19,16 @@ Amends A6 (`docs/spec/stage-2/8_session-ingestion.md`) and the B0 renderer (`1_a
 
 ## Outcome
 
-TODO (coordinator): fill after verification.
+Verified 2026-11-10 on a fresh trace dataset:
+
+- Unit suite 347 passed; ruff clean. Session goldens regenerated; render
+  goldens changed only in `renderer_version`.
+- Drift from plan: the session root carries no `gen_ai.usage.*` (it double
+  counted trace totals); turn and root spans lead their first event by 1µs
+  (stored precision) so each ask sorts before its responses.
+- Live: a 22-turn Claude Code session uploaded through `trace-sync` landed as
+  1 trace (340 spans, 22 turn spans, `session.turn_count` 22). Its rendering
+  keeps all 22 asks as user messages within budget (233 middle steps elided).
+- Pre-existing, not changed here: Claude Code harness messages
+  (`<task-notification>`, `<pasted_content>` wrappers) count as user asks, so
+  they open turns and appear in titles.
