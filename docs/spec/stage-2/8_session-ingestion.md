@@ -52,6 +52,27 @@ pointed at the directories the tools already write.
   - Reasoning is preserved as `gen_ai.reasoning` on the llm span: Claude
     `thinking` blocks, Codex `reasoning` summary text (the encrypted body
     is dropped).
+  - Skills: a span records a skill use with `skill.name` (no leading
+    slash, plugin prefix kept) and `skill.source`. Claude Code `Skill` tool
+    calls carry them with `agent` (span named `Skill: <name>`); a human
+    slash command that expands a skill or command prompt (leads with
+    `<command-message>`; local commands like `/model` do not) puts them on
+    its turn span with `user`, and a `Skill` call for the same skill later
+    in that turn is the same use (named, but no `skill.*`). Codex rollouts
+    record no skill use (the model reads `SKILL.md` through its shell), so
+    none is derived. Traces list the distinct names as `skill_names`,
+    derived from any span's `skill.name` (native OTLP too).
+  - Subagents: a Claude Code `Agent`/`Task` call is named
+    `Agent: <description>` and carries `subagent.description` (else the
+    prompt's first line), `subagent.type`, `subagent.model` (seen on the
+    subagent's llm records, else requested) and `subagent.background`
+    (`toolUseResult.isAsync`); `subagent.id` only when its transcript was
+    linked and nested. Nested work may outlive the spawning call and its
+    turn; nothing is clamped.
+  - A Codex rollout's first `session_meta` is its own (a forked sub-agent
+    replays its parent's after it); its `parent_thread_id`, `agent_path`
+    and `agent_nickname` land on the session root as `session.parent_id`,
+    `session.agent_path` and `session.agent_nickname`.
   - Codex asks are `user_message` events or, in rollouts without them,
     `item_completed` `UserMessage` items; an `agent_message` from a parent
     agent opens an automated turn, one from a child is llm input only.
@@ -65,7 +86,7 @@ pointed at the directories the tools already write.
   at ingest (e.g. a detected schema yielding zero turns) are
   `PermanentIngestError`s — verbatim on `/uploads`, never retried.
 - `uploads.source_format` and `traces.source_format` record the detected
-  format; session-converted traces carry the sessions importer version (`2.0.0`: one trace per session; `2.1.0`: harness-injected user records no longer open turns; `2.2.0`: subagents nest under their spawning call; `2.3.0`: synthesized span ends never cross a turn; `2.4.0`: automated turns marked `turn.origin`, non-asks never open turns, slash-command/reminder wrappers cleaned, a resumed log's leading activity takes the first prompt, Codex `UserMessage` items and parent `agent_message` tasks open turns).
+  format; session-converted traces carry the sessions importer version (`2.0.0`: one trace per session; `2.1.0`: harness-injected user records no longer open turns; `2.2.0`: subagents nest under their spawning call; `2.3.0`: synthesized span ends never cross a turn; `2.4.0`: automated turns marked `turn.origin`, non-asks never open turns, slash-command/reminder wrappers cleaned, a resumed log's leading activity takes the first prompt, Codex `UserMessage` items and parent `agent_message` tasks open turns; `2.5.0`: skill uses and subagent spawn attributes; a forked Codex sub-agent rollout keeps its own session id and records its parent link).
 
 ## Per-Session Granularity
 

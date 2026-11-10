@@ -61,7 +61,7 @@ def _prune_claude(record: dict) -> dict:
     kept = {k: record[k] for k in _CLAUDE_KEYS if k in record}
     spawned = record.get("toolUseResult")
     if isinstance(spawned, dict) and "agentId" in spawned:
-        kept["toolUseResult"] = {"agentId": spawned["agentId"]}
+        kept["toolUseResult"] = {k: spawned[k] for k in ("agentId", "isAsync") if k in spawned}
     content = kept["message"].get("content")
     if isinstance(content, list):
         kept["message"] = {
@@ -73,7 +73,8 @@ def _prune_claude(record: dict) -> dict:
 
 def _prune_codex(rtype: str, payload: dict, timestamp: Any) -> dict:
     if rtype == "session_meta":
-        payload = {k: payload[k] for k in ("id", "cwd") if k in payload}
+        keys = ("id", "cwd", "parent_thread_id", "agent_path", "agent_nickname")
+        payload = {k: payload[k] for k in keys if k in payload}
     elif rtype == "turn_context":
         payload = {k: payload[k] for k in ("model",) if k in payload}
     elif rtype == "event_msg":

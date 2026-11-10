@@ -17,6 +17,7 @@
         "tool_search",
         "web_search"
       ],
+      "skill_names": [],
       "error_types": [],
       "total_tokens": 3070,
       "spans": [

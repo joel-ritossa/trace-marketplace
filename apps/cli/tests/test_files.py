@@ -105,7 +105,7 @@ def test_upload_bytes_prunes_session_bookkeeping(tmp_path):
         {
             "type": "user",
             "message": {"content": "hi"},
-            "toolUseResult": {"agentId": "a", "out": "big"},
+            "toolUseResult": {"agentId": "a", "isAsync": True, "out": "big"},
             "turnOrigin": "scheduled",
         },
         {"type": "event_msg", "payload": {"type": "item_completed", "item": {}}},
@@ -133,7 +133,7 @@ def test_upload_bytes_prunes_session_bookkeeping(tmp_path):
             "type": "user",
             "message": {"content": "hi"},
             "turnOrigin": "scheduled",
-            "toolUseResult": {"agentId": "a"},
+            "toolUseResult": {"agentId": "a", "isAsync": True},
         },
         {
             "type": "event_msg",

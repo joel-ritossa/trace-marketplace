@@ -63,6 +63,10 @@ _NOT_A_PROMPT = re.compile(
     rf"|{_PEER_PREFIX}\s*<agent-message\b)"
 )
 _SIDE_REPORT = "<side-sessions-event>"
+_SPAWN_TOOLS = ("Agent", "Task")
+# A skill or custom-command slash command leads with <command-message>; its
+# <command-name> is the skill.
+_COMMAND_SKILL = re.compile(r"\s*<command-message>.*?<command-name>/?([^<]+)</command-name>", re.S)
 _EVENT_LABELS = {
     "ci-monitor-event": "CI event",
     "cross-session-message": "Session message",
@@ -102,6 +106,11 @@ def _prompt_origin(record: dict, text: str, origin_tagged: bool) -> str | None:
     if kind == "human" or (kind is None and not origin_tagged):
         return "human"
     return "automated"
+
+
+def _command_skill(text: str) -> str | None:
+    match = _COMMAND_SKILL.match(text)
+    return match.group(1).strip() if match else None
 
 
 def _event_ask(text: str) -> str:
@@ -146,20 +155,52 @@ def parse(records: list[dict], session_id: str) -> SessionBuilder:
 
     builder = _parse_stream(main, SessionBuilder(agent, session_id), _SKIP_FLAGS)
     subagents = {
-        agent_id: _parse_stream(recs, SessionBuilder(agent, agent_id), _SUBAGENT_SKIP).events()
+        agent_id: _parse_stream(recs, SessionBuilder(agent, agent_id), _SUBAGENT_SKIP)
         for agent_id, recs in groups.items()
     }
     _nest(builder.events(), subagents)
     return builder
 
 
-def _nest(events: list[Event], subagents: dict[str, list[Event]]) -> None:
+def _nest(events: list[Event], subagents: dict[str, SessionBuilder]) -> None:
     """Attach each subagent's events under its spawning tool call (subagents
     can spawn subagents, so linked streams nest in turn)."""
     for event in flatten(events):
         if event.agent_id in subagents:
-            event.children = subagents.pop(event.agent_id)
+            sub = subagents.pop(event.agent_id)
+            event.attrs["subagent.id"] = event.agent_id
+            event.attrs["subagent.model"] = sub.model or event.attrs.get("subagent.model")
+            event.children = sub.events()
             _nest(event.children, subagents)
+
+
+def _call(name: str, args: Any, ts: int | None, user_skill: str | None) -> dict:
+    """An open tool call: its display name and the skill/subagent attributes
+    its input already determines (8_session-ingestion.md)."""
+    call = {"name": name, "label": name, "args": args, "ts": ts, "attrs": {}}
+    args = args if isinstance(args, dict) else {}
+    if name == "Skill" and isinstance(args.get("skill"), str):
+        skill = args["skill"].lstrip("/")
+        call["label"] = f"Skill: {skill}"
+        # The model re-invoking the skill the human's slash command already
+        # expanded in this turn is the same use; the turn span records it.
+        if skill != user_skill:
+            call["attrs"] = {"skill.name": skill, "skill.source": "agent"}
+    elif name in _SPAWN_TOOLS:
+        prompt = args.get("prompt") if isinstance(args.get("prompt"), str) else ""
+        description = (args.get("description") or prompt.strip().split("\n", 1)[0]).strip()
+        call["label"] = f"Agent: {description}"
+        call["attrs"] = {
+            "subagent.description": description or None,
+            "subagent.type": args.get("subagent_type"),
+            "subagent.model": args.get("model"),
+        }
+    return call
+
+
+def _tool_event(builder: SessionBuilder, call: dict, result: str | None, **kwargs: Any) -> Event:
+    attrs = {**tool_attrs(call["name"], call["args"], result), **call["attrs"]}
+    return builder.add("tool", call["label"], attrs, call["ts"], **kwargs)
 
 
 def _parse_stream(
@@ -170,6 +211,7 @@ def _parse_stream(
     origin_tagged = any(isinstance(r.get("origin"), dict) for r in records)
     last_user: str | None = None
     open_tools: dict[str, dict] = {}
+    user_skill: str | None = None  # skill the current turn's slash command invoked
     response: dict | None = None  # assistant API response being accumulated
 
     def flush_response() -> None:
@@ -202,25 +244,28 @@ def _parse_stream(
                 last_user = text
                 origin = _prompt_origin(record, text, origin_tagged)
                 if origin == "human":
-                    builder.user_message(text)
+                    user_skill = _command_skill(text)
+                    builder.user_message(text, skill=user_skill)
                 elif origin == "automated":
+                    user_skill = None
                     builder.user_message(_event_ask(text), origin)
             for block in content if isinstance(content, list) else []:
                 if isinstance(block, dict) and block.get("type") == "tool_result":
                     call = open_tools.pop(block.get("tool_use_id", ""), None)
                     if call is None:
                         continue
-                    event = builder.add(
-                        "tool",
-                        call["name"],
-                        tool_attrs(call["name"], call["args"], _block_text(block.get("content"))),
-                        call["ts"],
+                    event = _tool_event(
+                        builder,
+                        call,
+                        _block_text(block.get("content")),
                         end=ts,
                         error="tool error" if block.get("is_error") else None,
                     )
                     spawned = record.get("toolUseResult")
                     if isinstance(spawned, dict) and isinstance(spawned.get("agentId"), str):
                         event.agent_id = spawned["agentId"]
+                        if call["name"] in _SPAWN_TOOLS:
+                            event.attrs["subagent.background"] = spawned.get("isAsync") or None
         elif role == "assistant":
             builder.model = message.get("model") or builder.model
             message_id = message.get("id")
@@ -245,11 +290,7 @@ def _parse_stream(
                 if isinstance(block, dict) and block.get("type") == "tool_use":
                     name = block.get("name") or "tool"
                     if block.get("id"):
-                        open_tools[block["id"]] = {
-                            "name": name,
-                            "args": block.get("input"),
-                            "ts": ts,
-                        }
+                        open_tools[block["id"]] = _call(name, block.get("input"), ts, user_skill)
                     else:
                         # No id means no tool_result will ever pair back
                         # (the Cursor shape) — emit the call in place.
@@ -257,5 +298,5 @@ def _parse_stream(
     flush_response()
     # Id'd calls whose results never arrived (truncated logs) emit unpaired.
     for call in open_tools.values():
-        builder.add("tool", call["name"], tool_attrs(call["name"], call["args"], None), call["ts"])
+        _tool_event(builder, call, None)
     return builder

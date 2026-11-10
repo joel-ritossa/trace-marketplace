@@ -327,6 +327,103 @@ def test_codex_item_asks_and_agent_tasks():
     ]
 
 
+def test_codex_forked_rollout_keeps_its_own_session():
+    """A forked sub-agent rollout replays its parent's session_meta after its
+    own: the first one names the session and carries the parent link."""
+    child = {"id": "child", "cwd": "/c", "parent_thread_id": "parent", "agent_path": "/root/w"}
+    answer = {"type": "message", "role": "assistant", "content": [{"text": "hi"}]}
+    records = [
+        {"type": "session_meta", "payload": child},
+        {"type": "session_meta", "payload": {"id": "parent", "cwd": "/p"}},
+        {"type": "response_item", "payload": answer},
+    ]
+    payload = sessions.convert("codex_jsonl", records, session_id="f", anchor=ANCHOR)
+    (trace,) = otlp.import_payload(payload, redaction_salt=OFFLINE_SALT).traces
+    root = next(s for s in trace.spans if s.source_parent_span_id is None)
+    assert root.attributes["session.id"] == "child"
+    assert root.attributes["workspace.cwd"] == "/c"
+    assert root.attributes["session.parent_id"] == "parent"
+    assert root.attributes["session.agent_path"] == "/root/w"
+    assert "session.agent_nickname" not in root.attributes
+
+
+def convert_trace(records: list[dict]):
+    payload = sessions.convert("anthropic_jsonl", records, session_id="s", anchor=ANCHOR)
+    (trace,) = otlp.import_payload(payload, redaction_salt=OFFLINE_SALT).traces
+    return trace
+
+
+def call(tool_id: str, name: str, args: dict) -> dict:
+    block = {"type": "tool_use", "id": tool_id, "name": name, "input": args}
+    return {"type": "assistant", "message": {"content": [block]}}
+
+
+def result(tool_id: str, **extra) -> dict:
+    return user([{"type": "tool_result", "tool_use_id": tool_id, "content": "ok"}], **extra)
+
+
+SLASH = "<command-message>pdf</command-message>\n<command-name>/pdf</command-name>"
+
+
+def test_skill_tool_call_is_an_agent_skill_use():
+    trace = convert_trace(
+        [user("make a report", **HUMAN), call("t1", "Skill", {"skill": "x:pdf"}), result("t1")]
+    )
+    span = next(s for s in trace.spans if s.tool_name == "Skill")
+    assert span.name == "Skill: x:pdf"
+    assert (span.attributes["skill.name"], span.attributes["skill.source"]) == ("x:pdf", "agent")
+    assert trace.skill_names == ["x:pdf"]
+
+
+def test_slash_command_is_a_user_skill_use():
+    trace = convert_trace(
+        [user(SLASH, **HUMAN), reply("done"), user("now go", **HUMAN), reply("k")]
+    )
+    (turn,) = [s for s in trace.spans if s.attributes.get("skill.name")]
+    assert turn.attributes["turn.index"] == 0
+    assert turn.attributes["skill.source"] == "user"
+    assert trace.skill_names == ["pdf"]
+
+
+def test_skill_call_after_its_slash_command_is_one_use():
+    trace = convert_trace(
+        [user(SLASH, **HUMAN), call("t1", "Skill", {"skill": "pdf"}), result("t1")]
+    )
+    assert [s.attributes["skill.source"] for s in trace.spans if "skill.name" in s.attributes] == [
+        "user"
+    ]
+    assert any(s.name == "Skill: pdf" for s in trace.spans)
+
+
+def test_subagent_spawn_attributes():
+    """Linked spawns carry the subagent's id and own model; unlinked ones
+    only what their input says."""
+    sub = {"isSidechain": True, "agentId": "a1"}
+    trace = convert_trace(
+        [
+            user("investigate", **HUMAN),
+            call("t1", "Agent", {"description": "Dig in", "prompt": "p", "subagent_type": "x"}),
+            result("t1", toolUseResult={"agentId": "a1", "isAsync": True}),
+            call("t2", "Task", {"prompt": "\n  Check logs\nmore", "model": "m-req"}),
+            result("t2"),
+            user("p", **sub),
+            {"type": "assistant", "message": {"model": "m-sub", "content": "found"}, **sub},
+        ]
+    )
+    linked = next(s for s in trace.spans if s.name == "Agent: Dig in")
+    assert linked.tool_name == "Agent"
+    assert {k: v for k, v in linked.attributes.items() if k.startswith("subagent.")} == {
+        "subagent.id": "a1",
+        "subagent.description": "Dig in",
+        "subagent.type": "x",
+        "subagent.model": "m-sub",
+        "subagent.background": True,
+    }
+    unlinked = next(s for s in trace.spans if s.name == "Agent: Check logs")
+    assert "subagent.id" not in unlinked.attributes
+    assert unlinked.attributes["subagent.model"] == "m-req"
+
+
 def test_missing_end_stays_inside_its_turn():
     """A response's synthesized end runs to the next event of its own turn,
     never across an idle gap to the next ask."""

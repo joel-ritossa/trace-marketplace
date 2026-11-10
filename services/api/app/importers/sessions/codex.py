@@ -1,8 +1,9 @@
 """Codex rollout JSONL → session model (8_session-ingestion.md).
 
 Record shapes (one JSON object per line, verified against real rollouts):
-`session_meta` (cwd, session id), `turn_context` (model), `event_msg` (typed
-UI events) and `response_item` (the model-facing items). Parsing notes:
+`session_meta` (cwd, session id, a sub-agent's parent link), `turn_context`
+(model), `event_msg` (typed UI events) and `response_item` (the model-facing
+items). Parsing notes:
 
 - `event_msg`/`user_message` (or, in newer rollouts that emit no
   `user_message`, an `item_completed` event whose item is a `UserMessage`)
@@ -59,13 +60,23 @@ def parse(records: list[dict], session_id: str) -> SessionBuilder:
     builder.provider = "openai"
     last_user: str | None = None
     reasoning: list[str] = []
+    meta_seen = False
     open_tools: dict[str, dict] = {}
     for record in records:
         rtype, payload = record.get("type"), record.get("payload") or {}
         ts = to_nanos(record["timestamp"]) if record.get("timestamp") else None
         if rtype == "session_meta":
-            builder.cwd = payload.get("cwd")
-            builder.session_id = payload.get("id") or builder.session_id
+            # A forked sub-agent rollout replays its parent's session_meta
+            # after its own; only the first one is this session.
+            if not meta_seen:
+                meta_seen = True
+                builder.cwd = payload.get("cwd")
+                builder.session_id = payload.get("id") or builder.session_id
+                builder.root_attrs = {
+                    "session.parent_id": payload.get("parent_thread_id"),
+                    "session.agent_path": payload.get("agent_path"),
+                    "session.agent_nickname": payload.get("agent_nickname"),
+                }
         elif rtype == "turn_context":
             builder.model = payload.get("model") or builder.model
         elif rtype == "event_msg":

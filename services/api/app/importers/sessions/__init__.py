@@ -18,7 +18,7 @@ SOURCE_FORMAT_ANTHROPIC = "anthropic_jsonl"
 
 # Bump on any change to parsing/turn-splitting/OTLP emission; stored on every
 # session-converted trace row for provenance (2_data-model.md).
-IMPORTER_VERSION = "2.4.0"
+IMPORTER_VERSION = "2.5.0"
 
 _PARSERS = {
     SOURCE_FORMAT_CODEX: codex.parse,

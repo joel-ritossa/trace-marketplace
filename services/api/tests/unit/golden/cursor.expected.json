@@ -18,6 +18,7 @@
         "Shell",
         "StrReplace"
       ],
+      "skill_names": [],
       "error_types": [],
       "total_tokens": null,
       "spans": [

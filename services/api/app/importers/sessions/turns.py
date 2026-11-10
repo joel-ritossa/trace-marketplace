@@ -95,6 +95,7 @@ def flatten(events: list[Event]) -> list[Event]:
 class Turn:
     title: str | None
     origin: str | None = None  # human | automated; None for a promptless lead
+    skill: str | None = None  # skill a human slash command invoked
     events: list[Event] = field(default_factory=list)
     # Turn-level usage sums (Codex token_count events); rendered on the turn
     # span — formats with per-message usage (Claude) put it on llm events.
@@ -108,15 +109,17 @@ class SessionBuilder:
         self.agent = agent
         self.session_id = session_id
         self.cwd: str | None = None
+        self.root_attrs: dict[str, Any] = {}  # extra session-root attributes
         self.provider: str | None = None
         self.model: str | None = None
         self.turns: list[Turn] = []
         self._current: Turn | None = None
 
-    def user_message(self, text: str, origin: str = "human") -> None:
+    def user_message(self, text: str, origin: str = "human", skill: str | None = None) -> None:
         """A prompt asking the agent to act: `human`, or `automated` (an
-        outside event). Consecutive prompts with no activity between them
-        stay one turn, titled by the first."""
+        outside event); `skill` when it is a skill slash command. Consecutive
+        prompts with no activity between them stay one turn, titled by the
+        first."""
         title = clean_user_text(text)
         if not title:
             return
@@ -127,6 +130,7 @@ class SessionBuilder:
         elif self._current is None or self._current.events:
             self._flush()
             self._current = Turn(title=title, origin=origin)
+        self._current.skill = self._current.skill or skill
 
     def add(
         self,
@@ -232,6 +236,7 @@ class SessionBuilder:
                         "workspace.cwd": self.cwd,
                         "converted.synthesized_root": True,
                         "converted.synthesized_timestamps": synthesized or None,
+                        **self.root_attrs,
                     }
                 ),
                 "status": {"code": 1},
@@ -257,6 +262,8 @@ class SessionBuilder:
                             "turn.index": turn_index,
                             "turn.user_message": turn.title,
                             "turn.origin": turn.origin,
+                            "skill.name": turn.skill,
+                            "skill.source": "user" if turn.skill else None,
                             **_usage_attrs(turn.usage),
                         }
                     ),

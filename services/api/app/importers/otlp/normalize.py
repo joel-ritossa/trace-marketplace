@@ -56,6 +56,7 @@ class NormalizedTrace:
     model: str | None
     service_name: str | None
     tool_names: list[str]
+    skill_names: list[str]
     error_types: list[str]
     total_tokens: int | None
     spans: list[NormalizedSpan]
@@ -152,6 +153,9 @@ def _build_trace(
         model=_dominant([s.model for s in spans]),
         service_name=_dominant([mapping.service_name(s.resource_attributes) for s in decoded]),
         tool_names=sorted({s.tool_name for s in spans if s.tool_name}),
+        skill_names=sorted(
+            {n for s in spans if isinstance(n := s.raw_attributes.get("skill.name"), str) and n}
+        ),
         error_types=sorted({s.error_type for s in spans if s.error_type}),
         total_tokens=min(sum(span_tokens), MAX_INT32) if span_tokens else None,
         spans=spans,

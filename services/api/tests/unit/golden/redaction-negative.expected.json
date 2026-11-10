@@ -13,6 +13,7 @@
       "model": null,
       "service_name": "id-heavy-service",
       "tool_names": [],
+      "skill_names": [],
       "error_types": [],
       "total_tokens": null,
       "spans": [
