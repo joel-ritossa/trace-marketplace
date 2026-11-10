@@ -4,15 +4,21 @@ import Link from "next/link";
 import { useState } from "react";
 import { Download, Sparkles } from "lucide-react";
 import {
-  LabelChips,
+  AgentBadge,
   LibraryBadge,
   NeedsReviewLink,
-  TraceOutcome,
   VisibilityBadge,
 } from "@/components/traces/badges";
+import {
+  LabelSummary,
+  TraceOutcomeControl,
+  useLazySource,
+  type SkillFilter,
+} from "@/components/traces/label-popovers";
 import { SelectBox } from "@/components/traces/bulk-bar";
 import { Button } from "@/components/ui/button";
 import { downloadTrace, type TraceListItem } from "@/lib/api/traces";
+import { agentOf, cleanName, traceTitle } from "@/components/traces/names";
 import { formatDate, formatDuration } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -38,17 +44,58 @@ function detailHref(view: TraceListView, traceId: string): string {
   return from ? `/traces/${traceId}?from=${from}` : `/traces/${traceId}`;
 }
 
+/** The Analysis cell's controls: outcome (or status), then the label pills;
+ *  each opens the shared popovers, fetching the trace on first open. */
+function RowAnalysis({
+  trace,
+  placeholder,
+  skillFilter,
+}: {
+  trace: TraceListItem;
+  placeholder: boolean;
+  skillFilter?: SkillFilter;
+}) {
+  const source = useLazySource(trace.trace_id);
+  return (
+    <>
+      <TraceOutcomeControl
+        outcome={trace.outcome}
+        status={trace.analysis_status}
+        failed={trace.analysis_failed}
+        placeholder={placeholder}
+        source={source}
+      />
+      <LabelSummary
+        traceId={trace.trace_id}
+        taskCategories={trace.task_categories}
+        failureModes={trace.failure_modes}
+        skillNames={trace.skill_names}
+        skillFilter={skillFilter}
+      />
+    </>
+  );
+}
+
 function Th({ children, className }: { children?: React.ReactNode; className?: string }) {
   return <th className={cn("px-4 py-2.5 font-medium", className)}>{children}</th>;
 }
 
 function MonoTd({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <td className={cn("px-4 py-2.5 font-mono text-xs text-muted-foreground", className)}>
+    <td
+      className={cn(
+        "whitespace-nowrap px-4 py-2.5 font-mono text-xs text-muted-foreground",
+        className,
+      )}
+    >
       {children}
     </td>
   );
 }
+
+// Low-value columns drop as the table narrows, so name and analysis keep room.
+const WIDE_ONLY = "hidden xl:table-cell";
+const WIDEST_ONLY = "hidden 2xl:table-cell";
 
 /** The unified trace list (4_pages.md): one dense row spec for every list
  *  surface — my traces, marketplace, library, subscription feeds — with
@@ -58,11 +105,14 @@ export function TraceList({
   view,
   selection,
   newIds,
+  skillFilter,
 }: {
   traces: TraceListItem[];
   view: TraceListView;
   selection?: Selection;
   newIds?: ReadonlySet<string>;
+  // Lets a row's skills popover add to the list's filters.
+  skillFilter?: SkillFilter;
 }) {
   const [downloadError, setDownloadError] = useState<string | null>(null);
 
@@ -98,12 +148,12 @@ export function TraceList({
                 />
               </Th>
             )}
-            <Th>Name</Th>
-            <Th>Analysis</Th>
-            <Th>Spans</Th>
-            <Th>Errors</Th>
+            <Th className="min-w-48 xl:min-w-64">Name</Th>
+            <Th className="min-w-48">Analysis</Th>
+            <Th className={WIDEST_ONLY}>Spans</Th>
+            <Th className={WIDE_ONLY}>Errors</Th>
             <Th>Duration</Th>
-            <Th>Model</Th>
+            <Th className={WIDEST_ONLY}>Model</Th>
             {view === "mine" ? (
               <>
                 <Th>Visibility</Th>
@@ -133,7 +183,7 @@ export function TraceList({
                   />
                 </td>
               )}
-              <td className="max-w-72 px-4 py-2.5">
+              <td className="max-w-80 px-4 py-2.5">
                 <span className="flex items-center gap-2">
                   <span
                     className={cn(
@@ -144,50 +194,45 @@ export function TraceList({
                   />
                   <Link
                     href={detailHref(view, trace.trace_id)}
+                    title={`First ask: ${cleanName(trace.name)}`}
                     className="truncate font-medium hover:underline"
                   >
-                    {trace.name}
+                    {traceTitle(trace.name, trace.goal)}
                   </Link>
-                  {view !== "mine" && trace.is_owner && (
-                    <VisibilityBadge visibility={trace.visibility} />
+                  {view === "mine" && agentOf(trace.name) && (
+                    <AgentBadge agent={agentOf(trace.name)!} />
                   )}
-                  {view !== "library" && view !== "mine" && trace.acquired && <LibraryBadge />}
                   {newIds?.has(trace.trace_id) && (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-secondary px-2 py-0.5 text-xs font-medium text-link-deep">
+                    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-secondary px-2 py-0.5 text-xs font-medium text-link-deep">
                       <Sparkles className="size-3" /> new
                     </span>
                   )}
                 </span>
-                {view !== "mine" && trace.description && (
-                  <p className="mt-0.5 truncate pl-4 text-xs text-muted-foreground">
-                    {trace.description}
+                {/* Marketplace-style rows: the title keeps the first line; badges
+                    and the description share the second. */}
+                {view !== "mine" && (
+                  <p className="mt-0.5 flex min-w-0 items-center gap-1.5 pl-4 text-xs text-muted-foreground">
+                    {agentOf(trace.name) && <AgentBadge agent={agentOf(trace.name)!} />}
+                    {trace.is_owner && <VisibilityBadge visibility={trace.visibility} />}
+                    {view !== "library" && trace.acquired && <LibraryBadge />}
+                    {trace.description && <span className="truncate">{trace.description}</span>}
                   </p>
                 )}
               </td>
-              <td className="max-w-72 px-4 py-2.5">
-                <span className="inline-flex items-center gap-2">
-                  <TraceOutcome
-                    outcome={trace.outcome}
-                    status={trace.analysis_status}
-                    failed={trace.analysis_failed}
-                    placeholder={view !== "mine"}
-                  />
+              <td className="px-4 py-2.5">
+                <span className="flex max-w-60 min-w-0 items-center gap-1.5 overflow-hidden xl:max-w-80">
+                  <RowAnalysis trace={trace} placeholder={view !== "mine"} skillFilter={skillFilter} />
                   {view === "mine" && trace.has_open_review_item && (
                     <NeedsReviewLink traceId={trace.trace_id} />
                   )}
                 </span>
-                <LabelChips
-                  taskCategories={trace.task_categories}
-                  failureModes={trace.failure_modes}
-                  className="mt-1"
-                />
               </td>
-              <MonoTd>{trace.span_count}</MonoTd>
-              <MonoTd className={cn(trace.error_count > 0 && "text-error-deep")}>
+              <MonoTd className={WIDEST_ONLY}>{trace.span_count}</MonoTd>
+              <MonoTd className={cn(WIDE_ONLY, trace.error_count > 0 && "text-error-deep")}>
                 {trace.error_count}
               </MonoTd>
               <MonoTd>{formatDuration(trace.duration_ms)}</MonoTd>
-              <MonoTd className="max-w-48 truncate">{trace.model ?? "—"}</MonoTd>
+              <MonoTd className={cn(WIDEST_ONLY, "max-w-48 truncate")}>{trace.model ?? "—"}</MonoTd>
               {view === "mine" ? (
                 <>
                   <td className="px-4 py-2.5">

@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronDown } from "lucide-react";
-import { humanize } from "@/components/review/taxonomy";
+import { describe, humanize } from "@/components/review/taxonomy";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -23,6 +23,9 @@ export function MultiSelect({
   placeholder,
   className,
   "aria-label": ariaLabel,
+  format = humanize,
+  hint = describe,
+  empty,
 }: {
   groups: MultiSelectGroup[];
   value: string[];
@@ -30,6 +33,11 @@ export function MultiSelect({
   placeholder: string;
   className?: string;
   "aria-label"?: string;
+  // Item text (taxonomy display names by default) and hover hint.
+  format?: (value: string) => string;
+  hint?: (value: string) => string | undefined;
+  // Shown in the menu when there is nothing to pick.
+  empty?: string;
 }) {
   const known = new Set(groups.flatMap((g) => g.values));
   // Active values the menu can't author (a stored subscription, a hand-edited
@@ -54,12 +62,15 @@ export function MultiSelect({
           )}
         >
           <span className="truncate">
-            {value.length === 0 ? placeholder : value.map(humanize).join(", ")}
+            {value.length === 0 ? placeholder : value.map(format).join(", ")}
           </span>
           <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="max-h-80 min-w-56">
+        {empty && all.every((g) => g.values.length === 0) && (
+          <p className="px-2 py-1.5 text-xs text-muted-foreground">{empty}</p>
+        )}
         {all.map((group, i) => (
           <div key={group.label ?? i}>
             {group.label && (
@@ -74,8 +85,9 @@ export function MultiSelect({
                 onCheckedChange={(checked) => toggle(item, checked === true)}
                 onSelect={(e) => e.preventDefault()}
                 className="text-xs"
+                title={hint(item)}
               >
-                {humanize(item)}
+                {format(item)}
               </DropdownMenuCheckboxItem>
             ))}
           </div>

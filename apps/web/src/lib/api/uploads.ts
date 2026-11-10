@@ -20,6 +20,8 @@ export type Upload = {
   parse_warnings: Record<string, unknown> | null;
   redaction_counts: Record<string, number> | null;
   trace_ids: string[];
+  // The same traces named for display; optional until deployed.
+  traces?: { trace_id: string; name: string; goal: string | null }[];
   created_at: string;
   processed_at: string | null;
 };
@@ -33,6 +35,8 @@ export type UploadListItem = {
   error_message: string | null;
   redaction_counts: Record<string, number> | null;
   trace_ids: string[];
+  // The same traces named for display; optional until deployed.
+  traces?: { trace_id: string; name: string; goal: string | null }[];
   created_at: string;
   processed_at: string | null;
 };

@@ -118,6 +118,7 @@ export function NewSubscription() {
             className="h-8 text-xs"
           />
           <FilterFields
+            scope="marketplace"
             filters={filters}
             set={set}
             text={text}

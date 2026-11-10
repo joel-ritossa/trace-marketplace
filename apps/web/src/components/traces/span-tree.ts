@@ -6,6 +6,7 @@ import type {
   TraceSpanCategory,
   TraceSpanStatus,
 } from "@evilmartians/agent-prism-types";
+import { cleanSpanName } from "@/components/traces/names";
 import type { SpanDetail, SpanKind, SpanListItem, SpanStatus } from "@/lib/api/traces";
 
 const KIND_TO_CATEGORY: Record<SpanKind, TraceSpanCategory> = {
@@ -27,7 +28,7 @@ const STATUS_TO_PRISM: Record<SpanStatus, TraceSpanStatus> = {
 function toTraceSpan(span: SpanListItem): TraceSpan {
   return {
     id: span.span_id,
-    title: span.name,
+    title: cleanSpanName(span.name),
     startTime: new Date(span.started_at),
     endTime: new Date(span.ended_at),
     duration: span.duration_ms,
@@ -101,8 +102,14 @@ const OUTPUT_KEYS = ["gen_ai.output.messages", "output.value", "traceloop.entity
  *  full attributes, raw JSON, and In/Out content where the span carries it. */
 export function withDetail(node: TraceSpan, detail: SpanDetail): TraceSpan {
   const tool = node.type === "tool_execution";
+  // Skill tool spans read "Skill: <name>" (the importer names them so; older
+  // rows are plain "Skill").
+  const skill = detail.attributes["skill.name"];
+  const title =
+    node.title === "Skill" && typeof skill === "string" && skill ? `Skill: ${skill}` : node.title;
   return {
     ...node,
+    title,
     raw: JSON.stringify({ attributes: detail.attributes, events: detail.events }, null, 2),
     attributes: Object.entries(detail.attributes).map(([key, value]) => ({
       key,
@@ -122,4 +129,20 @@ export function ancestorIds(roots: TraceSpan[], id: string): string[] | null {
     if (below !== null) return [root.id, ...below];
   }
   return null;
+}
+
+/** A subagent spawn's brief: the prompt in its tool-call arguments (or the
+ *  raw input when that isn't JSON). Null when not recorded. */
+export function spawnBrief(attributes: Record<string, unknown>): string | null {
+  const raw = findString(attributes, TOOL_INPUT_KEYS);
+  if (!raw) return null;
+  try {
+    const args = JSON.parse(raw);
+    for (const key of ["prompt", "description"]) {
+      if (typeof args?.[key] === "string" && args[key]) return args[key];
+    }
+  } catch {
+    // Not JSON: the input is the brief.
+  }
+  return raw;
 }

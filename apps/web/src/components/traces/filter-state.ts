@@ -2,6 +2,7 @@
 // chip model over TraceFilters, shared by search pages, subscription rows,
 // and feed headers.
 
+import { formatDuration } from "@/lib/format";
 import type { TraceFilters, TraceSort } from "@/lib/api/traces";
 import { filterParams } from "@/lib/api/traces";
 import { OUTCOMES, humanize } from "@/components/review/taxonomy";
@@ -16,6 +17,7 @@ const STRING_KEYS = [
   "outcome",
   "failure_mode",
   "task_category",
+  "skill",
   "loop_kind",
 ] as const;
 
@@ -83,7 +85,7 @@ export function filtersToParams(filters: TraceFilters, sort: TraceSort): URLSear
 export type FilterChip = { key: keyof TraceFilters; label: string };
 
 const GTE_LABELS: Record<(typeof NUMBER_KEYS)[number], string> = {
-  duration_ms_gte: "duration ms",
+  duration_ms_gte: "duration",
   total_tokens_gte: "total tokens",
   llm_call_count_gte: "LLM calls",
   tool_call_count_gte: "tool calls",
@@ -98,6 +100,8 @@ export function filterChips(filters: TraceFilters): FilterChip[] {
     if (key === "q") chips.push({ key, label: `“${value}”` });
     else if (key === "from") chips.push({ key, label: `from ${value.slice(0, 10)}` });
     else if (key === "to") chips.push({ key, label: `to ${value.slice(0, 10)}` });
+    // Skill names are verbatim identifiers, not taxonomy values.
+    else if (key === "skill") chips.push({ key, label: `skill: ${csvValues(value).join(", ")}` });
     else chips.push({ key, label: `${humanize(key)} = ${csvValues(value).map(humanize).join(", ")}` });
   }
   for (const key of BOOL_KEYS) {
@@ -108,7 +112,8 @@ export function filterChips(filters: TraceFilters): FilterChip[] {
   for (const key of NUMBER_KEYS) {
     const value = filters[key];
     if (value === undefined) continue;
-    chips.push({ key, label: `${GTE_LABELS[key]} ≥ ${value}` });
+    const shown = key === "duration_ms_gte" ? formatDuration(value) : value;
+    chips.push({ key, label: `${GTE_LABELS[key]} ≥ ${shown}` });
   }
   return chips;
 }
@@ -125,4 +130,16 @@ export function csvValues(value: string | undefined): string[] {
 
 export function toCsv(values: string[]): string | undefined {
   return values.length > 0 ? values.join(",") : undefined;
+}
+
+/** A list page's skill filter for its rows: active skills and an adder. */
+export function skillFilterFor(
+  filters: TraceFilters,
+  setFilters: (filters: TraceFilters) => void,
+): { active: string[]; add: (name: string) => void } {
+  const active = csvValues(filters.skill);
+  return {
+    active,
+    add: (name) => setFilters({ ...filters, skill: toCsv([...new Set([...active, name])]) }),
+  };
 }

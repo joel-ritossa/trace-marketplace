@@ -60,6 +60,9 @@ export interface DetailsViewProps {
    * Callback fired when the active tab changes
    */
   onTabChange?: (tabValue: DetailsViewTab) => void;
+
+  /** The duration was synthesized (session imports), not recorded. */
+  durationUnknown?: boolean;
 }
 
 const TAB_ITEMS: TabItem<DetailsViewTab>[] = [
@@ -75,7 +78,7 @@ const TAB_ITEMS: TabItem<DetailsViewTab>[] = [
   },
   {
     value: "raw",
-    label: "RAW",
+    label: "Raw",
     icon: <SquareTerminal className="size-4" />,
   },
 ];
@@ -89,6 +92,7 @@ export const DetailsView = ({
   headerActions,
   customHeader,
   onTabChange,
+  durationUnknown,
 }: DetailsViewProps): ReactElement => {
   const [tab, setTab] = useState<DetailsViewTab>(defaultTab);
 
@@ -112,6 +116,7 @@ export const DetailsView = ({
       avatar={avatar}
       copyButton={copyButton}
       actions={resolvedHeaderActions}
+      durationUnknown={durationUnknown}
     />
   );
 

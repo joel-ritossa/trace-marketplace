@@ -12,6 +12,8 @@ export type ReviewTurn = { turn_index: number; reason: string; summary: string |
 export type ReviewTraceSummary = {
   trace_id: string;
   name: string;
+  // Not sent yet; read when the API adds it.
+  goal?: string | null;
   status: TraceStatus;
   started_at: string;
   duration_ms: number;

@@ -31,7 +31,7 @@ export function PrivacySection({
   return (
     <section>
       <h2 className="text-base font-semibold">Privacy</h2>
-      <div className="mt-4 flex max-w-xl items-start justify-between gap-6 rounded-lg border bg-background p-4">
+      <div className="mt-4 flex items-start justify-between gap-6 rounded-lg border bg-background p-4">
         <div>
           <Label htmlFor="llm-analysis">Allow LLM analysis of private traces</Label>
           <p className="mt-1 text-sm text-muted-foreground">

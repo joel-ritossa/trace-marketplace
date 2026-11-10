@@ -17,6 +17,9 @@ export type AnalysisStatus = "pending" | "in_progress" | "final" | "skipped";
 export type SkipReason = "not_configured" | "owner_opt_out";
 
 type AnalysisFields = {
+  // The roll-up's one-line "what the user was doing" — optional until every
+  // deployed API sends it.
+  goal?: string | null;
   // Session roll-up labels (9_session-analysis.md).
   outcome: Outcome | null;
   task_categories: string[];
@@ -48,6 +51,9 @@ export type TraceListItem = {
   is_owner: boolean;
   acquired: boolean;
   acquired_at: string | null;
+  // Skills the session used (agent Skill calls + user slash commands).
+  // Optional until every deployed API sends it.
+  skill_names?: string[];
 } & AnalysisFields;
 
 export type TraceList = {
@@ -87,6 +93,54 @@ export type TraceDetail = {
   can_download: boolean;
   total_tokens: number | null;
   analysis: TraceAnalysis;
+  // Optional until every deployed API sends them: one entry per use,
+  // chronological.
+  skill_names?: string[];
+  skills?: SkillUse[];
+  // Optional until every deployed API sends it; zeros when none.
+  subagents?: SubagentSummary;
+};
+
+export type SubagentSummary = { count: number; turns: number; max_depth: number };
+
+/** One subagent spawn (GET /v1/traces/{id}/agents), chronological. Ids are
+ *  source span ids; totals cover everything under the spawn, own_span_count
+ *  only its own stream. */
+export type AgentSpawn = {
+  span_id: string;
+  parent_span_id: string | null;
+  turn_index: number | null;
+  depth: number;
+  description: string | null;
+  type: string | null;
+  model: string | null;
+  background: boolean | null;
+  linked: boolean;
+  status: "ok" | "error";
+  started_at: string;
+  ended_at: string;
+  span_count: number;
+  own_span_count: number;
+  llm_calls: number;
+  tool_calls: number;
+  error_count: number;
+  input_tokens: number;
+  output_tokens: number;
+};
+
+export async function listAgents(traceId: string): Promise<AgentSpawn[]> {
+  return (await apiFetch<{ agents: AgentSpawn[] }>(`/v1/traces/${traceId}/agents`)).agents;
+}
+
+/** One skill use: the agent's Skill tool call or the user's slash command.
+ *  span_id is the source span id (the Skill span, or the turn span for a
+ *  user-invoked skill). */
+export type SkillUse = {
+  name: string;
+  // Null when the trace doesn't say who invoked it / which turn it was in.
+  source: "agent" | "user" | null;
+  turn_index: number | null;
+  span_id: string;
 };
 
 export type AnalysisSignals = {
@@ -116,6 +170,8 @@ export type TurnAnalysis = {
   provenance: Provenance;
   signals: AnalysisSignals;
   labels: TurnLabel[];
+  // `turn.origin` on the turn span (absent = human); optional until deployed.
+  origin?: "human" | "automated";
 };
 
 export type SessionAnalysis = {
@@ -162,6 +218,8 @@ export type TraceFilters = {
   outcome?: string;
   failure_mode?: string;
   task_category?: string;
+  // Session fact, not a judge label: any of these skills (CSV, OR).
+  skill?: string;
   loop_kind?: string;
   has_retry_loop?: boolean;
   recovered_from_error?: boolean;
@@ -290,6 +348,21 @@ export async function bulkDownload(traceIds: string[]): Promise<void> {
     method: "POST",
     body: JSON.stringify({ trace_ids: traceIds }),
   });
+}
+
+export type SkillValue = { name: string; trace_count: number };
+
+/** Distinct skill names with trace counts for the filter dropdown. The path
+ *  follows the backend contract under construction; adjust here only. A
+ *  missing endpoint reads as "no skills" so the filter degrades quietly. */
+export async function listSkillValues(scope: TraceScope): Promise<SkillValue[]> {
+  try {
+    const res = await apiFetch<{ skills: SkillValue[] }>(`/v1/traces/skills?scope=${scope}`);
+    return [...res.skills].sort((a, b) => b.trace_count - a.trace_count);
+  } catch (err) {
+    if (err instanceof ApiError && (err.status === 404 || err.status === 422)) return [];
+    throw err;
+  }
 }
 
 export async function getTrace(traceId: string): Promise<TraceDetail> {

@@ -17,13 +17,21 @@ export const OUTCOMES: { value: Outcome; description: string }[] = [
 export const FAILURE_MODES: { value: string; description: string }[] = [
   { value: "plan_adherence_failure", description: "Skips steps or adds unnecessary actions (incl. loops/repetition)" },
   { value: "invention_of_information", description: "Fabricates or omits ungrounded facts" },
-  { value: "invalid_invocation", description: "Malformed tool call (wrong args/types/schema)" },
+  {
+    value: "invalid_invocation",
+    description:
+      "A malformed command or tool call (wrong flags or arguments, schema errors) that the agent did not correct",
+  },
   { value: "tool_output_misinterpretation", description: "Incorrect reasoning about tool results" },
   { value: "intent_plan_misalignment", description: "Pursues wrong objective" },
   { value: "underspecified_intent", description: "Missing information to proceed" },
-  { value: "intent_not_supported", description: "Action can’t be performed with available tools" },
-  { value: "guardrails_triggered", description: "Blocked by safety/access policies" },
-  { value: "system_failure", description: "Infra errors (timeouts, unreachable endpoints)" },
+  { value: "intent_not_supported", description: "The environment or tools cannot do what was asked" },
+  {
+    value: "guardrails_triggered",
+    description:
+      "A safety or permission policy blocked the agent’s action (not an external check failing)",
+  },
+  { value: "system_failure", description: "Infrastructure errors that affected the result" },
 ];
 
 // Display groups mirror models.py TASK_CATEGORY_GROUPS (1_analysis.md
@@ -114,6 +122,91 @@ export const TASK_CATEGORY_PICKER_GROUPS: { label: string; values: string[] }[] 
   { label: "Other", values: ["other"] },
 ];
 
+// One-liners per task category (models.py TASK_CATEGORY_GROUPS), shown as
+// chip tooltips and in the relabel form.
+export const TASK_CATEGORY_DESCRIPTIONS: Record<string, string> = {
+  coding: "Writing or modifying application code as the deliverable",
+  debugging: "Diagnosing and fixing defects or unexpected behavior",
+  code_review: "Reviewing code changes for correctness and quality",
+  testing_qa: "Writing or running tests; quality assurance",
+  devops_infra: "Cloud resources, hosts, secrets, networking, infrastructure-as-code",
+  ci_cd: "Pull requests, merges, CI checks, build and release pipelines",
+  database_admin: "Schema, migration, and query administration",
+  security_engineering: "Vulnerability analysis, hardening, secrets handling",
+  ml_engineering: "Training, evaluating, or deploying ML models",
+  data_analysis: "Querying, transforming, computing over, or interpreting structured data",
+  data_engineering: "Data pipelines, ETL, ingestion",
+  data_visualization: "Charts or dashboards as the deliverable",
+  reporting_bi: "Recurring business reporting and BI",
+  financial_analysis: "Financial modeling, accounting, or cloud/LLM spend analysis",
+  web_research: "Finding, gathering, or synthesizing information from the open web",
+  web_automation: "Driving a browser UI to act on web apps (not gh/CLI actions)",
+  web_scraping: "Programmatic extraction of data from websites",
+  market_research: "Researching markets, products, or pricing",
+  competitive_analysis: "Monitoring or analyzing competitors",
+  academic_research: "Literature search, papers, citation work",
+  retrieval_qa: "Answering questions from a known corpus or knowledge base",
+  summarization: "Condensing documents, threads, or transcripts",
+  translation: "Translating between natural languages",
+  content_generation: "Producing prose or creative artifacts as the deliverable",
+  technical_writing: "Documentation, specs, guides",
+  copywriting: "Marketing or promotional copy",
+  editing_proofreading: "Revising or correcting existing text",
+  social_media: "Posts, threads, community content",
+  customer_ops:
+    "Customer-facing operations: account actions, order handling, acting on a user’s behalf",
+  customer_support: "Support requests, triage, troubleshooting for customers",
+  sales_outreach: "Prospecting, outreach, follow-ups",
+  crm_ops: "CRM record upkeep and workflows",
+  hr_recruiting: "Sourcing, screening, HR workflows",
+  legal_review: "Contract or policy review",
+  compliance: "Regulatory checks and audits",
+  procurement: "Vendor and purchasing workflows",
+  invoicing_billing: "Billing, invoices, payments administration",
+  scheduling_planning: "Calendars, bookings, itineraries, coordination",
+  email_management: "Inbox triage and drafting",
+  travel_planning: "Trip itineraries and travel bookings",
+  task_management: "Todo and project tracker upkeep",
+  personal_assistant: "General life admin and errands",
+  monitoring_alerting: "Watching systems or metrics; handling alerts",
+  incident_response: "Diagnosing and mitigating live incidents",
+  file_management: "Organizing files, drives, archives",
+  document_processing: "Extracting or structuring data from documents (OCR, forms)",
+  education_tutoring: "Teaching, explaining, grading",
+  design_assets: "Generating or editing images and design assets",
+  game_playing: "Games, puzzles, or simulated environments",
+  other: "None of the above fits",
+};
+
+const FAILURE_MODE_DESCRIPTIONS: Record<string, string> = Object.fromEntries(
+  FAILURE_MODES.map((m) => [m.value, m.description]),
+);
+
+/** The one-liner for a label value, for tooltips. */
+export function describe(value: string): string | undefined {
+  return TASK_CATEGORY_DESCRIPTIONS[value] ?? FAILURE_MODE_DESCRIPTIONS[value];
+}
+
+// Display names that sentence-casing the value would get wrong.
+const LABELS: Record<string, string> = {
+  ci_cd: "CI/CD",
+  testing_qa: "Testing & QA",
+  ml_engineering: "ML engineering",
+  crm_ops: "CRM ops",
+  reporting_bi: "Reporting & BI",
+  devops_infra: "DevOps & infra",
+  retrieval_qa: "Retrieval QA",
+  hr_recruiting: "HR & recruiting",
+  editing_proofreading: "Editing & proofreading",
+  scheduling_planning: "Scheduling & planning",
+  monitoring_alerting: "Monitoring & alerting",
+  invoicing_billing: "Invoicing & billing",
+  education_tutoring: "Education & tutoring",
+};
+
+/** The one display name for every taxonomy value (outcomes, categories,
+ *  failure modes) — chips, filters, settings, relabel. Sentence case. */
 export function humanize(value: string): string {
-  return value.replaceAll("_", " ");
+  const label = LABELS[value] ?? value.replaceAll("_", " ");
+  return label.charAt(0).toUpperCase() + label.slice(1);
 }

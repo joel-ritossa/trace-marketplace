@@ -1,7 +1,7 @@
 import type { TraceSpan } from "@evilmartians/agent-prism-types";
 import type { ReactNode } from "react";
 
-import { getDurationMs, formatDuration } from "@evilmartians/agent-prism-data";
+import { getDurationMs } from "@evilmartians/agent-prism-data";
 import { Check, Copy } from "lucide-react";
 import { useState } from "react";
 
@@ -13,7 +13,7 @@ import { PriceBadge } from "../PriceBadge";
 import { SpanBadge } from "../SpanBadge";
 import { SpanStatus } from "../SpanStatus";
 import { TimestampBadge } from "../TimestampBadge";
-import { TokensBadge } from "../TokensBadge";
+import { formatCompact, formatDuration } from "@/lib/format";
 
 export interface DetailsViewHeaderProps {
   data: TraceSpan;
@@ -30,6 +30,8 @@ export interface DetailsViewHeaderProps {
    * Optional className for the header container
    */
   className?: string;
+  /** The duration was synthesized (session imports), not recorded. */
+  durationUnknown?: boolean;
 }
 
 export const DetailsViewHeader = ({
@@ -38,6 +40,7 @@ export const DetailsViewHeader = ({
   copyButton,
   actions,
   className,
+  durationUnknown = false,
 }: DetailsViewHeaderProps) => {
   const [hasCopied, setHasCopied] = useState(false);
   const durationMs = getDurationMs(data);
@@ -54,7 +57,7 @@ export const DetailsViewHeader = ({
     <div className={className || "flex flex-wrap items-center gap-2"}>
       {avatar && <Avatar size="4" {...avatar} />}
 
-      <span className="text-agentprism-foreground tracking-wide">
+      <span className="text-agentprism-foreground min-w-0 break-words tracking-wide">
         {data.title}
       </span>
 
@@ -81,14 +84,28 @@ export const DetailsViewHeader = ({
       <SpanBadge category={data.type} />
 
       {typeof data.tokensCount === "number" && (
-        <TokensBadge tokensCount={data.tokensCount} />
+        <span
+          className="text-agentprism-muted-foreground font-mono text-xs"
+          title={`${data.tokensCount.toLocaleString()} tokens`}
+        >
+          {formatCompact(data.tokensCount)} tokens
+        </span>
       )}
 
       {typeof data.cost === "number" && <PriceBadge cost={data.cost} />}
 
-      <span className="text-agentprism-muted-foreground text-xs">
-        LATENCY: {formatDuration(durationMs)}
-      </span>
+      {durationUnknown ? (
+        <span
+          className="text-agentprism-muted-foreground text-xs"
+          title="Durations are not recorded for session imports"
+        >
+          Duration —
+        </span>
+      ) : (
+        <span className="text-agentprism-muted-foreground font-mono text-xs">
+          {formatDuration(durationMs)}
+        </span>
+      )}
 
       {typeof data.startTime === "number" && (
         <TimestampBadge timestamp={data.startTime} />

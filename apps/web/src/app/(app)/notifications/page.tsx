@@ -11,6 +11,7 @@ import {
   type Notification,
   type NotificationList,
 } from "@/lib/api/notifications";
+import { cleanName } from "@/components/traces/names";
 import { formatDate } from "@/lib/format";
 import { useRealtimeRefetch } from "@/lib/realtime";
 import { cn } from "@/lib/utils";
@@ -25,6 +26,14 @@ function view(n: Notification): { text: string; href: string | null } {
     // item_count counts routed events since the digest went unread, not live
     // open items (a re-run can supersede-and-recount) — phrase it as such.
     const count = Number(p.item_count ?? 0);
+    // trace_name survives while the digest covers one trace: name it.
+    if (typeof p.trace_name === "string") {
+      const turns = Number(p.uncertain_turns ?? 0);
+      return {
+        text: `${turns > 0 ? `${turns} uncertain turn${turns === 1 ? "" : "s"}` : "Review requested"} in “${cleanName(p.trace_name)}”`,
+        href: `/review?upload_id=${p.upload_id}`,
+      };
+    }
     return {
       text: `${count} review request${count === 1 ? "" : "s"} from upload ${p.filename ?? "?"}`,
       href: `/review?upload_id=${p.upload_id}`,
@@ -47,7 +56,24 @@ function view(n: Notification): { text: string; href: string | null } {
   return { text: n.type, href: null };
 }
 
-function Row({ notification }: { notification: Notification }) {
+/** Re-syncs of one session raise one digest per upload; consecutive rows
+ *  about the same trace (or file) fold into the newest. */
+function groupKey(n: Notification): string {
+  const p = n.payload;
+  return `${n.type}:${p.trace_id ?? p.filename ?? n.notification_id}`;
+}
+
+function groupAdjacent(items: Notification[]): Notification[][] {
+  const groups: Notification[][] = [];
+  for (const n of items) {
+    const last = groups[groups.length - 1];
+    if (last && groupKey(last[0]) === groupKey(n)) last.push(n);
+    else groups.push([n]);
+  }
+  return groups;
+}
+
+function Row({ notification, earlier }: { notification: Notification; earlier: number }) {
   const { text, href } = view(notification);
   const unread = notification.read_at === null;
   const body = (
@@ -63,6 +89,14 @@ function Row({ notification }: { notification: Notification }) {
         <p className={cn("truncate text-sm", unread ? "font-medium" : "text-muted-foreground")}>
           {text}
         </p>
+        {earlier > 0 && (
+          <span
+            className="shrink-0 text-xs text-muted-foreground"
+            title="Earlier notifications about the same trace (re-syncs)"
+          >
+            +{earlier} earlier
+          </span>
+        )}
       </div>
       <time className="shrink-0 text-xs text-muted-foreground">
         {formatDate(notification.created_at)}
@@ -137,8 +171,8 @@ export default function NotificationsPage() {
         ) : (
           <>
             <div className="divide-y rounded-lg border bg-background">
-              {result.notifications.map((n) => (
-                <Row key={n.notification_id} notification={n} />
+              {groupAdjacent(result.notifications).map(([newest, ...rest]) => (
+                <Row key={newest.notification_id} notification={newest} earlier={rest.length} />
               ))}
             </div>
             <div className="mt-4">

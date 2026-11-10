@@ -11,6 +11,7 @@ import {
   toCsv,
 } from "@/components/traces/filter-state";
 import { MultiSelect, type MultiSelectGroup } from "@/components/traces/multi-select";
+import { Switch } from "@/components/ui/switch";
 import {
   FAILURE_MODES,
   TASK_CATEGORY_PICKER_GROUPS,
@@ -18,7 +19,20 @@ import {
 } from "@/components/review/taxonomy";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import type { TraceFilters, TraceSort } from "@/lib/api/traces";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  listSkillValues,
+  type SkillValue,
+  type TraceFilters,
+  type TraceScope,
+  type TraceSort,
+} from "@/lib/api/traces";
 import { cn } from "@/lib/utils";
 
 const SORT_OPTIONS: { value: TraceSort; label: string }[] = [
@@ -52,6 +66,50 @@ function GroupLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
+// Radix Select has no empty value: "Any" travels as a sentinel.
+const ANY = "__any";
+
+/** The one single-select: the shadcn Select at the panel's input height. */
+function PanelSelect({
+  value,
+  onChange,
+  options,
+  "aria-label": ariaLabel,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  options: { value: string; label: string }[];
+  "aria-label"?: string;
+}) {
+  // An active value the select can't author (a stored subscription, a
+  // hand-edited URL) still renders honestly.
+  const all =
+    value !== "" && !options.some((o) => o.value === value)
+      ? [...options, { value, label: humanize(value) }]
+      : options;
+  return (
+    <Select value={value === "" ? ANY : value} onValueChange={(v) => onChange(v === ANY ? "" : v)}>
+      <SelectTrigger
+        size="sm"
+        aria-label={ariaLabel}
+        className={cn("h-8 w-full text-xs", value === "" && "text-muted-foreground")}
+      >
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={ANY} className="text-xs">
+          Any
+        </SelectItem>
+        {all.map((o) => (
+          <SelectItem key={o.value} value={o.value} className="text-xs">
+            {o.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
 function SelectField({
   label,
   value,
@@ -65,28 +123,16 @@ function SelectField({
 }) {
   return (
     <Field label={label}>
-      <select
+      <PanelSelect
         value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className={cn(inputClass, value === "" && "text-muted-foreground")}
-      >
-        <option value="">Any</option>
-        {options.map((option) => (
-          <option key={option} value={option}>
-            {humanize(option)}
-          </option>
-        ))}
-        {value !== "" && !options.includes(value) && (
-          // An active value the select can't author (a CSV from a stored
-          // subscription or hand-edited URL) still renders honestly.
-          <option value={value}>{humanize(value)}</option>
-        )}
-      </select>
+        onChange={onChange}
+        options={options.map((o) => ({ value: o, label: humanize(o) }))}
+      />
     </Field>
   );
 }
 
-/** Tri-state signal filter: unset / true / false (false is a real filter). */
+/** Tri-state signal filter: unset / yes / no (no is a real filter). */
 function BoolField({
   label,
   value,
@@ -98,15 +144,51 @@ function BoolField({
 }) {
   return (
     <Field label={label}>
-      <select
+      <PanelSelect
         value={value === undefined ? "" : String(value)}
-        onChange={(e) => onChange(e.target.value === "" ? undefined : e.target.value === "true")}
-        className={cn(inputClass, value === undefined && "text-muted-foreground")}
-      >
-        <option value="">Any</option>
-        <option value="true">true</option>
-        <option value="false">false</option>
-      </select>
+        onChange={(v) => onChange(v === "" ? undefined : v === "true")}
+        options={[
+          { value: "true", label: "Yes" },
+          { value: "false", label: "No" },
+        ]}
+      />
+    </Field>
+  );
+}
+
+/** Skills used in the session (a fact, not a judge label): options from the
+ *  values endpoint, most-used first, as "name · count". */
+function SkillsField({
+  scope,
+  value,
+  onChange,
+}: {
+  scope: TraceScope;
+  value: string[];
+  onChange: (value: string[]) => void;
+}) {
+  const [values, setValues] = useState<SkillValue[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    listSkillValues(scope)
+      .then((v) => !cancelled && setValues(v))
+      .catch(() => !cancelled && setValues([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [scope]);
+  const counts = new Map(values.map((v) => [v.name, v.trace_count]));
+  return (
+    <Field label="Skills">
+      <MultiSelect
+        groups={[{ values: values.map((v) => v.name) }]}
+        value={value}
+        onChange={onChange}
+        placeholder="Any"
+        format={(name) => (counts.has(name) ? `${name} · ${counts.get(name)}` : name)}
+        hint={(name) => name}
+        empty="No skills found in these traces"
+      />
     </Field>
   );
 }
@@ -116,21 +198,26 @@ function GteField({
   label,
   value,
   onChange,
+  scale = 1,
 }: {
   label: string;
   value: number | undefined;
   onChange: (value: number | undefined) => void;
+  // Display units per stored unit (minutes for a ms filter: 60_000).
+  scale?: number;
 }) {
   return (
     <Field label={`${label} ≥`}>
       <input
         type="number"
         min={0}
-        step={1}
-        value={value ?? ""}
+        step="any"
+        value={value === undefined ? "" : value / scale}
         onChange={(e) => {
           const parsed = Number(e.target.value);
-          onChange(e.target.value === "" || !Number.isFinite(parsed) ? undefined : parsed);
+          onChange(
+            e.target.value === "" || !Number.isFinite(parsed) ? undefined : Math.round(parsed * scale),
+          );
         }}
         className={inputClass}
       />
@@ -183,11 +270,13 @@ export function TraceFiltersBar({
   onChange,
   sort,
   onSortChange,
+  scope = "mine",
 }: {
   filters: TraceFilters;
   onChange: (filters: TraceFilters) => void;
   sort: TraceSort;
   onSortChange: (sort: TraceSort) => void;
+  scope?: TraceScope;
 }) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState(() => textFromFilters(filters));
@@ -283,20 +372,21 @@ export function TraceFiltersBar({
             className={cn("transition-transform", open && "rotate-180")}
           />
         </Button>
-        <label className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
+        <span className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
           Sort
-          <select
-            value={sort}
-            onChange={(e) => onSortChange(e.target.value as TraceSort)}
-            className="h-8 rounded-md border bg-background px-2 text-xs text-foreground"
-          >
-            {SORT_OPTIONS.map(({ value, label }) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
+          <Select value={sort} onValueChange={(v) => onSortChange(v as TraceSort)}>
+            <SelectTrigger size="sm" aria-label="Sort" className="h-8 text-xs text-foreground">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="end">
+              {SORT_OPTIONS.map(({ value, label }) => (
+                <SelectItem key={value} value={value} className="text-xs">
+                  {label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </span>
       </div>
 
       {open && (
@@ -305,6 +395,7 @@ export function TraceFiltersBar({
           set={set}
           text={text}
           setText={setText}
+          scope={scope}
           className="grid-cols-2 rounded-lg border bg-background p-4 sm:grid-cols-3 lg:grid-cols-5"
         />
       )}
@@ -322,16 +413,21 @@ export function FilterFields({
   text,
   setText,
   className,
+  scope = "mine",
 }: {
   filters: TraceFilters;
   set: (patch: Partial<TraceFilters>) => void;
   text: FilterText;
   setText: (next: FilterText) => void;
   className?: string;
+  // Which traces the skills options come from.
+  scope?: TraceScope;
 }) {
   return (
     <div className={cn("grid gap-x-4 gap-y-3", className)}>
-      <GroupLabel>Trace</GroupLabel>
+      {/* Session facts first (what happened, incl. skills and deterministic
+          signals); the judge's labels apart from them. */}
+      <GroupLabel>Session</GroupLabel>
       <Field label="Provider">
         <input
           value={text.provider}
@@ -373,41 +469,19 @@ export function FilterFields({
         />
       </Field>
 
-      <GroupLabel>Analysis</GroupLabel>
-      <SelectField
-        label="Outcome"
-        value={filters.outcome ?? ""}
-        onChange={(v) => set({ outcome: v || undefined })}
-        options={OUTCOME_OPTIONS}
+      <SkillsField
+        scope={scope}
+        value={csvValues(filters.skill)}
+        onChange={(v) => set({ skill: toCsv(v) })}
       />
-      <Field label="Task category">
-        <MultiSelect
-          groups={TASK_CATEGORY_PICKER_GROUPS}
-          value={csvValues(filters.task_category)}
-          onChange={(v) => set({ task_category: toCsv(v) })}
-          placeholder="Any"
-        />
-      </Field>
-      <Field label="Failure mode">
-        <MultiSelect
-          groups={FAILURE_MODE_GROUPS}
-          value={csvValues(filters.failure_mode)}
-          onChange={(v) => set({ failure_mode: toCsv(v) })}
-          placeholder="Any"
-        />
-      </Field>
-
-      <GroupLabel>Signals &amp; counts</GroupLabel>
       <Field label="Errors">
-        <label className="flex h-8 cursor-pointer items-center gap-2 rounded-md border bg-background px-2 text-xs text-muted-foreground">
-          <input
-            type="checkbox"
+        <span className="flex h-8 items-center gap-2 text-xs text-foreground">
+          <Switch
             checked={filters.has_errors === true}
-            onChange={(e) => set({ has_errors: e.target.checked || undefined })}
-            className="size-3 accent-foreground"
+            onCheckedChange={(checked) => set({ has_errors: checked || undefined })}
           />
-          has errors
-        </label>
+          Only traces with errors
+        </span>
       </Field>
       <SelectField
         label="Loop kind"
@@ -431,9 +505,10 @@ export function FilterFields({
         onChange={(v) => set({ truncation_suspected: v })}
       />
       <GteField
-        label="Duration (ms)"
+        label="Duration (min)"
         value={filters.duration_ms_gte}
         onChange={(v) => set({ duration_ms_gte: v })}
+        scale={60_000}
       />
       <GteField
         label="Total tokens"
@@ -450,6 +525,31 @@ export function FilterFields({
         value={filters.tool_call_count_gte}
         onChange={(v) => set({ tool_call_count_gte: v })}
       />
+
+      <GroupLabel>Judge labels</GroupLabel>
+      <SelectField
+        label="Outcome"
+        value={filters.outcome ?? ""}
+        onChange={(v) => set({ outcome: v || undefined })}
+        options={OUTCOME_OPTIONS}
+      />
+      <Field label="Task category">
+        <MultiSelect
+          groups={TASK_CATEGORY_PICKER_GROUPS}
+          value={csvValues(filters.task_category)}
+          onChange={(v) => set({ task_category: toCsv(v) })}
+          placeholder="Any"
+        />
+      </Field>
+      <Field label="Failure mode">
+        <MultiSelect
+          groups={FAILURE_MODE_GROUPS}
+          value={csvValues(filters.failure_mode)}
+          onChange={(v) => set({ failure_mode: toCsv(v) })}
+          placeholder="Any"
+        />
+      </Field>
+
     </div>
   );
 }

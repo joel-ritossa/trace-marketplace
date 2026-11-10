@@ -1,16 +1,35 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { TraceSpan } from "@evilmartians/agent-prism-types";
 import { ListTree, MessageSquare } from "lucide-react";
+import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 
 import { DetailsView } from "@/components/agent-prism/DetailsView/DetailsView";
 import { TreeView } from "@/components/agent-prism/TreeView";
-import { buildConversation, isContentSpan } from "@/components/traces/conversation";
+import {
+  buildConversation,
+  isContentSpan,
+  type ConversationItem,
+} from "@/components/traces/conversation";
 import { ConversationView } from "@/components/traces/conversation-view";
-import { ancestorIds, buildSpanTree, withDetail } from "@/components/traces/span-tree";
+import {
+  AgentsView,
+  SubagentCard,
+  SubagentIcon,
+  type TurnInfo,
+} from "@/components/traces/agents-view";
+import { cleanSpanName } from "@/components/traces/names";
+import { ancestorIds, buildSpanTree, spawnBrief, withDetail } from "@/components/traces/span-tree";
 import { ApiError } from "@/lib/api/client";
-import { getSpan, listAllSpans, type SpanDetail, type SpanListItem } from "@/lib/api/traces";
+import {
+  getSpan,
+  listAllSpans,
+  type AgentSpawn,
+  type SpanDetail,
+  type SpanListItem,
+} from "@/lib/api/traces";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 type LoadState =
@@ -18,7 +37,7 @@ type LoadState =
   | { phase: "error" }
   | { phase: "ready"; spans: SpanListItem[]; roots: TraceSpan[] };
 
-type EvidenceView = "conversation" | "spans";
+export type EvidenceView = "conversation" | "spans" | "agents";
 
 /** A request to reveal one span (a label's evidence), by source span id;
  *  `seq` makes repeat clicks on the same span re-reveal it. */
@@ -42,13 +61,18 @@ function flatten(roots: TraceSpan[]): Map<string, TraceSpan> {
 function ViewToggle({
   view,
   onChange,
+  agentCount,
 }: {
   view: EvidenceView;
   onChange: (view: EvidenceView) => void;
+  agentCount: number;
 }) {
-  const options = [
-    { value: "conversation" as const, label: "Conversation", Icon: MessageSquare },
-    { value: "spans" as const, label: "Spans", Icon: ListTree },
+  const options: { value: EvidenceView; label: string; Icon: typeof ListTree }[] = [
+    { value: "conversation", label: "Conversation", Icon: MessageSquare },
+    { value: "spans", label: "Spans", Icon: ListTree },
+    ...(agentCount > 0
+      ? [{ value: "agents" as const, label: `Agents · ${agentCount}`, Icon: SubagentIcon }]
+      : []),
   ];
   return (
     <div className="inline-flex shrink-0 self-start rounded-md border bg-background p-0.5">
@@ -58,7 +82,7 @@ function ViewToggle({
           type="button"
           onClick={() => onChange(value)}
           className={cn(
-            "inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition-colors",
+            "inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
             view === value
               ? "bg-foreground text-background"
               : "text-muted-foreground hover:text-foreground",
@@ -71,6 +95,78 @@ function ViewToggle({
   );
 }
 
+/** Span tree and detail panel, resizable (the agent-prism viewer's panel
+ *  primitive; sizes persist per browser and direction). Side by side when the
+ *  evidence has the full width, stacked when it shares the row. */
+function SpanPanels({
+  direction,
+  tree,
+  detail,
+}: {
+  direction: "horizontal" | "vertical";
+  tree: ReactNode;
+  detail: ReactNode;
+}) {
+  const horizontal = direction === "horizontal";
+  return (
+    <PanelGroup
+      direction={direction}
+      autoSaveId={`trace-evidence-spans-${direction}`}
+      className="min-h-0 flex-1"
+    >
+      <Panel id="span-tree" order={1} defaultSize={horizontal ? 60 : 55} minSize={25}>
+        {tree}
+      </Panel>
+      <PanelResizeHandle
+        className={cn(
+          "group flex items-center justify-center outline-none",
+          horizontal ? "w-4" : "h-4",
+        )}
+      >
+        <span
+          className={cn(
+            "rounded-full bg-border transition-colors group-hover:bg-muted-foreground group-focus-visible:bg-muted-foreground group-data-[resize-handle-state=drag]:bg-muted-foreground",
+            horizontal ? "h-8 w-1" : "h-1 w-8",
+          )}
+        />
+      </PanelResizeHandle>
+      <Panel id="span-detail" order={2} defaultSize={horizontal ? 40 : 45} minSize={20}>
+        {detail}
+      </Panel>
+    </PanelGroup>
+  );
+}
+
+/** What a host can show for a span instead of the generic detail panel
+ *  (the trace page: a turn's ask, reply and analysis; the session card). */
+export type SpanPanelContext = {
+  node: TraceSpan;
+  sourceSpanId: string | null;
+  attributes: Record<string, unknown> | null;
+  // The agent's last reply under this span: undefined while loading, null
+  // when there is none.
+  finalReply: string | null | undefined;
+};
+
+const lastAssistantText = (items: ConversationItem[]): string | null => {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i];
+    if (item.kind === "message" && item.role === "assistant") return item.text;
+  }
+  return null;
+};
+
+function lastLlmDescendant(node: TraceSpan): TraceSpan | undefined {
+  let last: TraceSpan | undefined;
+  const stack = [...(node.children ?? [])];
+  while (stack.length > 0) {
+    const n = stack.pop()!;
+    if (n.type === "llm_call" && (!last || n.startTime > last.startTime)) last = n;
+    stack.push(...(n.children ?? []));
+  }
+  return last;
+}
+
 /** The trace inspection core, shared by the trace detail page and the
  *  similar-trace preview. Defaults to a reconstructed chat-style
  *  conversation; the span tree + details panel sits behind a toggle. Owns
@@ -81,17 +177,47 @@ export function TraceEvidence({
   traceId,
   className,
   focus,
+  split = "horizontal",
+  renderSpanPanel,
+  agents,
+  agentScope = null,
+  onScope,
+  initialView = "conversation",
+  viewRequest,
+  onViewChange,
 }: {
   traceId: string;
   className?: string;
   focus?: SpanFocus | null;
+  split?: "horizontal" | "vertical";
+  renderSpanPanel?: (ctx: SpanPanelContext) => ReactNode | null;
+  // Subagent spawns (null while loading, absent when the host has none).
+  agents?: AgentSpawn[] | null;
+  // The subagent (spawn span's source id) the pane is scoped to.
+  agentScope?: string | null;
+  onScope?: (spanId: string | null) => void;
+  initialView?: EvidenceView;
+  // Switch view from outside (the analysis panel); turn scrolls the Agents
+  // view to that turn's group. seq re-fires.
+  viewRequest?: { view: EvidenceView; turn?: number; seq: number } | null;
+  onViewChange?: (view: EvidenceView) => void;
 }) {
   const [state, setState] = useState<LoadState>({
     phase: "loading",
     spansLoaded: 0,
     spansTotal: null,
   });
-  const [view, setView] = useState<EvidenceView>("conversation");
+  const [view, setViewState] = useState<EvidenceView>(initialView);
+  const setView = (next: EvidenceView) => {
+    setViewState(next);
+    onViewChange?.(next);
+  };
+  const [agentFocus, setAgentFocus] = useState<{ turn: number; seq: number } | null>(null);
+  useEffect(() => {
+    if (!viewRequest) return;
+    setViewState(viewRequest.view);
+    if (viewRequest.turn !== undefined) setAgentFocus({ turn: viewRequest.turn, seq: viewRequest.seq });
+  }, [viewRequest]);
   const [expandedIds, setExpandedIds] = useState<string[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [details, setDetails] = useState<Map<string, SpanDetail>>(new Map());
@@ -102,6 +228,8 @@ export function TraceEvidence({
   });
   const treeRef = useRef<HTMLDivElement>(null);
   const [scrollSeq, setScrollSeq] = useState(0);
+  // The generic span data instead of the host's panel for the selection.
+  const [showRaw, setShowRaw] = useState(false);
   const handledFocus = useRef(0);
 
   // Hosts remount per trace (keyed), so state never carries across traces.
@@ -130,24 +258,50 @@ export function TraceEvidence({
     };
   }, [traceId]);
 
+  // Scope: the spawn span's subtree (by tree node id), or the whole trace.
+  const scopeNodeId =
+    state.phase === "ready" && agentScope
+      ? state.spans.find((sp) => sp.source_span_id === agentScope)?.span_id
+      : undefined;
+  const scopeIds = useMemo(() => {
+    if (state.phase !== "ready" || !scopeNodeId) return null;
+    const root = flatten(state.roots).get(scopeNodeId);
+    return root ? new Set(flatten([root]).keys()) : null;
+  }, [state, scopeNodeId]);
+  const scopedSpans = useMemo(
+    () =>
+      state.phase !== "ready"
+        ? []
+        : scopeIds
+          ? state.spans.filter((sp) => scopeIds.has(sp.span_id))
+          : state.spans,
+    [state, scopeIds],
+  );
+  const fetched = useRef(new Set<string>());
+
   // Prefetch llm/tool span details for the conversation view, one at a time
   // (the per-user rate limit makes parallel fetching counterproductive);
   // 429s back off and retry, other failures skip the span (fail open).
   useEffect(() => {
     if (state.phase !== "ready") return;
     let cancelled = false;
-    const content = state.spans.filter(isContentSpan).slice(0, MAX_CONTENT_SPANS);
+    const content = scopedSpans.filter(isContentSpan).slice(0, MAX_CONTENT_SPANS);
     (async () => {
       if (cancelled) return;
       setConvo({ loaded: 0, total: content.length, done: content.length === 0 });
       let loaded = 0;
       for (const span of content) {
         let retries = 0;
+        if (fetched.current.has(span.span_id)) {
+          loaded += 1;
+          continue;
+        }
         for (;;) {
           if (cancelled) return;
           try {
             const detail = await getSpan(traceId, span.span_id);
             if (cancelled) return;
+            fetched.current.add(span.span_id);
             setDetails((prev) =>
               prev.has(span.span_id) ? prev : new Map(prev).set(span.span_id, detail),
             );
@@ -169,11 +323,9 @@ export function TraceEvidence({
     return () => {
       cancelled = true;
     };
-  }, [state, traceId]);
+  }, [state, traceId, scopedSpans]);
 
-  // Fetch full attributes/events lazily, when a span is first selected.
-  async function selectSpan(id: string) {
-    setSelectedId(id);
+  async function fetchDetail(id: string) {
     if (details.has(id)) return;
     try {
       const detail = await getSpan(traceId, id);
@@ -182,6 +334,21 @@ export function TraceEvidence({
       // Panel falls back to the light fields; reselecting retries.
     }
   }
+
+  // Fetch full attributes/events lazily, when a span is first selected.
+  function selectSpan(id: string) {
+    setSelectedId(id);
+    setShowRaw(false);
+    void fetchDetail(id);
+  }
+
+  // The root's attributes say whether timestamps were synthesized (session
+  // imports record no LLM response durations).
+  const rootId = state.phase === "ready" ? state.roots[0]?.id : undefined;
+  useEffect(() => {
+    if (rootId) void fetchDetail(rootId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rootId]);
 
   // Reveal a focused span once the tree exists (a focus requested while
   // spans load applies when they land).
@@ -213,10 +380,61 @@ export function TraceEvidence({
     [state],
   );
 
+  // A host panel shows the agent's last reply under the selection: fetch
+  // that LLM span's detail with it.
+  useEffect(() => {
+    const node = selectedId && renderSpanPanel ? nodeById.get(selectedId) : undefined;
+    const reply = node ? lastLlmDescendant(node) : undefined;
+    if (reply) void fetchDetail(reply.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, nodeById]);
+
   const conversation = useMemo(
-    () => (state.phase === "ready" ? buildConversation(state.spans, details) : []),
-    [state, details],
+    () =>
+      state.phase === "ready"
+        ? // In scope the spawn call itself is the card above, not a step.
+          buildConversation(
+            scopeNodeId ? scopedSpans.filter((sp) => sp.span_id !== scopeNodeId) : scopedSpans,
+            details,
+          )
+        : [],
+    [state, scopedSpans, scopeNodeId, details],
   );
+
+  // Scoped: the spawn span's detail (its brief) and the turn spans' asks.
+  const scopeSpawn = agentScope ? agents?.find((a) => a.span_id === agentScope) : undefined;
+  useEffect(() => {
+    if (!scopeNodeId) return;
+    // The scoped tree opens one level deep: the subagent's own steps.
+    setExpandedIds((prev) => (prev.includes(scopeNodeId) ? prev : [...prev, scopeNodeId]));
+    void fetchDetail(scopeNodeId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopeNodeId]);
+  // Escape leaves the subagent scope unless a popover or dialog has it.
+  useEffect(() => {
+    if (!agentScope || !onScope) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      if (document.querySelector('[data-slot="popover-content"], [role="dialog"]')) return;
+      onScope(null);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [agentScope, onScope]);
+  const turnInfo = useMemo(() => {
+    const map = new Map<number, TurnInfo>();
+    if (state.phase !== "ready") return map;
+    for (const sp of state.spans) {
+      const m = /^turn (\d+)\b/i.exec(sp.name);
+      if (!m || sp.kind !== "agent") continue;
+      map.set(Number(m[1]) - 1, {
+        ask: cleanSpanName(sp.name).replace(/^turn \d+:?\s*/i, ""),
+        start: new Date(sp.started_at).getTime(),
+        end: new Date(sp.ended_at).getTime(),
+      });
+    }
+    return map;
+  }, [state]);
 
   if (state.phase === "loading") {
     return (
@@ -238,13 +456,73 @@ export function TraceEvidence({
   const panelSpan =
     selectedNode && selectedDetail ? withDetail(selectedNode, selectedDetail) : selectedNode;
 
-  const contentSpanCount = state.spans.filter(isContentSpan).length;
+  const contentSpanCount = scopedSpans.filter(isContentSpan).length;
+  const scopeRoot = scopeNodeId ? nodeById.get(scopeNodeId) : undefined;
+  // In scope: only spawns nested under the scoped one.
+  const scopedAgents = (agents ?? []).filter((a) => {
+    if (!agentScope) return true;
+    for (let p = a.parent_span_id; p; p = agents?.find((x) => x.span_id === p)?.parent_span_id ?? null) {
+      if (p === agentScope) return true;
+    }
+    return false;
+  });
+  const scopeReplySpan = scopeRoot ? lastLlmDescendant(scopeRoot) : undefined;
+  const scopeReplyItem = scopeReplySpan
+    ? state.spans.find((sp) => sp.span_id === scopeReplySpan.id)
+    : undefined;
+  const scopeReport = !scopeRoot
+    ? undefined
+    : scopeReplyItem && details.has(scopeReplyItem.span_id)
+      ? lastAssistantText(buildConversation([scopeReplyItem], details))
+      : scopeReplyItem
+        ? undefined
+        : null;
+  const synthesized =
+    rootId !== undefined && details.get(rootId)?.attributes["converted.synthesized_root"] === true;
+  const durationUnknown = (span: TraceSpan) => synthesized && span.type === "llm_call";
+
+  const replySpan = selectedNode ? lastLlmDescendant(selectedNode) : undefined;
+  const replyItem = replySpan ? state.spans.find((s) => s.span_id === replySpan.id) : undefined;
+  const custom =
+    selectedNode && renderSpanPanel
+      ? renderSpanPanel({
+          node: selectedNode,
+          sourceSpanId: state.spans.find((sp) => sp.span_id === selectedNode.id)?.source_span_id ?? null,
+          attributes: selectedDetail?.attributes ?? null,
+          finalReply: !replyItem
+            ? null
+            : details.has(replyItem.span_id)
+              ? lastAssistantText(buildConversation([replyItem], details))
+              : undefined,
+        })
+      : null;
 
   return (
     <div className={cn("flex h-[calc(100vh-22rem)] min-h-96 flex-col gap-3", className)}>
-      <ViewToggle view={view} onChange={setView} />
+      {scopeSpawn && onScope && (
+        <ScopeHeader
+          spawn={scopeSpawn}
+          agents={agents ?? []}
+          turnInfo={turnInfo}
+          onScope={onScope}
+          brief={scopeNodeId ? spawnBriefOf(details.get(scopeNodeId)) : undefined}
+          report={scopeReport}
+        />
+      )}
+      <ViewToggle view={view} onChange={setView} agentCount={scopedAgents.length} />
 
-      {view === "conversation" ? (
+      {view === "agents" && scopedAgents.length > 0 ? (
+        <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border bg-background p-3">
+          <AgentsView
+            agents={scopedAgents}
+            turns={turnInfo}
+            onOpen={(id) => onScope?.(id)}
+            focus={agentFocus}
+          />
+        </div>
+      ) : view === "agents" && agents === null ? (
+        <p className="text-sm text-muted-foreground">Loading subagents…</p>
+      ) : view === "conversation" || view === "agents" ? (
         <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border bg-background p-4">
           {conversation.length > 0 && <ConversationView items={conversation} />}
           {!convo.done && (
@@ -278,31 +556,127 @@ export function TraceEvidence({
           )}
         </div>
       ) : (
-        <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-5">
-          <div
-            ref={treeRef}
-            className="overflow-y-auto rounded-lg border bg-background py-2 lg:col-span-3"
-          >
-            <TreeView
-              spans={state.roots}
-              selectedSpan={panelSpan}
-              onSpanSelect={(span) => selectSpan(span.id)}
-              expandedSpansIds={expandedIds}
-              onExpandSpansIdsChange={setExpandedIds}
-              spanCardViewOptions={{ expandButton: "inside" }}
-            />
-          </div>
-          <div className="overflow-y-auto rounded-lg border bg-background lg:col-span-2">
-            {panelSpan ? (
-              <DetailsView key={panelSpan.id} data={panelSpan} className="border-0" />
-            ) : (
-              <p className="p-4 text-sm text-muted-foreground">
-                Select a span to inspect its attributes and events.
-              </p>
-            )}
-          </div>
-        </div>
+        <SpanPanels
+          direction={split}
+          tree={
+            <div
+              ref={treeRef}
+              className="h-full overflow-y-auto rounded-lg border bg-background py-2"
+            >
+              <TreeView
+                spans={scopeRoot ? [scopeRoot] : state.roots}
+                selectedSpan={panelSpan}
+                onSpanSelect={(span) => selectSpan(span.id)}
+                expandedSpansIds={expandedIds}
+                onExpandSpansIdsChange={setExpandedIds}
+                spanCardViewOptions={{ expandButton: "inside", durationUnknown }}
+              />
+            </div>
+          }
+          detail={
+            <div className="flex h-full flex-col overflow-hidden rounded-lg border bg-background">
+              {custom && (
+                <div className="flex shrink-0 justify-end border-b px-3 py-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowRaw((v) => !v)}
+                    className="text-xs font-medium text-link hover:underline"
+                  >
+                    {showRaw ? "Show analysis" : "Show span data"}
+                  </button>
+                </div>
+              )}
+              {custom && !showRaw ? (
+                <div className="min-h-0 flex-1 overflow-y-auto">{custom}</div>
+              ) : panelSpan ? (
+                <DetailsView
+                  key={panelSpan.id}
+                  data={panelSpan}
+                  durationUnknown={durationUnknown(panelSpan)}
+                  className="min-h-0 flex-1 border-0"
+                />
+              ) : (
+                <p className="p-4 text-sm text-muted-foreground">
+                  Select a span to inspect its attributes and events.
+                </p>
+              )}
+            </div>
+          }
+        />
       )}
+    </div>
+  );
+}
+
+function spawnBriefOf(detail: SpanDetail | undefined): string | null | undefined {
+  return detail ? spawnBrief(detail.attributes) : undefined;
+}
+
+/** The subagent scope: breadcrumb (Session › Turn N › parents › this), a way
+ *  back, and the subagent's card (brief + final report). */
+function ScopeHeader({
+  spawn,
+  agents,
+  turnInfo,
+  onScope,
+  brief,
+  report,
+}: {
+  spawn: AgentSpawn;
+  agents: AgentSpawn[];
+  turnInfo: Map<number, TurnInfo>;
+  onScope: (spanId: string | null) => void;
+  brief: string | null | undefined;
+  report: string | null | undefined;
+}) {
+  const parents: AgentSpawn[] = [];
+  for (let p = spawn.parent_span_id; p; ) {
+    const parent = agents.find((a) => a.span_id === p);
+    if (!parent) break;
+    parents.unshift(parent);
+    p = parent.parent_span_id;
+  }
+  const turnLabel = spawn.turn_index === null ? "no turn" : `Turn ${spawn.turn_index + 1}`;
+  const crumb =
+    "max-w-48 truncate rounded-sm hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none";
+  return (
+    <div className="flex shrink-0 flex-col gap-2">
+      <nav className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground" aria-label="Subagent scope">
+        <button type="button" className={crumb} onClick={() => onScope(null)}>
+          Session
+        </button>
+        <span aria-hidden>›</span>
+        <button
+          type="button"
+          className={crumb}
+          title={spawn.turn_index !== null ? turnInfo.get(spawn.turn_index)?.ask : undefined}
+          onClick={() => onScope(null)}
+        >
+          {turnLabel}
+        </button>
+        {parents.map((p) => (
+          <span key={p.span_id} className="flex min-w-0 items-center gap-1.5">
+            <span aria-hidden>›</span>
+            <button type="button" className={crumb} onClick={() => onScope(p.span_id)}>
+              {p.description ?? "Subagent"}
+            </button>
+          </span>
+        ))}
+        <span aria-hidden>›</span>
+        <span className="min-w-0 truncate text-foreground">{spawn.description ?? "Subagent"}</span>
+        <Button size="xs" variant="outline" className="ml-auto shrink-0" onClick={() => onScope(null)}>
+          Back to session
+        </Button>
+      </nav>
+      <div className="max-h-64 overflow-y-auto rounded-lg border bg-background p-3">
+        <SubagentCard
+          agent={spawn}
+          turnLabel={turnLabel}
+          parentLabel={parents.length ? (parents[parents.length - 1].description ?? "a subagent") : "the main agent"}
+          brief={brief}
+          report={report}
+        />
+      </div>
     </div>
   );
 }

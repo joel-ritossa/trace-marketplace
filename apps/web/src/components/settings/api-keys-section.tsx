@@ -184,18 +184,25 @@ export function ApiKeysSection() {
                       key={key.api_key_id}
                       className={`border-b last:border-b-0 ${revoked ? "text-muted-foreground" : ""}`}
                     >
-                      <td className={`px-4 py-2.5 font-medium ${revoked ? "line-through" : ""}`}>
+                      <td
+                        className={`max-w-48 truncate px-4 py-2.5 font-medium ${revoked ? "line-through" : ""}`}
+                        title={key.name}
+                      >
                         {key.name}
                       </td>
-                      <td className="px-4 py-2.5 font-mono text-xs">{key.key_display}</td>
-                      <td className="px-4 py-2.5 text-xs">upload-only</td>
-                      <td className="px-4 py-2.5 font-mono text-xs">{formatDate(key.created_at)}</td>
-                      <td className="px-4 py-2.5 font-mono text-xs">
+                      <td className="whitespace-nowrap px-4 py-2.5 font-mono text-xs">{key.key_display}</td>
+                      <td className="whitespace-nowrap px-4 py-2.5 text-xs">upload-only</td>
+                      <td className="whitespace-nowrap px-4 py-2.5 font-mono text-xs">
+                        {formatDate(key.created_at)}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-2.5 font-mono text-xs">
                         {key.last_used_at ? formatDate(key.last_used_at) : "never used"}
                       </td>
                       <td className="px-4 py-2.5 text-right">
                         {revoked ? (
-                          <span className="text-xs">revoked {formatDate(key.revoked_at!)}</span>
+                          <span className="whitespace-nowrap text-xs">
+                            revoked {formatDate(key.revoked_at!)}
+                          </span>
                         ) : (
                           <Button variant="ghost" size="sm" onClick={() => setRevokeTarget(key)}>
                             Revoke

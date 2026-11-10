@@ -8,6 +8,7 @@ import { Pager } from "@/components/shell/pager";
 import { BulkVisibilityActions } from "@/components/traces/bulk-actions";
 import { BulkBar, useSelection } from "@/components/traces/bulk-bar";
 import { ExcludedNote } from "@/components/traces/excluded-note";
+import { skillFilterFor } from "@/components/traces/filter-state";
 import { TraceList } from "@/components/traces/trace-list";
 import { WorkspaceTabs } from "@/components/traces/workspace-tabs";
 import { TraceFiltersBar, hasActiveFilters } from "@/components/traces/trace-filters";
@@ -75,7 +76,12 @@ export default function TracesPage() {
         ) : (
           <>
             <ExcludedNote count={result.excluded_unanalyzed} className="mb-2" />
-            <TraceList traces={result.traces} view="mine" selection={{ selected, toggle, setAll }} />
+            <TraceList
+              traces={result.traces}
+              view="mine"
+              selection={{ selected, toggle, setAll }}
+              skillFilter={skillFilterFor(filters, setFilters)}
+            />
             <div className="mt-4">
               <Pager
                 page={page}

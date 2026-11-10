@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Tags } from "lucide-react";
 import {
   FAILURE_MODES,
@@ -34,15 +34,18 @@ type FailureDraft = { span_ids: string[]; reason: string };
 
 /** Owner relabel of one turn (PUT .../turns/{n}/labels): the full label set
  *  replaces the turn's, which becomes human-labeled. Kept failure modes keep
- *  their cited spans; API errors show verbatim. */
+ *  their cited spans; API errors show verbatim. Each new `openSignal` value
+ *  opens the dialog (a relabel action elsewhere, e.g. the uncertain popover). */
 export function RelabelTurn({
   traceId,
   turn,
   onSaved,
+  openSignal = 0,
 }: {
   traceId: string;
   turn: TurnAnalysis;
   onSaved: (analysis: TraceAnalysis) => void;
+  openSignal?: number;
 }) {
   const [open, setOpen] = useState(false);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
@@ -67,6 +70,11 @@ export function RelabelTurn({
     }
     setOpen(next);
   }
+
+  useEffect(() => {
+    if (openSignal > 0) onOpenChange(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openSignal]);
 
   function toggleFailure(value: string, checked: boolean) {
     setFailures((prev) => {
@@ -144,7 +152,7 @@ export function RelabelTurn({
                         : "text-muted-foreground hover:bg-accent hover:text-foreground",
                     )}
                   >
-                    {value}
+                    {humanize(value)}
                   </button>
                 ))}
               </div>
