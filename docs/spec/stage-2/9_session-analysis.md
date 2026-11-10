@@ -158,7 +158,8 @@ roll-up text (goal, summary, one line per turn).
 ## API
 
 - `GET /v1/traces/{id}` analysis block: `session` (`goal`, `outcome`,
-  `summary`, `task_categories`, `failure_modes`, `analyzed_at`, `status`:
+  `summary`, `task_categories`, `failure_modes`, `analyzed_at`,
+  `turn_count` (every turn as the judge splits them, judged or not), `status`:
   `pending` (nothing judged) | `in_progress` (some turns judged, not
   finalized) | `final` (every turn judged and the roll-up is current) |
   `skipped` (no provider key / opt-out)) and `turns[]`

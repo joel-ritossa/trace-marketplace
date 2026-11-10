@@ -1,7 +1,7 @@
 # Subscriptions — Saved Searches That Watch the Marketplace
 
 A consumer saves a filtered marketplace search; from then on, every trace
-that becomes listed (or finishes analysis or gets human-relabeled while
+that becomes listed (or has analysis written or gets a turn human-relabeled while
 listed) is evaluated against
 it — a first match notifies once, ever, and floods digest into one unread
 notification per subscription. The feed runs the stored query live, marks
@@ -17,8 +17,7 @@ users signed in at http://localhost:3000 (contributor + consumer):
    batched-consent dialog covers the whole selection.
 
 2. **Consumer:** on `/marketplace`, stack filters — e.g. `Outcome =
-   failure`, `confidence ≥ 0.8`, a metric like `faithfulness ≥ 0.8` (the
-   metric dropdown enumerates only keys observed in visible data). The URL
+   failure`, a `Failure mode` like `invalid_invocation`, `LLM calls ≥ 50`. The URL
    carries every predicate; chips render them verbatim. Click **Save as
    subscription** — the dialog previews today's match count as backfill.
 
@@ -36,9 +35,10 @@ users signed in at http://localhost:3000 (contributor + consumer):
    in library"), then **Download N now**.
 
 5. The zip holds one payload per upload (scrubbed for acquirers, raw for
-   owners) plus `labels.jsonl` — one line per trace with the label
-   triplets, metric scores, promoted signals, and analyzer versions;
-   unanalyzed traces get honest nulls.
+   owners) plus `labels.jsonl` — one line per trace with the session
+   verdict (outcome, goal, categories, failure modes, signals) and each
+   turn's verdict and span-anchored labels; unanalyzed traces get a
+   `pending` session and no turns.
 
 Keyless shortcut: `cd services/api && uv run pytest
 tests/integration/test_discovery_scale.py -q` exercises the whole loop
@@ -47,15 +47,16 @@ tests/integration/test_discovery_scale.py -q` exercises the whole loop
 ## What was solved
 
 Discovery at scale is a polling problem by default: a consumer hunting for
-"high-faithfulness failures" would re-run the same search daily. A4 inverts
+"failures with invalid tool calls" would re-run the same search daily. A4 inverts
 it — the query becomes a stored object (`subscriptions.query`, validated at
 write time against the same Pydantic model the API parses, so it can never
 fail to execute later), and matching becomes event-driven: a trace is
-evaluated exactly when it becomes listed, when its analysis completes, or
-when a review resolve relabels it while listed
+evaluated exactly when it becomes listed, when analysis writes its labels, or
+when an owner relabel of a turn changes them while listed
 (`app/worker/tasks/match.py`). No cron sweep, no re-polling, no missed
-window between "listed" and "analyzed" — an `owner_opt_out` trace that gets
-listed re-enqueues analysis first and matches when its labels land.
+window between "listed" and "analyzed" — a trace that is not yet final (or
+was skipped for `owner_opt_out`) is finalized when listed and matches when
+its labels land.
 
 ## Why it's interesting
 

@@ -52,6 +52,7 @@ Identical to stage 1 (`docs/buildlog/stage-1/README.md`), with two stage-2 notes
 | Change | Scope | Status |
 |---|---|---|
 | [session-as-trace](session-as-trace/000_implementation.md) | A session is one trace (A6 importer 2.0.0, renderer v3) | In progress (2026-11-10) |
+| [agent-judge](agent-judge/000_implementation.md) | Per-turn agent judge replaces the voted judge, metrics and confidence routing ([9_session-analysis.md](../../spec/stage-2/9_session-analysis.md)) | In progress (2026-11-10) |
 
 ## Spec amendments (pre-build)
 

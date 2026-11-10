@@ -18,13 +18,15 @@ The calls that shaped the system: what was decided, why, and what each call cost
 
 **Deterministic matching everywhere; non-determinism only in derivation.** LLMs derive fields; rules match on the stored values like any column — never an LLM at query time. Why: a stored subscription must mean the same thing on every trace and every evaluation, and a match must be explainable after the fact. Cost: no fuzzy queries in the base build. The similar-behavior extension added behavior search without breaking the rule — embedding (derivation) is non-deterministic, matching is a SQL distance comparison against a stored vector ([05](05_marketplace.md)).
 
-**Rarity is filterability.** Rare data needed no dedicated mechanism: sparse label combinations (`task_category` × `failure_mode`, signal flags, metric bounds) are discoverable and subscribable like any other query. Behavioral novelty scoring — ranking by how unusual a trace's behavior is — was designed as an extension that orders results but never changes what matches (`docs/extensions/behavioral-novelty.md`).
+**Rarity is filterability.** Rare data needed no dedicated mechanism: sparse label combinations (`task_category` × `failure_mode`, signal flags) are discoverable and subscribable like any other query. Behavioral novelty scoring — ranking by how unusual a trace's behavior is — was designed as an extension that orders results but never changes what matches (`docs/extensions/behavioral-novelty.md`).
 
 **Stateless CLI, server-side dedupe.** No local manifest; the server's per-user sha256 check at POST is the only truth. Why: nothing to corrupt, migrate, or explain — re-syncing any directory from any machine is safe by construction. Cost: already-synced files re-upload their bytes each run to be told `409 duplicate`. The desktop app layers a local synced-file memo on top as an optimization, without making it state of record ([03](03_ingestion-and-data.md)).
 
 **One filter language.** Search, subscriptions, and the feed share one Pydantic model and one SQL clause builder; stored queries are validated at write time so they can never fail to execute later. Why: a filter added once works everywhere, and a saved subscription is exactly a marketplace search. Cost: the vocabulary is a contract — every new field has to make sense in both contexts, which is why stage 2 admits only equality filters, booleans, and min-bounds ([05](05_marketplace.md)).
 
 ## Analysis
+
+> **Superseded in part (2026-11-10).** The next four decisions (ternary outcome, vote-share confidence, clean-room judge, confidence-based HIL routing) describe the original voted judge. Owner decisions that replaced them: the turn is the unit of judgment, a tool-using agent without voting, multi-select labels anchored to spans, `partial` added to the outcome, no confidence scores, review driven by the agent's own `uncertain` flag, quality metrics retired, OpenAI Agents SDK instead of litellm ([spec 9](../docs/spec/stage-2/9_session-analysis.md), `docs/buildlog/stage-2/agent-judge/`). Kept as the record of the original reasoning.
 
 **Ternary outcome.** `indeterminate` is a designed answer, valid from machine and human alike. Some traces genuinely can't be judged; a forced binary would publish false consensus as fact on a marketplace whose value is label trustworthiness.
 

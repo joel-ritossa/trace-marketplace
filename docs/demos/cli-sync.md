@@ -34,6 +34,10 @@ TRACE_API_KEY=tmk_…  uv run trace-sync sync ../../devdata/sessions-src --since
    counts, and tool spans — one trace per session, with a span per
    user turn under the session root. Re-syncing a session that has grown
    updates the same trace in place.
+   Analysis follows the session: each turn is judged once the next turn
+   starts; the last turn and the session verdict arrive when the session
+   has been idle (`ANALYSIS_IDLE_SECONDS`, 2 h) or you hit `POST
+   /v1/traces/{id}/analyze`. Without an `OPENAI_API_KEY` analysis skips.
 
 5. Re-run the same sync — every line prints `already synced`, exit 0. The
    CLI keeps no state; the server's per-user sha256 dedupe is the source of
@@ -74,7 +78,8 @@ failures surface when no one is looking at a progress bar.
   config (`apps/cli/src/trace_sync/`); dedupe is the server's per-user
   content hash, so syncs are idempotent from any machine, and `watch` is
   just `sync` without the exit condition (a 2 s scan that uploads a file once its mtime is
-  300 s quiet, no fs-events dependency).
+  quiet for 5 minutes by default, no fs-events dependency; the demo's
+  `--quiet-seconds 2` shortens it).
 - **One auth header, two principals.** `Authorization: Bearer` accepts a
   Supabase JWT or a `tmk_` key (`services/api/app/auth.py`) — the only
   stage-1 code change. Keys are sha256-stored, upload-scoped (exactly two
@@ -98,3 +103,8 @@ failures surface when no one is looking at a progress bar.
   normalize path; unsupported schemas reject with a readable reason at
   upload. The CLI stays a dumb byte mover — your own sessions exercise
   detection, conversion, ingestion, inspection, and analysis end to end.
+- **Client-side bundling and pruning.** `.jsonl.zst` archives are
+  decompressed, a Claude Code session's `subagents/*.jsonl` ride along so
+  subagents nest in the parent trace, and session logs are pruned to the
+  fields the importers read (`apps/cli/src/trace_sync/prune.py`) — same
+  traces, a fraction of the bytes (5_cli.md).

@@ -33,21 +33,21 @@ Generated server-side only (worker jobs / API). `upload_failed` is emitted only 
 
 ### review_items
 
-Generic plumbing; the label model lives in the jsonb payloads so it can change without migration churn.
+Generic plumbing; the question lives in the jsonb payload so it can change without migration churn. Since the agent judge ([9_session-analysis.md](9_session-analysis.md)) an item asks one thing: relabel this trace's uncertain turns.
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid PK | |
 | `trace_id` | uuid | References `traces.id`, cascade delete. |
-| `question_type` | text | `verdict` in stage 2 (the composed outcome/failure_mode/category question). |
-| `context` | jsonb | Machine verdict, per-field confidence, routing reasons in plain language. Empty reasons = owner-initiated relabel. |
-| `answer` | jsonb | Null until resolved. Partial answers allowed (e.g. outcome only). |
-| `status` | text | `open \| resolved \| superseded`. |
+| `question_type` | text | `verdict` (column default; the only value). |
+| `context` | jsonb | `{ turns: [{ turn_index, reason, summary }] }` — the trace's uncertain machine turns and why the agent could not judge them. |
+| `answer` | jsonb | Unused since the agent judge (answers are turn relabels in `turn_analysis`); always null. |
+| `status` | text | `open \| resolved \| superseded`. `resolved` when owner relabels leave no uncertain turn; `superseded` when a re-judge changes or clears the uncertain set. |
 | `created_at` | timestamptz | |
 | `resolved_at` | timestamptz | |
-| `resolved_by` | uuid | References `profiles.id`. |
+| `resolved_by` | uuid | References `profiles.id`; set when the owner's relabels close the item. |
 
-Constraint: at most one `open` item per trace (partial unique index on `trace_id` where `status = 'open'`). A re-run that routes again marks the existing open item `superseded` and creates a fresh one — never duplicates.
+Constraint: at most one `open` item per trace (partial unique index on `trace_id` where `status = 'open'`). An analysis run whose uncertain-turn set differs from the open item's marks it `superseded` and creates a fresh one (an unchanged set keeps the item) — never duplicates. Owner relabels narrow the open item's context in place.
 
 ### subscriptions
 
@@ -77,20 +77,19 @@ Unique `(subscription_id, trace_id)` — a trace notifies a subscription at most
 
 ### analyzer_results
 
-One row per analyzer run per trace. Audit + reproducibility layer; never queried by search.
+One row per LLM analysis run per trace (appended, not rewritten). Audit layer; never queried by search.
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid PK | |
 | `trace_id` | uuid | References `traces.id`, cascade delete. |
-| `analyzer` | text | `signals \| judge \| metric:<name>`. |
-| `analyzer_version` | text | Prompt/renderer/config changes bump it. |
-| `model_id` | text | Null for deterministic analyzers. |
-| `output` | jsonb | Full result model: signals object incl. `failure_suspected`; judge verdict incl. the N stored votes + reasoning + `rendering_truncated`; metric score/flag + reason. |
-| `confidence` | numeric | Null where not applicable. |
+| `analyzer` | text | `agent` (the per-turn judge + roll-up run). |
+| `analyzer_version` | text | Prompt/agent changes bump it (`fault:canned` for dev fault runs). |
+| `model_id` | text | The judge model. |
+| `output` | jsonb | Per judged turn and the roll-up: model, token usage, latency, tool-call counts. No verdicts (those live in `turn_analysis`), no votes. |
 | `created_at` | timestamptz | |
 
-A re-run of `analyze_trace` deletes and rewrites the trace's rows (with `trace_analysis`, one transaction).
+Each run that judges something appends a row, in the same transaction as the `turn_analysis` / `trace_analysis` writes.
 
 ### span_raw
 
@@ -103,42 +102,66 @@ Owner-only raw copies of the scrubbed span content fields ([7_redaction.md](7_re
 | `events` | jsonb | Original OTLP events. |
 | `status_message` | text | Original status message. |
 
+### turn_analysis
+
+One row per judged turn; PK `(trace_id, turn_index)`. A trace with no turn spans has one row at `turn_index` 0.
+
+| Column | Type | Notes |
+|---|---|---|
+| `fingerprint` | text | Hash of the turn's span ids and end time; a changed fingerprint means re-judge. |
+| `outcome` | text | `success \| partial \| failure \| indeterminate`; check-constrained. Null = not judged (LLM skipped); signals are always computed. |
+| `summary` | text | One line: what was asked, what happened. |
+| `uncertain` | text | Why the agent could not judge confidently; null otherwise. Drives the review item. |
+| `signals` | jsonb | This turn's deterministic signals. |
+| `provenance` | text | `machine \| human`. A `human` turn is never re-judged or overwritten. |
+| `model`, `usage` | text, jsonb | Judge model and token/latency/tool-call usage. |
+| `analyzed_at` | timestamptz | |
+
+### trace_labels
+
+One row per label, hung off a turn (`(trace_id, turn_index)` FK → `turn_analysis`, cascade delete).
+
+| Column | Type | Notes |
+|---|---|---|
+| `field` | text | `task_category \| failure_mode`; check-constrained. |
+| `value` | text | Taxonomy value; app-validated. |
+| `span_ids` | text[] | `source_span_id`s that show the label. At least one for a machine `failure_mode`; empty for categories (and possibly for human labels). |
+| `reason` | text | One sentence; null for categories. |
+
 ### trace_analysis
 
-The 1:1 side table holding everything filterable. **One writer:** the analysis job (and human resolution) own this table; ingestion owns `traces`. No row = not yet analyzed; within a row, null = the analyzer didn't produce the field. Null never matches any predicate.
+The 1:1 side table holding everything filterable at session level. **One writer:** the analysis job (and owner relabels) own this table; ingestion owns `traces`. No row = not yet analyzed; within a row, null = the analyzer didn't produce the field. Null never matches any predicate. The row exists as soon as any turn has been judged; the roll-up columns fill when the session is finalized.
 
 | Column | Type | Notes |
 |---|---|---|
 | `trace_id` | uuid PK | References `traces.id`, cascade delete. |
-| `outcome` | text | `success \| failure \| indeterminate`; check-constrained (stable set). |
-| `outcome_confidence` | numeric | 0–1. |
-| `outcome_provenance` | text | `machine \| human_confirmed \| human`; check-constrained. |
-| `failure_mode` | text | AgentRx taxonomy; app-validated, no check constraint (taxonomy evolves). |
-| `failure_mode_confidence` | numeric | |
-| `failure_mode_provenance` | text | |
-| `task_category` | text | App-validated. |
-| `task_category_confidence` | numeric | |
-| `task_category_provenance` | text | |
-| `has_retry_loop` | boolean | Promoted family-1 signals; all nullable (fail open). |
-| `loop_kind` | text | `exact_repeat \| cycle \| stagnation`. |
-| `recovered_from_error` | boolean | |
-| `truncation_suspected` | boolean | |
-| `llm_call_count`, `tool_call_count` | integer | |
-| `metric_scores` | jsonb | Map `metric name → number (0–1) or boolean flag`. Reasons stay in `analyzer_results`. |
-| `llm_status` | text | `complete \| skipped` — whether LLM analyzers ran. |
+| `outcome` | text | Session outcome: `success \| partial \| failure \| indeterminate`; check-constrained. Roll-up; null until finalized. |
+| `goal`, `summary` | text | Roll-up: what the user was trying to get done; short paragraph. |
+| `task_categories` | text[] | Union over turn labels, recomputed on every write; GIN-indexed. |
+| `failure_modes` | text[] | Same. |
+| `has_retry_loop` | boolean | Session aggregate of the per-turn signals (any turn); all nullable (fail open). |
+| `loop_kind` | text | `exact_repeat \| cycle \| stagnation`; first found. |
+| `recovered_from_error` | boolean | Any turn. |
+| `truncation_suspected` | boolean | Any turn. |
+| `llm_call_count`, `tool_call_count` | integer | Sums over turns. |
+| `llm_status` | text | `complete \| skipped` — whether the LLM judge ran. |
 | `llm_skip_reason` | text | Nullable; `not_configured \| owner_opt_out` when `llm_status = 'skipped'`, null otherwise. |
-| `analyzed_at` | timestamptz | |
+| `analyzed_at` | timestamptz | Roll-up time; null until finalized, and reset when a turn is rewritten after it (the roll-up is then stale). |
+
+The scalar `failure_mode` / `task_category`, every `*_confidence` / `*_provenance` column, and `metric_scores` are gone.
 
 ### Analysis state (derived, not stored)
 
-The API derives the per-trace analysis state the UI requires ([4_pages.md](4_pages.md)):
+The API derives the session analysis status the UI requires ([4_pages.md](4_pages.md)) from `trace_analysis`, `traces.analysis_attempts` and the dead-letter table (`queries/analysis.py:derive_status`):
 
-| State | Condition |
+| Status | Condition |
 |---|---|
-| `pending` | Trace exists, no `trace_analysis` row, no `analyze_trace` dead letter. |
-| `complete` | Row exists, `llm_status = 'complete'`. |
-| `skipped` | Row exists, `llm_status = 'skipped'` (signals still present); `llm_skip_reason` says why. |
-| `failed` | `dead_letters` row for `analyze_trace` on this trace. |
+| `pending` | No `trace_analysis` row (nothing judged yet). |
+| `in_progress` | Row exists, `llm_status = 'complete'`, and the roll-up is not current (`analyzed_at` null, or the trace was re-ingested since). Some turns may already be judged. |
+| `final` | Every turn judged and the roll-up current. |
+| `skipped` | `llm_status = 'skipped'` (signals still present); `llm_skip_reason` says why. |
+
+Separately, an open `analyze_trace` dead letter surfaces as a failure (`failed_reason` / `analysis_failed`), independent of the status above.
 
 ## Stage-1 Deltas
 
@@ -146,7 +169,7 @@ All additive, via new migrations:
 
 - `uploads.source` text, `cli | web`, default `web`. Set by the API from auth type (API key → `cli`); clients never set it.
 - `profiles.allow_private_llm_analysis` boolean not null default `true` — the per-account opt-out of LLM analysis for private traces ([1_analysis.md](1_analysis.md) Runtime). Editable only by the owner (existing profiles access rule).
-- `profiles.task_categories` text[] not null default `'{}'` — the owner's task scope for the judge's category call ([1_analysis.md](1_analysis.md) Taxonomies): values from the global `task_category` enum (never `other`); empty = unscoped. Editable only by the owner (existing profiles access rule).
+- `profiles.task_categories` text[] not null default `'{}'` — the owner's task scope for the judge's category vocabulary ([1_analysis.md](1_analysis.md) Taxonomies): values from the global `task_category` enum (never `other`); empty = unscoped. Editable only by the owner (existing profiles access rule).
 - `traces.total_tokens` integer nullable — ingestion-derived sum of span tokens (importer addition; like `duration_ms`).
 - `dead_letters.trace_id` uuid nullable — analysis tasks are trace-scoped; ingestion rows leave it null.
 - Importer check (not a schema change): trace `name` derivation must produce scannable names (root-span name, falling back to source filename), never a bare id — CLI sync makes this visible at volume.
@@ -157,7 +180,7 @@ All additive, via new migrations:
 
 ## Indexes
 
-`api_keys(key_hash)` unique; `notifications(user_id, created_at desc)` + partial on unread; `review_items(trace_id)` with the partial-unique open constraint, partial index on `status = 'open'`; `subscriptions(owner_id)`; unique `(subscription_id, trace_id)` on subscription_matches; `analyzer_results(trace_id)`; `trace_analysis` is PK-joined only (no secondary indexes until query evidence demands them).
+`api_keys(key_hash)` unique; `notifications(user_id, created_at desc)` + partial on unread; `review_items(trace_id)` with the partial-unique open constraint, partial index on `status = 'open'`; `subscriptions(owner_id)`; unique `(subscription_id, trace_id)` on subscription_matches; `analyzer_results(trace_id)`; `trace_labels(trace_id, turn_index)`; GIN on `trace_analysis(task_categories)` and `(failure_modes)` (the filters are array overlap); `trace_analysis` and `turn_analysis` are otherwise PK-joined.
 
 ## Access Rules
 
@@ -167,10 +190,10 @@ Enforced in API queries; mirrored as RLS policies (stage-1 rule).
 |---|---|
 | `api_keys` | Owner only, all operations. Plaintext never readable after mint. |
 | `notifications` | Recipient only; mark-read is the only mutation. |
-| `review_items` | Owner of the referenced trace only (read + resolve). |
+| `review_items` | Owner of the referenced trace only (read; closed by turn relabels). |
 | `subscriptions`, `subscription_matches` | Owner only. |
 | `analyzer_results` | Mirrors the referenced trace (owner, or anyone if listed). |
-| `trace_analysis` | Mirrors `traces` exactly: owner, or any authenticated user when the trace is listed. |
+| `trace_analysis`, `turn_analysis`, `trace_labels` | Mirror `traces` exactly: owner, or any authenticated user when the trace is listed. Read-only for clients; turn relabels go through the API. |
 | `span_raw` | Owner of the referenced trace only — never readable by non-owners regardless of visibility. |
 | Download (delta to stage 1) | Owner gets the raw storage object; an acquirer gets the scrubbed artifact. |
 

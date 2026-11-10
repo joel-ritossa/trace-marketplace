@@ -26,7 +26,7 @@ docker compose up --build      # web :3000, api :8000, redis, worker, scheduler
 
 Open http://localhost:3000, sign up, and upload trace files (OTLP JSON) from the Uploads page; each is validated, preserved raw, parsed into traces and spans by the worker, and downloadable byte-identical. Traces lists what was parsed; each trace opens an inspector with the span tree and per-span attributes/events. From there, list a trace on the marketplace (with the ownership confirmation), where any signed-in user can browse, inspect, acquire it ($0), and download the raw payload from their Library.
 
-Every ingested trace is also analyzed by the worker: deterministic signals (retry loops, error recovery, call counts) always run, and an LLM judge labels outcome / failure mode / task category when a provider key is configured (`OPENAI_API_KEY` etc. in `.env` — see `.env.example`). Keyless mode is honest, not broken: traces show `analysis skipped — judge not configured`, never a fake pending. The trace detail page carries the full Analysis section (labels, judge reasoning, signals, audit trail); list surfaces show the outcome badge.
+Every ingested trace is also analyzed by the worker: deterministic signals (retry loops, error recovery, call counts) always run, and an OpenAI agent judges each turn of a session (outcome, multi-select task categories, failure modes anchored to spans) and a roll-up writes the session verdict, when `OPENAI_API_KEY` is configured in `.env` — see `.env.example`. Native OTLP traces are judged right after ingest; session traces turn by turn as the session grows, with the last turn and the session verdict once it has been idle (2 h) or you ask. Keyless mode is honest, not broken: traces show `analysis skipped — judge not configured`, never a fake pending. The trace detail page carries the full Analysis section (session verdict, per-turn verdicts with cited spans, signals); list surfaces show the session outcome badge.
 
 ```sh
 make seed      # populate the marketplace: fixtures uploaded + listed by a demo contributor
@@ -52,7 +52,7 @@ Want real data of your own? Raw Codex / Claude Code / Cursor session logs upload
 
 ## Desktop app
 
-`apps/desktop` is a lightweight Tauri tray app wrapping the same loop for people who'd rather not keep a terminal open: it watches folders (auto-detecting Codex/Claude Code/Cursor session dirs), uploads through the same API, fires native notifications for review requests, and resolves review items in-app. Users install the `.dmg` from the latest `desktop-v*` GitHub Release (pointed at production, no local stack needed); building from source requires a Rust toolchain. Install and release docs: `apps/desktop/README.md`.
+`apps/desktop` is a lightweight Tauri tray app wrapping the same loop for people who'd rather not keep a terminal open: it watches folders (auto-detecting Codex/Claude Code/Cursor session dirs), uploads through the same API, fires native notifications for review requests, and lists review items in-app. Users install the `.dmg` from the latest `desktop-v*` GitHub Release (pointed at production, no local stack needed); building from source requires a Rust toolchain. Install and release docs: `apps/desktop/README.md`.
 
 ## Develop (outside Docker)
 

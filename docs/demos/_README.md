@@ -27,4 +27,4 @@ Each demo is one slug-named file with three sections:
 |---|---|---|
 | `large-trace-handling.md` | A 5,000-span trace ingests and inspects smoothly: light span-list API + per-span detail fetch + capped default expansion | Live |
 | `cli-sync.md` | The machine door on your own Codex/Claude/Cursor sessions: API-key auth, stateless sync + watch, server-side dedupe, live `/uploads`, honest unattended failures | Live |
-| `hil-loop.md` | Uncertain verdicts route to a review queue with reasons: per-upload digest notifications, split-view resolve with human provenance, supersede-never-duplicate, keyless via canned-verdict fault | Live |
+| `hil-loop.md` | Turns the judge was unsure about open one review item per trace with the agent's reasons: per-upload digest notifications, per-turn owner relabel with human provenance (never re-judged), supersede-never-duplicate, keyless via canned-verdict fault | Live |

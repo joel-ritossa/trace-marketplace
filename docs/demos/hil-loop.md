@@ -1,10 +1,10 @@
-# HIL Loop — Uncertainty → Review → Human Labels
+# HIL Loop — Uncertain Turns → Review → Human Labels
 
-When the judge isn't sure about a trace, the verdict doesn't ship silently:
-it routes to a review queue with plain-language reasons, digests into one
-notification per upload, and a human answer lands back on the trace with
-human provenance the machine can never overwrite. Runs end to end on a
-keyless stack via a canned-verdict fault.
+When the judge can't confidently judge a turn, the verdict doesn't ship
+silently: the trace gets one open review item listing its uncertain turns
+with the agent's reasons, digested into one notification per upload, and the
+owner's relabel lands on the turn with human provenance the machine can never
+overwrite. Runs end to end on a keyless stack via a canned-verdict fault.
 
 ## Steps
 
@@ -13,65 +13,57 @@ signed in at http://localhost:3000 (or your `WEB_PORT`):
 
 ```sh
 # 1. Upload a batch with an uncertain verdict injected (keyless lever:
-#    the worker adopts this verdict instead of calling the LLM, then runs
-#    the real cap + routing math over it).
-TOKEN=…   # browser session token, or use the web upload with devtools off
+#    the worker adopts this canned verdict for every turn it judges and the
+#    roll-up, instead of calling the LLM; outcome is one of
+#    success|partial|failure|indeterminate).
+TOKEN=…   # browser session token
 curl -s -X POST http://localhost:8000/v1/uploads \
   -H "Authorization: Bearer $TOKEN" \
-  -H "X-Fault: analyze:verdict:success:0.4" \
+  -H "X-Fault: analyze:verdict:success:uncertain" \
   -F "file=@fixtures/agent-session.json"
 ```
 
-   Easier without curl: upload any fixture from `/upload` twice (the dev
-   fault header is also settable via the integration helpers), or run
+   Or run the integration test, which exercises the whole loop against the
+   live stack and leaves the data visible in the UI:
 
 ```sh
 cd services/api && uv run pytest tests/integration/test_hil.py -q
 ```
-
-   which exercises the whole loop against the live stack and leaves the
-   data visible in the UI.
 
 2. Watch the **bell badge increment without a refresh** (Supabase Realtime
    on `notifications`, invalidation-only). `/notifications` shows one
    digest — "N review requests from upload X" — not one ping per trace;
    more uncertain traces from the same upload bump the same unread row.
 
-3. Follow the digest → `/review` filtered to that upload. Each row carries
-   the machine verdict with its confidence and the routing reasons
-   verbatim ("Outcome confidence 0.40 is below the 0.70 threshold.").
+3. Follow the digest → `/review` filtered to that upload. Each row lists the
+   trace's uncertain turns with the agent's `uncertain` reason verbatim
+   (the canned one reads "Fault injection: canned uncertain turn.").
    Bulk syncs group per upload, expandable.
 
-4. Open an item: the **same span-tree + details inspection components as
-   the trace page** sit beside the verdict form. The machine's take is
-   context, never pre-selected. Answer any subset — outcome ternary,
-   failure mode (only when failure is chosen, with one-line category
-   descriptions), task category — and resolve:
+4. Open an item: the same evidence components as the trace page sit beside
+   the relabel form. The machine's take is context, never pre-selected.
+   Set the turn's outcome, task categories and failure modes (each failure
+   mode must cite at least one span of that turn) and save. This is
+   `PUT /v1/traces/{id}/turns/{turn_index}/labels`: the turn becomes
+   `provenance = human`, its `uncertain` clears, the session's category and
+   failure-mode arrays are recomputed, and when no uncertain turn is left
+   the item resolves.
 
-   - match the machine value → `human_confirmed`, confidence 1.00
-   - differ → `human`, confidence 1.00
-   - a non-failure human outcome clears a machine failure_mode
-
-   "Resolve & next" walks the rest of the batch oldest-first.
-
-5. Back on `/traces`: the resolved trace shows the **solid** outcome badge
-   (human provenance) at 1.00; unresolved ones keep the outline machine
-   badge and stay fully listable/filterable — review gates nothing. The
-   needs-review indicator links straight to the open item.
+5. Back on `/traces`: the trace keeps its (machine) session outcome and
+   stays fully listable/filterable — review gates nothing. The needs-review
+   indicator links straight to the open item until it resolves.
 
 6. Re-run analysis on a trace with an open item
-   (`make requeue UPLOAD=<id>` with the fault still armed): the old item
-   flips `superseded`, exactly one fresh item is open — never two. Re-arm a
-   confident verdict (`analyze:verdict:success:0.95`) and requeue: the open
-   item flips `superseded` with no fresh one — a re-run that resolves the
-   uncertainty closes the question instead of leaving a stale ask. Resolve
-   the outcome on an open item and requeue again: the same uncertainty
-   reasons are now filtered (that question was answered by a human) and
-   nothing routes.
+   (`make requeue UPLOAD=<id>` with the fault still armed): an unchanged
+   uncertain set keeps the same item; a different set supersedes it with one
+   fresh item — never two. Re-arm a confident verdict
+   (`analyze:verdict:success`) and requeue: the open item flips
+   `superseded` with no fresh one — a re-run that resolves the uncertainty
+   closes the question instead of leaving a stale ask. A relabelled turn is
+   never re-judged, whatever a re-run says.
 
-7. Owner relabel: on any analyzed trace's detail page, Analysis →
-   "Relabel" self-creates an item (empty reasons) and lands on the same
-   resolve view. Works on keyless-skipped traces too.
+7. Owner relabel without an item: on any analyzed trace's detail page,
+   Analysis → relabel a turn. Same endpoint, no review item involved.
 
 8. Unattended failures: sync a bad file through the CLI
    (`echo '{"resourceSpans": []}' > bad.json`, then `trace-sync sync`) —
@@ -81,47 +73,44 @@ cd services/api && uv run pytest tests/integration/test_hil.py -q
 
 ## What was solved
 
-B2's analysis ships verdicts with calibrated confidence, but a label the
-judge wasn't sure about is a data-quality liability for the marketplace,
-and asking a human costs attention. The loop closes the gap with strict
-budget discipline: only genuinely uncertain verdicts ask, each question is
-asked once, bulk uploads collapse into one notification, and a human
-answer permanently outranks the machine on exactly the fields it touched.
+A turn the agent couldn't judge (it ran out of steps, or its citations didn't
+check out) is a data-quality liability for the marketplace, and asking a
+human costs attention. The loop closes the gap with strict budget discipline:
+only genuinely uncertain turns ask, each trace has one open question, bulk
+uploads collapse into one notification, and a human answer permanently
+outranks the machine on exactly the turn it touched.
 
 ## Why it's interesting
 
-- **Routing rides the rewrite transaction.** The worker passes routing
-  context into the same delete-and-rewrite that persists analysis
-  (`services/api/app/queries/analysis.py:rewrite`): labels never commit
-  without the review item that routed them, and a crash re-run converges
-  both together. Supersede-then-insert under a partial unique index
+- **The item rides the analysis transaction.** The worker syncs the review
+  item inside the same write that persists the turns
+  (`services/api/app/queries/analysis.py:rewrite` →
+  `queries/review_items.py:sync`): labels never commit without the item
+  that flags them, and a crash re-run converges both together.
+  Supersede-then-insert under a partial unique index
   (`review_items (trace_id) where status = 'open'`) makes duplicate open
   items impossible, not just unlikely.
-- **Humans are never re-asked.** The reason filter
-  (`queries/analysis.py:filter_reasons`) drops any routing reason whose
-  target field already carries human provenance on the row being written —
-  composed on top of B2's frozen `route()`, which stays pure.
+- **Humans are never re-asked.** `sync` only counts `provenance = 'machine'`
+  uncertain turns, and `rewrite` skips any turn that is human by the time
+  it writes — so a relabel can't be overwritten even by a run that was
+  already in flight.
 - **Flood control is one unique index.** The digest is an
   `insert … on conflict … do update` against a partial unique index on
   `(user_id, payload->>'upload_id') where unread`
   (`queries/notifications.py`): per-upload notification dedupe with a
   live item counter and zero scheduling machinery. Reading the digest
-  frees the slot; the next routed item starts a fresh one.
-- **Provenance arithmetic is a pure function.**
-  `queries/review_items.py:label_updates` decides
-  `human` vs `human_confirmed` (comparator: the field's current
-  machine-provenance value), stamps confidence 1.0, and applies the
-  failure-mode coherence rule — unit-tested as a matrix, executed inside
-  one transaction with the analysis row locked against concurrent
-  rewrites.
+  frees the slot; the next item starts a fresh one.
+- **Relabels are anchored.** A failure mode on the relabel request must cite
+  spans inside the turn (`routers/review_items.py:relabel_turn`, 422
+  otherwise) — the same rule the agent's own output is held to.
 - **Keyless CI exercises the whole loop.** The canned-verdict fault
-  (`X-Fault: analyze:verdict:<outcome>:<conf>[:<category>:<conf>]`,
-  `app/dev/faults.py`) substitutes the judge while keeping the real cap,
-  routing, filter, digest, and resolve paths live —
-  `tests/integration/test_hil.py` runs the full done-when on a stack with
-  no provider key, audit rows honestly marked `fault:canned`.
-- **One evidence pane, two surfaces.** The resolve view composes the same
+  (`X-Fault: analyze:verdict:<outcome>[:uncertain]`, `app/dev/faults.py`)
+  substitutes the judge while keeping the real turn persistence, review,
+  digest, and relabel paths live — `tests/integration/test_hil.py` runs it
+  on a stack with no provider key, audit rows honestly marked
+  `fault:canned`.
+- **One evidence pane, two surfaces.** The relabel view composes the same
   `TraceEvidence` component as the trace page
-  (`apps/web/src/components/traces/trace-evidence.tsx`) — the reviewer
+  (`apps/web/src/components/traces/trace-evidence.tsx`), so the reviewer
   judges with full span-level evidence on one screen, by construction
   rather than by copy.

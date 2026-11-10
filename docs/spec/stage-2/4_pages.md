@@ -6,8 +6,7 @@ New routes plus deltas to stage-1 pages. Stage-1 UI law carries over unchanged: 
 
 | Route | Purpose |
 |---|---|
-| `/review` | HIL queue: traces the analyzers were uncertain about. |
-| `/review/[itemId]` | Resolve one item: judge a trace (outcome, failure_mode, category). |
+| `/review` | Review queue: traces with turns the judge was uncertain about; each turn links to its row on the trace page, where the owner relabels it. |
 | `/notifications` | Notification history; the bell in the shell is a badge + link (no popover). |
 | `/subscriptions` | Manage saved queries. |
 | `/subscriptions/[id]` | Subscription feed: live matches, backfill, multi-select → bulk acquire. |
@@ -16,27 +15,16 @@ New routes plus deltas to stage-1 pages. Stage-1 UI law carries over unchanged: 
 
 Nav (per the approved `docs/proposals/ui-redesign.md`): a fixed left sidebar with two labeled groups carrying the supply/demand mental model — **Workspace**: Traces (`/traces`, with an Uploads tab at `/uploads` — one nav item, two link-tabs, so users navigate "my data" without first learning the ingest pipeline), Review (`/review`, open-count badge) — **Marketplace**: Browse (`/marketplace`), Subscriptions (`/subscriptions`), Library (`/library`) — plus a Settings footer item. The sidebar collapses to an icon rail on narrow viewports. A slim top bar carries a contextual breadcrumb on the left and the bell (unread badge, navigates to `/notifications`) plus account menu on the right; the brand mark links to `/`. `/upload` no longer exists as a page — it redirects to `/uploads`, which is now the single ingest surface (dropzone + history, below). Opened surfaces are routes, never overlays; transient confirms/dialogs are the only overlay UI (`docs/ux-principles/navigation/routing.md`).
 
-Content measures, set per page — no page escapes its container: full width (trace detail, review resolve), wide `max-w-6xl` (all list surfaces), narrow `max-w-2xl` (settings).
+Content measures, set per page — no page escapes its container: full width (trace detail), wide `max-w-6xl` (all list surfaces), narrow `max-w-2xl` (settings).
 
 ## New Pages
 
 ### /review
 
-- Queue rows: trace identity, machine verdict + confidence, **routing reason in plain language** (indeterminate / low confidence with value / signals disagree with judge / uncertain category), item age. Newest-first.
+- Queue rows: trace identity, the count of uncertain turns and each turn's one-line summary + the agent's `uncertain` reason verbatim, item age. Newest-first. Each turn links to `/traces/[id]?turn=N`, which scrolls to and highlights that turn's row in the Analysis section; relabeling happens there.
 - Bulk syncs group by upload ("12 from upload X", expandable), mirroring the notification digest.
 - Advisory framing throughout — review improves labels, it gates nothing; no alarm styling.
 - States: loading, empty (positive), results, grouped-bulk.
-
-### /review/[itemId]
-
-- Split view: trace evidence (same inspection components as `/traces/[id]`) beside the verdict form; the reviewer never leaves the screen.
-- Evidence defaults to the conversation view (a chat-style reconstruction of LLM messages and tool calls, deduped across replayed history) so a reviewer can read and score without span literacy; the span tree + details panel sits behind a Conversation/Spans toggle.
-- Machine verdict, confidence, routing reason shown as context — **never pre-selected** in the form.
-- The behavior summary ([1_analysis.md](1_analysis.md)) sits above the machine verdict — gist visible, step walkthrough behind a collapsed disclosure — orienting the reviewer before they read the evidence. Omitted when none exists.
-- Form mirrors the label model exactly: ternary outcome (indeterminate is a valid answer, not a skip); failure_mode select (10 categories, one-line descriptions) only when failure chosen; task_category independent. No free text, no scales.
-- Resolve commits with provenance; post-resolve shows per-field provenance + confidence 1.0. Partial resolution allowed. "Resolve & next" is primary within a batch.
-- Owner-initiated relabel from trace detail reuses this view (same route, self-created item).
-- States: loading, already-resolved (read-only with who/when), trace-deleted (item void, stated), form-error.
 
 ### /notifications + bell
 
@@ -64,7 +52,7 @@ Content measures, set per page — no page escapes its container: full width (tr
 
 - **API keys:** mint (name it) → plaintext shown exactly once — monospace, copy button, "you won't see this again", dismissed only by user action; reveal includes the CLI usage snippet with the key inlined. List: name, `key_display`, created, `last_used_at` ("never used" explicit), scope stated (upload-only); revoke per-row with consequence-stating confirm.
 - **Profile:** display name, inline edit (consumer-facing on marketplace cards).
-- **Privacy:** "Allow LLM analysis of private traces" toggle (default on), with honest consequence copy both ways: on = private-trace content is sent to the configured LLM provider for labeling; off = private traces get deterministic signals only until listed (listing always analyzes). Plain statement, no alarm styling; takes effect on subsequent analysis runs, and the copy says so.
+- **Privacy:** "Allow LLM analysis of private traces" toggle (default on), with honest consequence copy both ways: on = private-trace content is sent to OpenAI for labeling; off = private traces get deterministic signals only until listed (listing always analyzes). Plain statement, no alarm styling; takes effect on subsequent analysis runs, and the copy says so.
 - **Task scope:** grouped checkbox grid over the `task_category` enum ([1_analysis.md](1_analysis.md) Taxonomies) — "the kinds of tasks your agents work on". Selecting nothing = unscoped (full taxonomy), and the copy says so; `other` is not offered (always implicitly allowed). Applies to subsequent analysis runs, never retroactive.
 - States: empty key list (mint as the empty-state action, links CLI setup), list, reveal, post-revoke.
 
@@ -96,38 +84,41 @@ Three regions, full content width: a header strip (status, name, visibility + ou
 
 ### /traces/[traceId] — Analysis section
 
-- A third section between the metadata header and the span tree. Header keeps a compact label strip (outcome / failure_mode / task_category badges with provenance + confidence) for triage; the section is the full view.
-- Contents in disclosure order: labels with per-field provenance + confidence → behavior summary (gist visible, step walkthrough behind a collapsed disclosure) → judge reasoning → deterministic signals → metric scores (flag/score + reason each). Audit details (analyzer versions, model id, stored votes) behind a collapsed disclosure.
-- Owner-initiated relabel entry point lives here (routes to the resolve view).
-- The section always renders, with explicit non-result states (below).
+- Lives in the collapsible overview region, beside the metadata grid on wide screens (stacked below it otherwise), above the evidence region. The header strip carries only the session outcome badge (or the non-verdict state); categories and failure modes render in the section.
+- Contents in order: the session card (outcome badge, status line, goal, summary, category and failure-mode chips, session signals, when the verdict was written) → a per-turn list (turn number, outcome or "not judged", a "human" mark on relabelled turns, the `uncertain` reason when set, summary, category chips; each failure mode shows its reason, clicking its chip opens its first cited span in the evidence region's Spans view, and a turn citing several spans gets one "span N" link each). Per-turn signals are not rendered. A native-OTLP trace shows one turn.
+- Owner relabel: a "Relabel" button per turn opens a dialog seeded with the turn's current labels — outcome (`indeterminate` is a valid answer), task categories (multi-select, ≥ 1), failure modes (the 9 agent failure modes with one-line descriptions, each with an optional reason). A kept failure mode keeps its cited spans; a newly added one carries none. Saving calls `PUT /v1/traces/{id}/turns/{turn_index}/labels`; the turn becomes human-labeled and is never re-judged, and the review item closes when no uncertain turn is left. API errors show verbatim.
+- An open review item shows an advisory line counting the uncertain turns (owner only); there is no separate review page.
+- No confidence, votes, or metric scores exist to show.
+- The section always renders, with explicit non-result states (below). The owner gets "Analyze now" (`POST /v1/traces/{id}/analyze`) while the trace is `pending` or `in_progress` or the last run failed.
 
 ### Analysis states — never a lie
 
 | State | Rendering |
 |---|---|
-| `pending` | "Analysis pending" (queued/running — it will arrive). |
-| `complete` | Results render. |
+| `pending` | "No turns judged yet" — each turn is judged once the next starts; the last turn and the session verdict wait until the session is idle. |
+| `in_progress` | Judged turns render; "3 of 12 turns judged — the session verdict is written once the session goes idle" (`session.turn_count`). |
+| `final` | Results render. |
 | `skipped` | Reason-specific, never generic: `not_configured` → "Judge not configured"; `owner_opt_out` → "LLM analysis is off for your private traces" (links to `/settings` for the owner). Deterministic signals still shown. Never a false "pending". |
-| `failed` | Real reason, verbatim. |
+| failed (open dead letter) | Real reason, verbatim (`failed_reason`). |
 
 Filter-exclusion notes ("N not-yet-analyzed traces excluded") use the same state.
 
 ### Labels at list level (all unified-list rows)
 
-- **Outcome + provenance only:** one outcome badge whose variant encodes provenance (solid = human/human_confirmed, outline = machine), confidence as secondary text on the badge — rendered as the raw number (`0.84`), not bucketed.
-- `failure_mode`, `task_category`, metric scores: filterable but not rendered at list level.
+- **Session outcome:** one outcome badge (`success | partial | failure | indeterminate`); an `in_progress` verdict (turns judged, roll-up pending) shows the not-final state rather than a verdict. No provenance or confidence on the badge.
+- `failure_mode` and `task_category` are filterable and returned on the card (arrays); rendering them at list level is optional.
 - Unanalyzed traces show a quiet "not analyzed" placeholder, visually distinct from a verdict.
 
 ### Filter controls
 
-- Numeric predicates get a **threshold control, min-bound only** (number input with a `≥` affordance) — no dual-handle sliders. Chips render the predicate verbatim: `faithfulness ≥ 0.8 ×`.
-- `metric_scores` keys are enumerated from observed data, not hardcoded.
+- Numeric predicates get a **threshold control, min-bound only** (number input with a `≥` affordance) — no dual-handle sliders. Chips render the predicate verbatim: `llm calls ≥ 50 ×`.
+- `task_category` and `failure_mode` filters are multi-select (match any).
 - One filter language: chips and the filter component are the same artifacts on search pages, subscription rows, and feed headers.
 
 ### /traces (My Traces) at sync scale
 
 - **Pagination UI** on every list surface (standard pager, no infinite scroll; API already paginates).
-- New **analysis column**: outcome badge or pending/skipped state, plus a needs-review indicator linking to the review item.
+- New **analysis column**: outcome badge or pending/skipped state, plus a needs-review indicator linking to the trace (owner only).
 - **Bulk listing (batched consent):** multi-select → "List N traces" → one confirmation dialog with the same ownership-consent copy, naming the exact count, requiring the affirmative checkbox once for the batch. Operates only on an explicit selection of visible rows — a header checkbox may select all rows *on the current page*, but no "all matching" shortcut over unseen rows exists. Per-trace listing on the detail page unchanged. Bulk-unlist included for symmetry.
 
 ### /library
@@ -144,4 +135,4 @@ Filter-exclusion notes ("N not-yet-analyzed traces excluded") use the same state
 - All new list surfaces paginate from day one.
 - Flood control is a system property: digests at the source (per upload, per subscription), grouping in queue and notifications list — the first big CLI sync is the stress test everywhere.
 - URL carries view state: filters, search, pagination serialize into the URL on every list surface, including feeds.
-- **Live surfaces use Supabase Realtime as an invalidation signal only.** The web app subscribes to `postgres_changes` on its own rows (RLS-enforced) and refetches through the API on change — row payloads from the socket are never consumed as data; the API stays the single read path. Web only (the CLI keeps polling per [5_cli.md](5_cli.md)). Wired surfaces: `/uploads` status flips (A1), the notification bell + `/notifications` (A3), the trace list surfaces + trace detail including the Analysis section (`traces` + `trace_analysis` tables — new traces landing and verdicts appearing live); later surfaces opt in with the same hook. Realtime is an enhancement layer — every surface must remain correct with the socket disconnected (load/refetch paths unchanged).
+- **Live surfaces use Supabase Realtime as an invalidation signal only.** The web app subscribes to `postgres_changes` on its own rows (RLS-enforced) and refetches through the API on change — row payloads from the socket are never consumed as data; the API stays the single read path. Web only (the CLI keeps polling per [5_cli.md](5_cli.md)). Wired surfaces: `/uploads` status flips (A1), the notification bell + `/notifications` (A3), the trace list surfaces + trace detail including the Analysis section (`traces`, `trace_analysis` and `turn_analysis` tables — new traces landing and verdicts appearing turn by turn, live); later surfaces opt in with the same hook. Realtime is an enhancement layer — every surface must remain correct with the socket disconnected (load/refetch paths unchanged).

@@ -10,7 +10,7 @@ Three audiences can see trace-derived content, and each gets a different answer:
 |---|---|
 | Owner | Original span content (raw download, raw `attributes`/`events`/`status_message` on span detail) |
 | Other users (listed / acquired traces) | Scrubbed content everywhere — inspection, search, downloads |
-| LLM provider (judge, metrics, embeddings) | Scrubbed content only, and only with consent (below) |
+| OpenAI (agent judge, embeddings) | Scrubbed content only, and only with consent (below) |
 
 The asset being protected is leaked credentials and pattern-detectable PII inside span content. Free-text PII without a pattern (names, addresses) is explicitly out of scope — see Honest Caveats.
 
@@ -37,11 +37,11 @@ At the read boundaries (`app/routers/traces.py`): span detail joins `span_raw` f
 
 ## LLM Data Flow & Consent
 
-Analysis sends trace content (the scrubbed representation) to the configured LLM provider — for judging, quality metrics, and behavior embeddings. Three controls govern this flow:
+Analysis sends trace content (the scrubbed representation) to OpenAI — for judging (the agent reads spans on demand through tools) and behavior embeddings. Three controls govern this flow:
 
 - **Operator-level**: no provider key configured means zero external data flow; analysis degrades honestly with recorded skip reasons ([04](04_analysis-pipeline.md)).
 - **Per-account**: a `/settings` toggle (`profiles.allow_private_llm_analysis`, default on) excludes an account's *private* traces from LLM analysis; opted-out traces skip with `owner_opt_out` recorded and get deterministic signals only.
-- **Listing overrides the opt-out**: listed traces are always analyzed — listing is the consent act, and flipping a private opted-out trace to listed re-enqueues its analysis so the marketplace never carries an unanalyzed listing ([05](05_marketplace.md)).
+- **Listing overrides the opt-out**: listed traces are always analyzed — listing is the consent act, and flipping a private opted-out trace to listed finalizes its analysis so the marketplace never carries an unanalyzed listing ([05](05_marketplace.md)).
 
 Embeddings ride exactly the same gates as the judge — an embedding call sends trace content to the provider just like a judge call — and the stored vectors are treated as derived sensitive data, with RLS mirroring trace visibility.
 
@@ -59,5 +59,5 @@ What redaction does not do, stated plainly (full list in the [explainer](../docs
 - **Known over-masking, kept deliberately.** High-entropy base64 content (embeddings, encoded attachments) flags as `SECRET`; roughly 10% of random 16-digit ids pass Luhn and flag as `CREDIT_CARD`; 40-hex strings (commit SHAs) flag as `SECRET` because that is the legacy GitHub token shape. All detection errors fail toward masking, never leaking.
 - **Names are scrubbed for everyone, owner included** — trace and span names have a single stored representation. The span *list* also serves the scrubbed `status_message` to owners; raw appears on span detail.
 - **Contributor-authored fields are not scrubbed.** `description` and `tags` are marketplace copy the contributor wrote deliberately; upload filenames likewise.
-- **Logging discipline**: span `attributes`, `events`, and raw payload bodies are never logged (a standing repo rule); judge/critic prompts and raw LLM outputs exist only in memory — only parsed labels and call metadata (latency/tokens/cost) leave the call site (`app/analysis/llm.py`).
+- **Logging discipline**: span `attributes`, `events`, and raw payload bodies are never logged (a standing repo rule); judge prompts, tool results and raw LLM outputs exist only in memory — only parsed labels and call metadata (latency/tokens) leave the call site (`app/analysis/llm.py`).
 - **Pre-redaction uploads** (ingested before the ruleset shipped) have no scrubbed artifact; an acquirer download 404s with a readable reason until the upload is re-ingested. A fresh compose — the evaluation path — never hits this.
