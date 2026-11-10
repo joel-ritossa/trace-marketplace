@@ -1,5 +1,7 @@
 import json
 import os
+import time
+from datetime import UTC, datetime
 
 import zstandard
 
@@ -27,6 +29,29 @@ def test_discover_since_hours_filters_by_mtime(tmp_path):
 
     assert discover([tmp_path], since_hours=1) == [fresh]
     assert discover([tmp_path]) == [fresh, stale]
+
+
+def test_discover_since_hours_skips_stale_session_with_fresh_mtime(tmp_path, capsys):
+    now = time.time()
+
+    def session(name, age_hours, compress=False):
+        stamp = datetime.fromtimestamp(now - age_hours * 3600, UTC).isoformat()
+        raw = f'{{"type":"user","timestamp":"{stamp}"}}\n{{"type":"snapshot"}}\n'.encode()
+        path = tmp_path / name
+        path.write_bytes(zstandard.ZstdCompressor().compress(raw) if compress else raw)
+        return path
+
+    active = session("active.jsonl", 1)
+    old = session("old.jsonl", 100)
+    old_zst = session("old2.jsonl.zst", 100, compress=True)
+    untimed = tmp_path / "untimed.jsonl"
+    untimed.write_text('{"type":"user"}\n')
+
+    assert discover([tmp_path], since_hours=24) == [active, untimed]
+    assert discover([tmp_path], since_hours=24) == [active, untimed]
+    err = capsys.readouterr().err
+    assert err.count("old.jsonl → skipped") == 1 and err.count("old2.jsonl.zst → skipped") == 1
+    assert old in discover([tmp_path]) and old_zst in discover([tmp_path])
 
 
 def test_discover_accepts_explicit_file(tmp_path):

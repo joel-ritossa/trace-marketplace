@@ -2,8 +2,10 @@
 
 import functools
 import re
+import sys
 import time
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 
 import zstandard
@@ -14,6 +16,9 @@ SUFFIXES = (".json", ".jsonl", ".jsonl.zst")
 SUBAGENTS = "subagents"
 DEFAULT_QUIET_SECONDS = 300.0
 _AGENT_ID = re.compile(rb'"agentId":\s*"([\w-]+)"')
+_TIMESTAMP = re.compile(rb'"timestamp":\s*"([^"]+)"')
+_TAIL_BYTES = 128 * 1024
+_reported_stale: set[Path] = set()
 
 
 def _is_trace(path: Path) -> bool:
@@ -29,7 +34,8 @@ def upload_name(path: Path) -> str:
 def discover(paths: list[Path], since_hours: float | None = None) -> list[Path]:
     """`*.json` / `*.jsonl` / `*.jsonl.zst` files (any case) under the given paths, recursive,
     sorted, deduped. `since_hours` keeps only files modified in the last N
-    hours — file selection only, never content interpretation. Files inside a
+    hours and whose last recorded activity (latest record `timestamp`) is
+    within it too: a stale session with a fresh mtime is skipped. Files inside a
     session's companion directory (`X/` beside `X.jsonl`: subagent
     transcripts, title metadata) are skipped; subagents upload with `X`."""
     found: set[Path] = set()
@@ -42,7 +48,50 @@ def discover(paths: list[Path], since_hours: float | None = None) -> list[Path]:
     if since_hours is not None:
         cutoff = time.time() - since_hours * 3600
         found = {p for p in found if (_stat(p) or (0, -1.0))[1] >= cutoff}
+        found = {p for p in found if _active_since(p, cutoff)}
     return sorted(found)
+
+
+def _active_since(path: Path, cutoff: float) -> bool:
+    """False when the file's last recorded activity predates `cutoff`; files
+    without a readable timestamp stay (mtime already passed). Reports each
+    skipped file once, not on every watch tick."""
+    try:
+        st = path.stat()
+        last = _last_activity(path, st.st_size, st.st_mtime)
+    except OSError:  # vanished or unreadable: leave it to the upload path
+        return True
+    if last is None or last >= cutoff:
+        return True
+    if path not in _reported_stale:
+        _reported_stale.add(path)
+        age_hours = (time.time() - last) / 3600
+        print(f"{path} → skipped: last activity {age_hours:.0f}h ago", file=sys.stderr)
+    return False
+
+
+@functools.lru_cache(maxsize=4096)
+def _last_activity(path: Path, size: int, mtime: float) -> float | None:
+    """Latest record `timestamp` (epoch seconds) in the file's tail, keyed on
+    its stat like `_agent_ids_at`. `.zst` streams can't seek, so they are
+    decompressed and trimmed."""
+    if path.suffix.lower() == ".zst":
+        with path.open("rb") as f:
+            reader = zstandard.ZstdDecompressor().stream_reader(f)
+            tail = b""
+            while chunk := reader.read(_TAIL_BYTES):
+                tail = (tail + chunk)[-_TAIL_BYTES:]
+    else:
+        with path.open("rb") as f:
+            f.seek(max(0, size - _TAIL_BYTES))
+            tail = f.read()
+    stamps = []
+    for raw in _TIMESTAMP.findall(tail):
+        try:
+            stamps.append(datetime.fromisoformat(raw.decode()).timestamp())
+        except ValueError:
+            continue
+    return max(stamps, default=None)
 
 
 def _in_session_dir(path: Path) -> bool:
