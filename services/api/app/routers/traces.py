@@ -94,6 +94,7 @@ def list_item(r: asyncpg.Record) -> TraceListItem:
         started_at=r["started_at"],
         duration_ms=r["duration_ms"],
         span_count=r["span_count"],
+        turn_count=r["turn_count"],
         error_count=r["error_count"],
         provider=r["provider"],
         model=r["model"],

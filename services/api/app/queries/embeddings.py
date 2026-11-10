@@ -6,6 +6,7 @@ the anchor clause shared by subscription matching and live counts.
 
 import asyncpg
 
+from app.queries.analysis import TURN_COUNT_SQL
 from app.queries.traces import anchor_clauses, make_param
 
 
@@ -63,7 +64,7 @@ async def similar_traces(
     also returns the count of visible traces at or above it — the
     subscription slider's live preview."""
     rows = await pool.fetch(
-        """
+        f"""
         select t.id, t.name, t.status, t.started_at, t.duration_ms, t.span_count,
                t.error_count, t.provider, t.model, t.created_at, t.visibility,
                t.tags, t.description, t.listed_at, t.skill_names,
@@ -81,6 +82,7 @@ async def similar_traces(
                  where ri.trace_id = t.id and ri.status = 'open' and t.owner_id = $2
                  limit 1
                ) as open_review_item_id,
+               {TURN_COUNT_SQL} as turn_count,
                1 - (te.embedding <=> qe.embedding) as similarity
         from trace_embeddings qe
         join trace_embeddings te on te.trace_id <> qe.trace_id

@@ -323,6 +323,18 @@ async def fetch_subagents(
     return {r["span_id"]: dict(r) for r in rows}
 
 
+# Scalar subquery: the turn count `turn_origins` yields (distinct valid
+# `turn.index` values, at least the one synthetic turn), for list rows
+# aliased `t`.
+TURN_COUNT_SQL = """(
+    select greatest(count(distinct (s.attributes ->> 'turn.index')::int), 1)
+    from spans s
+    where s.trace_id = t.id and s.attributes ? 'turn.index'
+      and jsonb_typeof(s.attributes -> 'turn.index') = 'number'
+      and s.attributes ->> 'turn.index' ~ '^-?[0-9]+$'
+  )"""
+
+
 async def turn_origins(
     executor: asyncpg.Pool | asyncpg.Connection, trace_id: str
 ) -> dict[int, str]:

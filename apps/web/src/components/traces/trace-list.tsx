@@ -157,6 +157,7 @@ export function TraceList({
             )}
             <Th className="min-w-40 xl:min-w-64">Name</Th>
             <Th className="min-w-48">Analysis</Th>
+            <Th className={WIDE_ONLY}>Turns</Th>
             <Th className={WIDEST_ONLY}>Spans</Th>
             <Th className={WIDE_ONLY}>Errors</Th>
             <Th>Duration</Th>
@@ -236,6 +237,7 @@ export function TraceList({
                   )}
                 </span>
               </td>
+              <MonoTd className={WIDE_ONLY}>{trace.turn_count}</MonoTd>
               <MonoTd className={WIDEST_ONLY}>{trace.span_count}</MonoTd>
               <MonoTd className={cn(WIDE_ONLY, trace.error_count > 0 && "text-error-deep")}>
                 {trace.error_count}

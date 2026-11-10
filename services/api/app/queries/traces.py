@@ -4,6 +4,7 @@ import asyncpg
 
 from app.importers.otlp import NormalizedTrace
 from app.queries import uploads as uploads_q
+from app.queries.analysis import TURN_COUNT_SQL
 from app.schemas.trace import TraceFilterQuery, csv_values
 
 # Whitelist for the API's sort param; never interpolate user input directly.
@@ -281,6 +282,7 @@ async def list_visible(
                  where ri.trace_id = t.id and ri.status = 'open' and t.owner_id = $1
                  limit 1
                ) as open_review_item_id,
+               {TURN_COUNT_SQL} as turn_count,
                count(*) over () as total
         {base}
         order by {order_by}, t.id

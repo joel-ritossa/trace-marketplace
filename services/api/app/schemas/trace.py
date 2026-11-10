@@ -149,6 +149,7 @@ class TraceListItem(BaseModel):
     started_at: datetime
     duration_ms: int
     span_count: int
+    turn_count: int
     error_count: int
     provider: str | None
     model: str | None

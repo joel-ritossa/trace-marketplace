@@ -39,6 +39,8 @@ export type TraceListItem = {
   started_at: string;
   duration_ms: number;
   span_count: number;
+  // Turns as the judge splits them (same count as analysis.session.turn_count).
+  turn_count: number;
   error_count: number;
   provider: string | null;
   model: string | null;
