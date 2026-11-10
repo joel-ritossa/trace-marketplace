@@ -36,8 +36,14 @@ class TurnLabel(BaseModel):
     reason: str | None
 
 
+TurnOrigin = Literal["human", "automated"]
+
+
 class TurnAnalysis(BaseModel):
     turn_index: int
+    # Who started the turn: a person's ask, or an outside event (importer's
+    # `turn.origin` on the turn span; absent = human).
+    origin: TurnOrigin
     # Null = not judged (LLM analysis skipped).
     outcome: Outcome | None
     summary: str | None

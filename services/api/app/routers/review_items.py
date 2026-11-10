@@ -39,6 +39,7 @@ def _item(row: asyncpg.Record) -> ReviewItemResponse:
         trace=ReviewTraceSummary(
             trace_id=str(row["trace_id"]),
             name=row["trace_name"],
+            goal=row["trace_goal"],
             status=row["trace_status"],
             started_at=row["trace_started_at"],
             duration_ms=row["trace_duration_ms"],

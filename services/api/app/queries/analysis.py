@@ -301,23 +301,28 @@ async def fetch_turns(
     return [{**dict(t), "labels": by_turn.get(t["turn_index"], [])} for t in turns]
 
 
-async def turn_indexes(executor: asyncpg.Pool | asyncpg.Connection, trace_id: str) -> set[int]:
-    """The trace's current turns as the judge splits them (agent/turns.split):
-    the distinct integer `turn.index` values on its spans, or the one
-    synthetic turn 0 when there are none."""
+async def turn_origins(
+    executor: asyncpg.Pool | asyncpg.Connection, trace_id: str
+) -> dict[int, str]:
+    """The trace's current turns as the judge splits them (agent/turns.split),
+    each with its origin: the distinct integer `turn.index` values on its
+    spans, `automated` when the turn span says `turn.origin = automated`,
+    else `human` — or the one synthetic human turn 0 when there are none."""
     rows = await executor.fetch(
         """
-        select distinct (attributes ->> 'turn.index')::int as turn_index from spans
-        where trace_id = $1 and jsonb_typeof(attributes -> 'turn.index') = 'number'
+        select (attributes ->> 'turn.index')::int as turn_index,
+               bool_or(attributes ->> 'turn.origin' = 'automated') as automated
+        from spans
+        where trace_id = $1 and attributes ? 'turn.index'
+          and jsonb_typeof(attributes -> 'turn.index') = 'number'
           and attributes ->> 'turn.index' ~ '^-?[0-9]+$'
+        group by 1
         """,
         trace_id,
     )
-    return {r["turn_index"] for r in rows} or {0}
-
-
-async def count_turns(executor: asyncpg.Pool | asyncpg.Connection, trace_id: str) -> int:
-    return len(await turn_indexes(executor, trace_id))
+    return {r["turn_index"]: "automated" if r["automated"] else "human" for r in rows} or {
+        0: "human"
+    }
 
 
 async def fetch_analysis(pool: asyncpg.Pool, trace_id: str) -> asyncpg.Record | None:
@@ -401,7 +406,7 @@ async def rewrite(
     async with pool.acquire() as conn, conn.transaction():
         if not await _lock_trace(conn, trace_id):
             return
-        live = await turn_indexes(conn, trace_id)
+        live = set(await turn_origins(conn, trace_id))
         deleted = await conn.fetch(
             """
             delete from turn_analysis where trace_id = $1 and not (turn_index = any($2::int[]))

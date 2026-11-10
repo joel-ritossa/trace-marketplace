@@ -173,6 +173,7 @@ All additive, via new migrations:
 - `profiles.allow_private_llm_analysis` boolean not null default `true` — the per-account opt-out of LLM analysis for private traces ([1_analysis.md](1_analysis.md) Runtime). Editable only by the owner (existing profiles access rule).
 - `profiles.task_categories` text[] not null default `'{}'` — the owner's task scope for the judge's category vocabulary ([1_analysis.md](1_analysis.md) Taxonomies): values from the global `task_category` enum (never `other`); empty = unscoped. Editable only by the owner (existing profiles access rule).
 - `traces.total_tokens` integer nullable — ingestion-derived sum of span tokens (importer addition; like `duration_ms`).
+- `traces.skill_names` text[] not null default `'{}'` — sorted distinct skill names the trace used (spans' `skill.name`: agent `Skill` tool calls and user slash commands); ingestion-derived like `tool_names`, rewritten on re-ingest (migration 19).
 - `dead_letters.trace_id` uuid nullable — analysis tasks are trace-scoped; ingestion rows leave it null.
 - Importer check (not a schema change): trace `name` derivation must produce scannable names (root-span name, falling back to source filename), never a bare id — CLI sync makes this visible at volume.
 - `uploads.redaction_salt` text — random hex set at upload creation, immutable; keys the deterministic placeholder HMAC ([7_redaction.md](7_redaction.md)).
@@ -182,7 +183,7 @@ All additive, via new migrations:
 
 ## Indexes
 
-`api_keys(key_hash)` unique; `notifications(user_id, created_at desc)` + partial on unread; `review_items(trace_id)` with the partial-unique open constraint, partial index on `status = 'open'`; `subscriptions(owner_id)`; unique `(subscription_id, trace_id)` on subscription_matches; `analyzer_results(trace_id)`; unique `trace_labels(trace_id, turn_index, field, value)`; GIN on `trace_analysis(task_categories)` and `(failure_modes)` (the filters are array overlap); `trace_analysis` and `turn_analysis` are otherwise PK-joined.
+`api_keys(key_hash)` unique; `notifications(user_id, created_at desc)` + partial on unread; `review_items(trace_id)` with the partial-unique open constraint, partial index on `status = 'open'`; `subscriptions(owner_id)`; unique `(subscription_id, trace_id)` on subscription_matches; `analyzer_results(trace_id)`; unique `trace_labels(trace_id, turn_index, field, value)`; GIN on `trace_analysis(task_categories)` and `(failure_modes)` and on `traces(skill_names)` (the filters are array overlap); partial `spans(trace_id)` indexes where `attributes ? 'turn.index'`, `? 'skill.name'` and `?| {subagent.id, subagent.description, subagent.type}` (the detail reads those spans' attributes without detoasting the rest); `trace_analysis` and `turn_analysis` are otherwise PK-joined.
 
 ## Access Rules
 

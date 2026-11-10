@@ -19,6 +19,7 @@ from app.schemas.upload import (
     UploadListItem,
     UploadListResponse,
     UploadStatusResponse,
+    UploadTraceSummary,
 )
 from app.worker.tasks import ingest_upload
 
@@ -143,6 +144,7 @@ async def list_uploads(
                 error_message=r["error_message"],
                 redaction_counts=r["redaction_counts"],
                 trace_ids=[str(t) for t in r["trace_ids"]],
+                traces=[UploadTraceSummary.model_validate(t) for t in r["traces"]],
                 created_at=r["created_at"],
                 processed_at=r["processed_at"],
             )

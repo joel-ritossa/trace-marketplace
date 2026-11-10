@@ -124,13 +124,14 @@ async def list_for_owner(
         from review_items ri
         join traces t on t.id = ri.trace_id
         join uploads u on u.id = t.upload_id
+        left join trace_analysis ta on ta.trace_id = t.id
         where {" and ".join(where)}
     """
     filter_args = list(args)
     rows = await pool.fetch(
         f"""
         select ri.*, t.upload_id, u.filename as upload_filename,
-               t.name as trace_name, t.status as trace_status,
+               t.name as trace_name, ta.goal as trace_goal, t.status as trace_status,
                t.duration_ms as trace_duration_ms, t.started_at as trace_started_at,
                count(*) over () as total
         {base}
@@ -151,11 +152,12 @@ async def get_for_owner(pool: asyncpg.Pool, item_id: str, owner_id: str) -> asyn
     return await pool.fetchrow(
         """
         select ri.*, t.upload_id, u.filename as upload_filename,
-               t.name as trace_name, t.status as trace_status,
+               t.name as trace_name, ta.goal as trace_goal, t.status as trace_status,
                t.duration_ms as trace_duration_ms, t.started_at as trace_started_at
         from review_items ri
         join traces t on t.id = ri.trace_id
         join uploads u on u.id = t.upload_id
+        left join trace_analysis ta on ta.trace_id = t.id
         where ri.id = $1 and t.owner_id = $2
         """,
         item_id,

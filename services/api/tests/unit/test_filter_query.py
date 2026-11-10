@@ -113,6 +113,14 @@ class TestClauseBuilders:
         ]
         assert args == [["coding", "debugging"], ["system_failure"]]
 
+    def test_skill_matches_by_array_overlap(self) -> None:
+        # A trace-column filter (stage-1 builder): no analysis row needed.
+        args: list = []
+        q = TraceFilterQuery(skill="pdf, anthropic-skills:docx")
+        assert stage1_clauses(q, make_param(args)) == ["t.skill_names && $1::text[]"]
+        assert args == [["pdf", "anthropic-skills:docx"]]
+        assert not q.has_analysis_predicate
+
     def test_boolean_false_is_a_filter(self) -> None:
         args: list = []
         clauses = analysis_clauses(TraceFilterQuery(has_retry_loop=False), make_param(args))

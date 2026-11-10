@@ -17,13 +17,14 @@ The stage-1 params remain. New params, all backed by a single shared filter buil
 |---|---|
 | `outcome`, `loop_kind` | Equality; comma-separated values OR within a field (`outcome=failure,partial`). `outcome` is the session outcome. |
 | `failure_mode`, `task_category` | Match when the session's array (`failure_modes` / `task_categories`, the union over turns) contains any requested value; comma-separated, OR. |
+| `skill` | Match when the trace's `skill_names` contains any requested skill; comma-separated, OR. A trace column, so it needs no analysis. Values: `GET /v1/traces/skills?scope=mine\|marketplace\|acquired` → `{ skills: [{ name, trace_count }] }`, distinct skills over the same scope as the list, most-used first. |
 | `has_retry_loop`, `recovered_from_error`, `truncation_suspected` | `true`/`false`. |
 | `duration_ms_gte`, `total_tokens_gte`, `llm_call_count_gte`, `tool_call_count_gte` | Min-bound on numerics (`field >= x`) — the only range shape in stage 2. |
 
 Removed with the agent judge: the `*_provenance` and `*_confidence_gte` filters and the repeatable `metric` filter (and its `GET /v1/traces/metric-keys` enumeration). Stored subscription queries containing them were stripped by migration 17.
 This vocabulary **is** the subscription query language: `subscriptions.query` stores exactly this param map (minus `scope`/`sort`/`limit`/`offset`). Any field that becomes filterable is automatically subscribable.
 
-Result cards gain: `outcome`, `task_categories`, `failure_modes` (session level), `analysis_status` (`pending | in_progress | final | skipped`), `analysis_failed`, `has_open_review_item` / `open_review_item_id` (owner only).
+Result cards gain: `skill_names`, `outcome`, `task_categories`, `failure_modes` (session level), `analysis_status` (`pending | in_progress | final | skipped`), `analysis_failed`, `has_open_review_item` / `open_review_item_id` (owner only).
 
 ## New And Changed Endpoints
 
@@ -47,7 +48,7 @@ There is no separate `/analysis` endpoint. Owner or listed; the trace detail car
   },
   "turns": [
     {
-      "turn_index": 0, "outcome": "success", "summary": "…", "uncertain": null,
+      "turn_index": 0, "origin": "human", "outcome": "success", "summary": "…", "uncertain": null,
       "provenance": "machine", "signals": { "…": "…" },
       "labels": [
         { "field": "task_category", "value": "debugging", "span_ids": [], "reason": null },
@@ -60,7 +61,13 @@ There is no separate `/analysis` endpoint. Owner or listed; the trace detail car
 }
 ```
 
-`session.status` follows [2_data-model.md](2_data-model.md): `pending | in_progress | final | skipped` (`skipped` carries `skip_reason`: `not_configured | owner_opt_out`). `failed_reason` is the open analyze dead letter's error, verbatim. `open_review_item_id` and `turns[].uncertain` are owner-only (null for everyone else, here and in `labels.jsonl`). Cited `span_ids` are `source_span_id`s inside the turn. There is no confidence, votes, audit block, or metric scores; the behavior summary is `session.goal` + `session.summary`.
+`session.status` follows [2_data-model.md](2_data-model.md): `pending | in_progress | final | skipped` (`skipped` carries `skip_reason`: `not_configured | owner_opt_out`). `failed_reason` is the open analyze dead letter's error, verbatim. `open_review_item_id` and `turns[].uncertain` are owner-only (null for everyone else, here and in `labels.jsonl`). Cited `span_ids` are `source_span_id`s inside the turn. `turns[].origin` is `human | automated` — who started the turn (the importer's `turn.origin` on the turn span; absent = `human`). There is no confidence, votes, audit block, or metric scores; the behavior summary is `session.goal` + `session.summary`.
+
+The trace detail also gains `skill_names` and `skills: [{ name, source, turn_index, span_id }]` — one entry per skill use, chronological; `source` is `agent` (a `Skill` tool call) or `user` (a slash command); `turn_index` is the turn the span belongs to (null outside any turn). Same visibility as `tool_names`. And `subagents: { count, turns, max_depth }` (zeros when none) — enough to decide whether to show the subagent view.
+
+### GET /v1/traces/{trace_id}/agents
+
+Same visibility as the trace's spans (owner, or listed). The subagent tree as a flat list, `{ agents: [...] }`, one item per spawn span (a tool span carrying `subagent.*` attributes) in start order: `span_id`, `parent_span_id` (nearest ancestor spawn; null = spawned by the main agent), `turn_index`, `depth` (0 = spawned by the main agent), `description`, `type`, `model`, `background`, `linked` (has `subagent.id` and spans under it), `status` (`ok | error`), `started_at`, `ended_at` (latest end over the spawn and everything under it), and totals over everything under it — `span_count`, `llm_calls`, `tool_calls`, `error_count`, `input_tokens`, `output_tokens` — plus `own_span_count` (its own stream, nested subagents' subtrees excluded). Computed from span ids/parents/kinds/status/times/tokens and the `subagent.*` attributes only, never payloads.
 
 ### POST /v1/traces/{trace_id}/analyze
 
@@ -89,7 +96,7 @@ Owner only. Body: `outcome`, `task_categories` (≥ 1, known values, no duplicat
 
 One open item per trace, listing its uncertain turns. Items are created and closed server-side only (analysis runs and relabels); there is no resolve endpoint and no client-created item.
 
-- `GET /v1/review-items` — the caller's items (own traces only), newest first, `limit`/`offset`, optional `upload_id` (the digest link's filter); each row: trace summary, `context` (`{ turns: [{ turn_index, reason, summary }] }`), `status`, `created_at`, and the trace's `upload_id` / `upload_filename` (per-upload grouping). `status` param: `open` (default), `resolved`, `superseded`, or `all`.
+- `GET /v1/review-items` — the caller's items (own traces only), newest first, `limit`/`offset`, optional `upload_id` (the digest link's filter); each row: trace summary (`trace: { trace_id, name, goal, status, started_at, duration_ms }`, `goal` = the session roll-up goal, null until finalized), `context` (`{ turns: [{ turn_index, reason, summary }] }`), `status`, `created_at`, and the trace's `upload_id` / `upload_filename` (per-upload grouping). `status` param: `open` (default), `resolved`, `superseded`, or `all`.
 - `GET /v1/review-items/{id}` — one item; resolved items include `resolved_at`, `resolved_by`.
 - Relabelling happens on the turn: `PUT /v1/traces/{id}/turns/{turn_index}/labels` (above).
 
@@ -112,7 +119,11 @@ All bulk endpoints take `trace_ids[]` (max 100 per call) and return itemized res
 
 - `POST /v1/traces/acquire` — bulk acquire; per-trace semantics identical to the stage-1 single acquire (idempotent, $0, listed-only, owners included). Itemized statuses: `acquired | already_acquired | not_listed | not_found`.
 - `POST /v1/traces/visibility` — bulk list/unlist; owner-only per trace. Body: `{ "trace_ids": […], "visibility": "listed", "confirm_ownership": true }`; `confirm_ownership` required when listing (batched consent — one confirmation covering the named selection), `422 confirmation_required` otherwise. Itemized: `updated | not_found`.
-- `POST /v1/traces/download` — bulk download; every trace must be owner-or-acquired, else `403 acquisition_required` listing the offending ids. Streams a zip: each payload under its original filename (suffixed with the storage-object hash on collision) plus one **`labels.jsonl`** — one line per trace: `trace_id`, the `session` block (outcome, goal, summary, `task_categories`, `failure_modes`, status, session signals) and `turns[]` (per-turn outcome, labels with cited `span_ids` and reasons, provenance, signals) — the same shapes as the detail's analysis block. Unanalyzed traces get a `pending` session and no turns. Works for a single id — this is also the labeled-download path for one trace. Payload selection per trace follows the redaction boundary ([7_redaction.md](7_redaction.md)): owner → raw object, acquirer → scrubbed artifact; the stage-1 single download applies the same rule.
+- `POST /v1/traces/download` — bulk download; every trace must be owner-or-acquired, else `403 acquisition_required` listing the offending ids. Streams a zip: each payload under its original filename (suffixed with the storage-object hash on collision) plus one **`labels.jsonl`** — one line per trace: `trace_id`, the `session` block (outcome, goal, summary, `task_categories`, `failure_modes`, `skill_names`, status, session signals) and `turns[]` (per-turn outcome, labels with cited `span_ids` and reasons, provenance, signals) — the same shapes as the detail's analysis block. Unanalyzed traces get a `pending` session and no turns. Works for a single id — this is also the labeled-download path for one trace. Payload selection per trace follows the redaction boundary ([7_redaction.md](7_redaction.md)): owner → raw object, acquirer → scrubbed artifact; the stage-1 single download applies the same rule.
+
+### Upload list (delta to stage 1)
+
+`GET /v1/uploads` items gain `traces: [{ trace_id, name, goal }]` — the upload's traces in `trace_ids` order with their name and session goal (null until finalized), for display.
 
 ## Conventions
 

@@ -23,15 +23,26 @@ from app.schemas.analysis import (
     TurnAnalysis,
     TurnLabel,
 )
-from app.schemas.span import SpanDetailResponse, SpanListItem, SpanListResponse
+from app.schemas.span import (
+    AgentSpawn,
+    AgentsResponse,
+    SpanDetailResponse,
+    SpanListItem,
+    SpanListResponse,
+    SubagentSummary,
+)
 from app.schemas.trace import (
     AcquireResponse,
     SimilarTraceItem,
     SimilarTracesResponse,
+    SkillCount,
+    SkillCountsResponse,
+    SkillUse,
     TraceDetailResponse,
     TraceListItem,
     TraceListParams,
     TraceListResponse,
+    TraceScope,
     TraceUpdateRequest,
 )
 from app.worker.tasks import analyze_trace, match_trace
@@ -39,6 +50,17 @@ from app.worker.tasks import analyze_trace, match_trace
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/traces")
+
+
+# Declared before the /{trace_id} routes so the static path wins.
+@router.get("/skills", response_model=SkillCountsResponse)
+async def list_skills(user: CurrentUser, scope: TraceScope = "mine") -> SkillCountsResponse:
+    """Skill filter values: distinct skill names with trace counts over the
+    same scope as the list (own / marketplace / acquired)."""
+    rows = await traces_q.skill_counts(db.pool(), user.id, scope)
+    return SkillCountsResponse(
+        skills=[SkillCount(name=r["name"], trace_count=r["trace_count"]) for r in rows]
+    )
 
 
 @router.get("", response_model=TraceListResponse)
@@ -80,6 +102,7 @@ def list_item(r: asyncpg.Record) -> TraceListItem:
         tags=list(r["tags"]),
         description=r["description"],
         listed_at=r["listed_at"],
+        skill_names=list(r["skill_names"]),
         owner_display_name=r["owner_display_name"],
         is_owner=r["is_owner"],
         acquired=r["acquired"],
@@ -288,6 +311,15 @@ async def similar_traces(
     )
 
 
+@router.get("/{trace_id}/agents", response_model=AgentsResponse)
+async def list_agents(trace_id: str, user: CurrentUser) -> AgentsResponse:
+    """The subagent tree as a flat list, one item per spawn span in start
+    order. Same visibility as the trace's spans (owner, or listed)."""
+    await visible_or_404(trace_id, user)
+    _, agents = spans_q.overview(await spans_q.skeleton(db.pool(), trace_id))
+    return AgentsResponse(agents=[AgentSpawn(**a) for a in agents])
+
+
 @router.get("/{trace_id}/spans", response_model=SpanListResponse)
 async def list_spans(
     trace_id: str,
@@ -382,10 +414,11 @@ def session_analysis(row: Mapping[str, Any], turn_count: int) -> SessionAnalysis
     )
 
 
-def turn_analysis(turn: Mapping[str, Any], is_owner: bool) -> TurnAnalysis:
+def turn_analysis(turn: Mapping[str, Any], origin: str, is_owner: bool) -> TurnAnalysis:
     """`uncertain` is review-queue content: owner-only."""
     return TurnAnalysis(
         turn_index=turn["turn_index"],
+        origin=origin,
         outcome=turn["outcome"],
         summary=turn["summary"],
         uncertain=turn["uncertain"] if is_owner else None,
@@ -411,10 +444,12 @@ async def trace_analysis(row: Mapping[str, Any]) -> TraceAnalysis:
     pool = db.pool()
     trace_id = str(row["id"])
     dead_letter = await analysis_q.fetch_open_dead_letter(pool, trace_id)
+    origins = await analysis_q.turn_origins(pool, trace_id)
     return TraceAnalysis(
-        session=session_analysis(row, await analysis_q.count_turns(pool, trace_id)),
+        session=session_analysis(row, len(origins)),
         turns=[
-            turn_analysis(t, row["is_owner"]) for t in await analysis_q.fetch_turns(pool, trace_id)
+            turn_analysis(t, origins.get(t["turn_index"], "human"), row["is_owner"])
+            for t in await analysis_q.fetch_turns(pool, trace_id)
         ],
         failed_reason=dead_letter["last_error"] if dead_letter is not None else None,
         open_review_item_id=(
@@ -426,6 +461,7 @@ async def trace_analysis(row: Mapping[str, Any]) -> TraceAnalysis:
 
 
 async def _detail(row: asyncpg.Record) -> TraceDetailResponse:
+    skills, agents = spans_q.overview(await spans_q.skeleton(db.pool(), str(row["id"])))
     return TraceDetailResponse(
         trace_id=str(row["id"]),
         upload_id=str(row["upload_id"]),
@@ -442,6 +478,9 @@ async def _detail(row: asyncpg.Record) -> TraceDetailResponse:
         service_name=row["service_name"],
         tool_names=list(row["tool_names"]),
         error_types=list(row["error_types"]),
+        skill_names=list(row["skill_names"]),
+        skills=[SkillUse.model_validate(u) for u in skills],
+        subagents=SubagentSummary(**spans_q.subagent_summary(agents)),
         tags=list(row["tags"]),
         description=row["description"],
         visibility=row["visibility"],

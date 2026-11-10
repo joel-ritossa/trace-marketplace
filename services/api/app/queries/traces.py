@@ -52,6 +52,8 @@ def stage1_clauses(filters: TraceFilterQuery, param: Param) -> list[str]:
         where.append(f"t.model = {param(filters.model)}")
     if filters.tool:
         where.append(f"{param(filters.tool)} = any(t.tool_names)")
+    if filters.skill:
+        where.append(f"t.skill_names && {param(csv_values(filters.skill))}::text[]")
     if filters.has_errors:
         where.append("t.error_count > 0")
     if filters.date_from:
@@ -151,9 +153,11 @@ async def upsert(
         insert into traces (
           upload_id, owner_id, source_trace_id, name, status, started_at, ended_at,
           duration_ms, span_count, error_count, provider, model, service_name,
-          tool_names, error_types, total_tokens, source_format, importer_version
+          tool_names, error_types, total_tokens, source_format, importer_version,
+          skill_names
         )
-        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
+                $19)
         on conflict (owner_id, source_trace_id) do update set
           upload_id = excluded.upload_id,
           name = excluded.name,
@@ -171,6 +175,7 @@ async def upsert(
           total_tokens = excluded.total_tokens,
           source_format = excluded.source_format,
           importer_version = excluded.importer_version,
+          skill_names = excluded.skill_names,
           analysis_attempts = 0,
           analysis_attempted_at = now()
         returning id
@@ -193,6 +198,7 @@ async def upsert(
         trace.total_tokens,
         source_format,
         importer_version,
+        trace.skill_names,
     )
 
 
@@ -260,7 +266,7 @@ async def list_visible(
         f"""
         select t.id, t.name, t.status, t.started_at, t.duration_ms, t.span_count,
                t.error_count, t.provider, t.model, t.created_at, t.visibility,
-               t.tags, t.description, t.listed_at,
+               t.tags, t.description, t.listed_at, t.skill_names,
                p.display_name as owner_display_name,
                (t.owner_id = $1) as is_owner,
                (a.id is not null) as acquired, a.acquired_at,
@@ -304,6 +310,23 @@ async def list_visible(
             *pre_analysis_args,
         )
     return rows, total, excluded
+
+
+async def skill_counts(pool: asyncpg.Pool, caller_id: str, scope: str) -> list[asyncpg.Record]:
+    """Distinct skill names with trace counts over one list scope (the same
+    scope rule as list_visible) — the skill filter's values."""
+    return await pool.fetch(
+        f"""
+        select s.name, count(*) as trace_count
+        from traces t
+        left join acquisitions a on a.trace_id = t.id and a.consumer_id = $1
+        cross join lateral unnest(t.skill_names) as s(name)
+        where {_scope_clause(scope)}
+        group by s.name
+        order by trace_count desc, s.name
+        """,
+        caller_id,
+    )
 
 
 async def get_visible(pool: asyncpg.Pool, trace_id: str, caller_id: str) -> asyncpg.Record | None:

@@ -30,6 +30,8 @@ class ReviewContext(BaseModel):
 class ReviewTraceSummary(BaseModel):
     trace_id: str
     name: str
+    # The session roll-up goal; null until finalized.
+    goal: str | None
     status: TraceStatus
     started_at: datetime
     duration_ms: int

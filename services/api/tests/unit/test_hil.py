@@ -254,5 +254,6 @@ def test_uncertain_is_owner_only() -> None:
         "signals": {},
         "labels": [],
     }
-    assert turn_analysis(row, is_owner=True).uncertain == "step limit"
-    assert turn_analysis(row, is_owner=False).uncertain is None
+    assert turn_analysis(row, "automated", is_owner=True).uncertain == "step limit"
+    assert turn_analysis(row, "human", is_owner=False).uncertain is None
+    assert turn_analysis(row, "automated", is_owner=False).origin == "automated"

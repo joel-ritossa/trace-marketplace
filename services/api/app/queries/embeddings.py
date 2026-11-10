@@ -66,7 +66,7 @@ async def similar_traces(
         """
         select t.id, t.name, t.status, t.started_at, t.duration_ms, t.span_count,
                t.error_count, t.provider, t.model, t.created_at, t.visibility,
-               t.tags, t.description, t.listed_at,
+               t.tags, t.description, t.listed_at, t.skill_names,
                p.display_name as owner_display_name,
                (t.owner_id = $2) as is_owner,
                (a.id is not null) as acquired, a.acquired_at,

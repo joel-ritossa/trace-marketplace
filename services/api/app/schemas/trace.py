@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_vali
 
 from app.analysis import Outcome
 from app.schemas.analysis import AnalysisStatus, TraceAnalysis
+from app.schemas.span import SubagentSummary
 
 # Mirrors the traces.status check constraint and the frontend types
 # (apps/web/src/lib/api/traces.ts).
@@ -44,6 +45,8 @@ class TraceFilterQuery(BaseModel):
     provider: str | None = None
     model: str | None = None
     tool: str | None = None
+    # Comma-separated skill names, OR: the trace used any of them.
+    skill: str | None = Field(default=None, max_length=500)
     has_errors: bool = False
     date_from: Annotated[datetime | None, Field(alias="from")] = None
     date_to: Annotated[datetime | None, Field(alias="to")] = None
@@ -110,6 +113,23 @@ def _check_csv(v: str | None, allowed: set[str], label: str) -> str | None:
     return v
 
 
+class SkillUse(BaseModel):
+    name: str
+    # `agent` (a Skill tool call) or `user` (a slash command); null if unstated.
+    source: Literal["agent", "user"] | None
+    turn_index: int | None
+    span_id: str
+
+
+class SkillCount(BaseModel):
+    name: str
+    trace_count: int
+
+
+class SkillCountsResponse(BaseModel):
+    skills: list[SkillCount]
+
+
 class TraceListParams(TraceFilterQuery):
     """GET /v1/traces request shape: the filter vocabulary plus
     scope/sort/pagination. A separate subclass because FastAPI query models
@@ -137,6 +157,8 @@ class TraceListItem(BaseModel):
     tags: list[str]
     description: str | None
     listed_at: datetime | None
+    # Distinct skills the session used (agent Skill calls, slash commands).
+    skill_names: list[str]
     owner_display_name: str | None
     is_owner: bool
     acquired: bool
@@ -199,6 +221,11 @@ class TraceDetailResponse(BaseModel):
     service_name: str | None
     tool_names: list[str]
     error_types: list[str]
+    skill_names: list[str]
+    # Every skill use, chronological, with the turn it happened in.
+    skills: list[SkillUse]
+    # Whether/how much to show the subagent view (GET .../agents).
+    subagents: SubagentSummary
     tags: list[str]
     description: str | None
     visibility: TraceVisibility
