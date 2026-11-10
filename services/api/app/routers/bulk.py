@@ -23,7 +23,7 @@ from app.errors import ApiError
 from app.queries import acquisitions as acquisitions_q
 from app.queries import analysis as analysis_q
 from app.queries import traces as traces_q
-from app.routers.traces import schedule_listing_hooks
+from app.routers.traces import schedule_listing_hooks, session_analysis, turn_analysis
 from app.schemas.trace import (
     BulkAcquireItem,
     BulkAcquireRequest,
@@ -39,15 +39,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/traces")
 
 _SPOOL_MAX_BYTES = 32 * 1024 * 1024  # past this the zip spills to disk
-_LABEL_FIELDS = ("outcome", "failure_mode", "task_category")
-_SIGNAL_FIELDS = (
-    "has_retry_loop",
-    "loop_kind",
-    "recovered_from_error",
-    "truncation_suspected",
-    "llm_call_count",
-    "tool_call_count",
-)
 
 
 @router.post("/acquire", response_model=BulkAcquireResponse)
@@ -133,7 +124,7 @@ async def bulk_download(body: BulkDownloadRequest, user: CurrentUser) -> Streami
             status=403,
         )
 
-    labels = await analysis_q.labels_for_traces(pool, list(rows))
+    labels = [await _label_line(pool, tid, user.id) for tid in rows]
 
     spool = SpooledTemporaryFile(max_size=_SPOOL_MAX_BYTES)
     archive = zipfile.ZipFile(spool, "w", zipfile.ZIP_DEFLATED)
@@ -141,7 +132,7 @@ async def bulk_download(body: BulkDownloadRequest, user: CurrentUser) -> Streami
         await _write_payloads(archive, rows.values())
         archive.writestr(
             "labels.jsonl",
-            "".join(_label_line(tid, labels.get(tid)) for tid in rows),
+            "".join(labels),
         )
     except Exception:
         archive.close()
@@ -199,24 +190,24 @@ def _entry_name(filename: str, path: str, used: set[str]) -> str:
     return safe
 
 
-def _label_line(trace_id: str, row: asyncpg.Record | None) -> str:
-    """One labels.jsonl line per requested trace; unanalyzed (or pre-A4
-    skipped) traces get honest nulls."""
-    analyzed = row is not None and row["llm_status"] is not None
-    line: dict = {"trace_id": trace_id}
-    for field in _LABEL_FIELDS:
-        if analyzed and row[field] is not None:
-            confidence = row[f"{field}_confidence"]
-            line[field] = {
-                "value": row[field],
-                "confidence": float(confidence) if confidence is not None else None,
-                "provenance": row[f"{field}_provenance"],
-            }
-        else:
-            line[field] = None
-    line["metric_scores"] = row["metric_scores"] if analyzed else None
-    line["signals"] = {f: row[f] for f in _SIGNAL_FIELDS} if analyzed else None
-    line["analyzer_versions"] = row["analyzer_versions"] if row is not None else None
+async def _label_line(pool: asyncpg.Pool, trace_id: str, caller_id: str) -> str:
+    """One labels.jsonl line per requested trace: the session roll-up and
+    the per-turn verdicts, the same shapes as the trace detail's analysis
+    block. Unanalyzed traces get a pending session and no turns."""
+    row = await traces_q.get_visible(pool, trace_id, caller_id)
+    turns = await analysis_q.fetch_turns(pool, trace_id)
+    origins = await analysis_q.turn_origins(pool, trace_id)
+    session = session_analysis(row, len(origins))
+    line = {
+        "trace_id": trace_id,
+        "session": {**session.model_dump(mode="json"), "skill_names": list(row["skill_names"])},
+        "turns": [
+            turn_analysis(t, origins.get(t["turn_index"], "human"), row["is_owner"]).model_dump(
+                mode="json"
+            )
+            for t in turns
+        ],
+    }
     return json.dumps(line) + "\n"
 
 

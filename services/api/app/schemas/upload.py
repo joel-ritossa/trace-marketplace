@@ -32,6 +32,13 @@ class UploadStatusResponse(BaseModel):
     processed_at: datetime | None
 
 
+class UploadTraceSummary(BaseModel):
+    trace_id: str
+    name: str
+    # The session roll-up goal; null until finalized.
+    goal: str | None
+
+
 class UploadListItem(BaseModel):
     upload_id: str
     filename: str
@@ -41,6 +48,8 @@ class UploadListItem(BaseModel):
     error_message: str | None
     redaction_counts: dict[str, int] | None
     trace_ids: list[str]
+    # The same traces, in the same order, named for display.
+    traces: list[UploadTraceSummary]
     created_at: datetime
     processed_at: datetime | None
 

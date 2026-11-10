@@ -17,12 +17,11 @@ One filter vocabulary, one parser, one SQL builder. `TraceFilterQuery` (`app/sch
 The vocabulary:
 
 - **Stage-1 fields** — full-text `q` (a weighted tsvector over name, tags, description, provider, model, service name, tool names, error types), `provider`, `model`, `tool`, `has_errors`, date range.
-- **Analysis equality filters** — `outcome`, `failure_mode`, `task_category`, `loop_kind`, per-field provenance; comma-separated values OR within a field.
+- **Analysis filters** — `outcome` (session outcome), `loop_kind`, and `failure_mode` / `task_category` (match when the session's set contains any requested value); comma-separated values OR within a field.
 - **Promoted signal booleans** — `has_retry_loop`, `recovered_from_error`, `truncation_suspected`; `false` is a real filter, absent means no filter.
-- **Min-bounds** — `outcome_confidence_gte`, `duration_ms_gte`, `total_tokens_gte`, call counts; the only range shape in stage 2.
-- **Metric predicates** — repeatable `metric=<name>:<min>`; repeats AND.
+- **Min-bounds** — `duration_ms_gte`, `total_tokens_gte`, call counts; the only range shape in stage 2.
 
-Matching over derived fields is deterministic: predicates evaluate against stored labels and scores, never against an LLM at query time. A not-yet-analyzed trace never matches an analysis predicate; instead of silently shrinking results, the API returns an `excluded_unanalyzed` count and the UI says "N not-yet-analyzed traces excluded". Search URLs carry every predicate, so a marketplace search is shareable and is the seed for "Save as subscription".
+Matching over derived fields is deterministic: predicates evaluate against stored labels, never against an LLM at query time. A not-yet-analyzed trace never matches an analysis predicate; instead of silently shrinking results, the API returns an `excluded_unanalyzed` count and the UI says "N not-yet-analyzed traces excluded". Search URLs carry every predicate, so a marketplace search is shareable and is the seed for "Save as subscription".
 
 ## Subscriptions
 
@@ -36,11 +35,11 @@ The feed (`/subscriptions/[id]`) runs the stored query live, marks matches new-s
 
 ## Similar-Behavior Extension
 
-Beyond field filters, a consumer can search by behavior: "find traces that act like this one." Built on a research pass first (`sandbox/behavior-similarity/_FINDINGS.md`): whole-transcript embeddings over the judge's rendering were the best single behavior retriever tested (blind pairwise precision 1.0 in-corpus, 0.6 cross-benchmark vs a 0.13 base rate); structural representations and window matching underperformed and were dropped.
+Beyond field filters, a consumer can search by behavior: "find traces that act like this one." Built on a research pass first (`sandbox/behavior-similarity/_FINDINGS.md`): whole-transcript embeddings over the judge's rendering (the original input; the embedding is now over the session roll-up text) were the best single behavior retriever tested (blind pairwise precision 1.0 in-corpus, 0.6 cross-benchmark vs a 0.13 base rate); structural representations and window matching underperformed and were dropped.
 
 What shipped (design in [docs/proposals/similar-behavior.md](../docs/proposals/similar-behavior.md)):
 
-- **Embedding at analysis.** Each `analyze_trace` run embeds the trace's judge rendering (`text-embedding-3-small`, 1536 dims) into a pgvector table with an HNSW cosine index. The embedding rides the judge's exact gates — skipped without a provider key, skipped for opted-out private traces — and a gated run deletes any existing vector, keeping the table a pure function of payload and gates.
+- **Embedding at analysis.** Each `analyze_trace` run embeds the trace's session roll-up text (`text-embedding-3-small`, 1536 dims) into a pgvector table with an HNSW cosine index. The embedding rides the judge's exact gates — skipped without a provider key, skipped for opted-out private traces — and a gated run deletes any existing vector, keeping the table a pure function of payload and gates.
 - **Similar-traces lookup.** `GET /v1/traces/{id}/similar` returns cosine nearest neighbors among traces visible to the caller (own + listed), surfaced as a modal on the trace page.
 - **Behavior-anchored subscriptions.** A subscription may carry an anchor trace plus a similarity threshold (a 0–1 slider with a live count of currently-matching listed traces as the preview). The anchor ANDs with the stored filter query.
 
@@ -55,7 +54,7 @@ Bulk acquire takes up to 100 trace ids and returns an itemized status per trace 
 Bulk download streams a zip containing:
 
 - **One payload per distinct upload** (traces from one upload share a storage object, so entries dedupe), following the redaction boundary per trace: the owner gets the raw object, everyone else gets the scrubbed artifact ([06](06_privacy-and-redaction.md)).
-- **`labels.jsonl`** — one line per trace with the label triplets (value, confidence, provenance for outcome / failure mode / task category), metric scores, promoted signals, and analyzer versions. Unanalyzed traces get honest nulls, never invented labels.
+- **`labels.jsonl`** — one line per trace with the session verdict (outcome, goal, categories, failure modes, signals) and each turn's verdict, labels (with cited span ids and reasons) and provenance. Unanalyzed traces get a `pending` session and no turns, never invented labels.
 
 ## Notifications
 

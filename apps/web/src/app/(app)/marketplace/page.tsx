@@ -6,6 +6,7 @@ import { BulkAcquireAction } from "@/components/traces/bulk-actions";
 import { BulkBar, useSelection } from "@/components/traces/bulk-bar";
 import { ExcludedNote } from "@/components/traces/excluded-note";
 import { SaveSubscription } from "@/components/traces/save-subscription";
+import { skillFilterFor } from "@/components/traces/filter-state";
 import { TraceList } from "@/components/traces/trace-list";
 import { TraceFiltersBar, hasActiveFilters } from "@/components/traces/trace-filters";
 import { useTraceList } from "@/components/traces/use-trace-list";
@@ -30,6 +31,7 @@ export default function MarketplacePage() {
 
       <div className="mt-6">
         <TraceFiltersBar
+          scope="marketplace"
           filters={filters}
           onChange={setFilters}
           sort={sort}
@@ -65,6 +67,7 @@ export default function MarketplacePage() {
             <TraceList
               traces={result.traces}
               view="marketplace"
+              skillFilter={skillFilterFor(filters, setFilters)}
               selection={{ selected, toggle, setAll }}
             />
             <div className="mt-4">

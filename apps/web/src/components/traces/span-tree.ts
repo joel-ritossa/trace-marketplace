@@ -6,6 +6,7 @@ import type {
   TraceSpanCategory,
   TraceSpanStatus,
 } from "@evilmartians/agent-prism-types";
+import { cleanSpanName } from "@/components/traces/names";
 import type { SpanDetail, SpanKind, SpanListItem, SpanStatus } from "@/lib/api/traces";
 
 const KIND_TO_CATEGORY: Record<SpanKind, TraceSpanCategory> = {
@@ -27,7 +28,7 @@ const STATUS_TO_PRISM: Record<SpanStatus, TraceSpanStatus> = {
 function toTraceSpan(span: SpanListItem): TraceSpan {
   return {
     id: span.span_id,
-    title: span.name,
+    title: cleanSpanName(span.name),
     startTime: new Date(span.started_at),
     endTime: new Date(span.ended_at),
     duration: span.duration_ms,
@@ -74,23 +75,6 @@ export function buildSpanTree(spans: SpanListItem[]): TraceSpan[] {
   return roots;
 }
 
-/** Breadth-first default expansion, capped so huge traces don't render tens
- *  of thousands of cards at once (AgentPrism has no virtualization). */
-export function defaultExpandedIds(roots: TraceSpan[], cap = 300): string[] {
-  const expanded: string[] = [];
-  let visible = roots.length;
-  const queue = [...roots];
-  while (queue.length > 0 && visible < cap) {
-    const node = queue.shift()!;
-    const children = node.children ?? [];
-    if (children.length === 0) continue;
-    expanded.push(node.id);
-    visible += children.length;
-    queue.push(...children);
-  }
-  return expanded;
-}
-
 function toAttributeValue(value: unknown): TraceSpanAttribute["value"] {
   if (typeof value === "boolean") return { boolValue: value };
   if (typeof value === "number") return { intValue: String(value) };
@@ -118,8 +102,14 @@ const OUTPUT_KEYS = ["gen_ai.output.messages", "output.value", "traceloop.entity
  *  full attributes, raw JSON, and In/Out content where the span carries it. */
 export function withDetail(node: TraceSpan, detail: SpanDetail): TraceSpan {
   const tool = node.type === "tool_execution";
+  // Skill tool spans read "Skill: <name>" (the importer names them so; older
+  // rows are plain "Skill").
+  const skill = detail.attributes["skill.name"];
+  const title =
+    node.title === "Skill" && typeof skill === "string" && skill ? `Skill: ${skill}` : node.title;
   return {
     ...node,
+    title,
     raw: JSON.stringify({ attributes: detail.attributes, events: detail.events }, null, 2),
     attributes: Object.entries(detail.attributes).map(([key, value]) => ({
       key,
@@ -128,4 +118,31 @@ export function withDetail(node: TraceSpan, detail: SpanDetail): TraceSpan {
     input: findString(detail.attributes, tool ? TOOL_INPUT_KEYS : INPUT_KEYS),
     output: findString(detail.attributes, tool ? TOOL_OUTPUT_KEYS : OUTPUT_KEYS),
   };
+}
+
+/** Node ids from the root down to (excluding) `id`, or null when absent —
+ *  what must be expanded for that node to show. */
+export function ancestorIds(roots: TraceSpan[], id: string): string[] | null {
+  for (const root of roots) {
+    if (root.id === id) return [];
+    const below = ancestorIds(root.children ?? [], id);
+    if (below !== null) return [root.id, ...below];
+  }
+  return null;
+}
+
+/** A subagent spawn's brief: the prompt in its tool-call arguments (or the
+ *  raw input when that isn't JSON). Null when not recorded. */
+export function spawnBrief(attributes: Record<string, unknown>): string | null {
+  const raw = findString(attributes, TOOL_INPUT_KEYS);
+  if (!raw) return null;
+  try {
+    const args = JSON.parse(raw);
+    for (const key of ["prompt", "description"]) {
+      if (typeof args?.[key] === "string" && args[key]) return args[key];
+    }
+  } catch {
+    // Not JSON: the input is the brief.
+  }
+  return raw;
 }

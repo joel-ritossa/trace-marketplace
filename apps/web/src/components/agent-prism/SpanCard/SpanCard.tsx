@@ -1,10 +1,7 @@
 import type { TraceSpan } from "@evilmartians/agent-prism-types";
 import type { FC, KeyboardEvent, MouseEvent } from "react";
 
-import {
-  formatDuration,
-  getTimelineData,
-} from "@evilmartians/agent-prism-data";
+import { getTimelineData } from "@evilmartians/agent-prism-data";
 import * as Collapsible from "@radix-ui/react-collapsible";
 import cn from "classnames";
 import { useCallback } from "react";
@@ -14,15 +11,16 @@ import type { SpanCardConnectorType } from "./SpanCardConnector";
 
 import { Avatar } from "../Avatar";
 import { BrandLogo } from "../BrandLogo";
+import { formatCompact, formatDuration } from "@/lib/format";
+
 import { SpanStatus } from "../SpanStatus";
-import { SpanCardBadges } from "./SpanCardBadges";
+import { getSpanCategoryLabel, SPAN_KIND_DOT } from "../shared";
 import { SpanCardConnector } from "./SpanCardConnector";
 import { SpanCardTimeline } from "./SpanCardTimeline";
 import { SpanCardToggle } from "./SpanCardToggle";
 
 const LAYOUT_CONSTANTS = {
   CONNECTOR_WIDTH: 20,
-  CONTENT_BASE_WIDTH: 320,
 } as const;
 
 type ExpandButtonPlacement = "inside" | "outside";
@@ -30,9 +28,14 @@ type ExpandButtonPlacement = "inside" | "outside";
 export type SpanCardViewOptions = {
   withStatus?: boolean;
   expandButton?: ExpandButtonPlacement;
+  /** Spans whose duration was synthesized, not recorded: shown as "—". */
+  durationUnknown?: (span: TraceSpan) => boolean;
 };
 
-const DEFAULT_VIEW_OPTIONS: Required<SpanCardViewOptions> = {
+const DEFAULT_VIEW_OPTIONS: SpanCardViewOptions & {
+  withStatus: boolean;
+  expandButton: ExpandButtonPlacement;
+} = {
   withStatus: true,
   expandButton: "inside",
 };
@@ -58,32 +61,6 @@ interface SpanCardState {
   isSelected: boolean;
 }
 
-const getContentWidth = ({
-  level,
-  hasExpandButton,
-  contentPadding,
-  expandButton,
-}: {
-  level: number;
-  hasExpandButton: boolean;
-  contentPadding: number;
-  expandButton: ExpandButtonPlacement;
-}) => {
-  let width =
-    LAYOUT_CONSTANTS.CONTENT_BASE_WIDTH -
-    level * LAYOUT_CONSTANTS.CONNECTOR_WIDTH;
-
-  if (hasExpandButton && expandButton === "inside") {
-    width -= LAYOUT_CONSTANTS.CONNECTOR_WIDTH;
-  }
-
-  if (expandButton === "outside" && level === 0) {
-    width -= LAYOUT_CONSTANTS.CONNECTOR_WIDTH;
-  }
-
-  return width - contentPadding;
-};
-
 const getGridTemplateColumns = ({
   connectorsColumnWidth,
   expandButton,
@@ -96,20 +73,6 @@ const getGridTemplateColumns = ({
   }
 
   return `${connectorsColumnWidth}px 1fr ${LAYOUT_CONSTANTS.CONNECTOR_WIDTH}px`;
-};
-
-const getContentPadding = ({
-  level,
-  hasExpandButton,
-}: {
-  level: number;
-  hasExpandButton: boolean;
-}) => {
-  if (level === 0) return 0;
-
-  if (hasExpandButton) return 4;
-
-  return 8;
 };
 
 const getConnectorsLayout = ({
@@ -320,18 +283,6 @@ export const SpanCard: FC<SpanCardProps> = ({
   const hasExpandButtonAsFirstChild =
     expandButton === "inside" && state.hasChildren;
 
-  const contentPadding = getContentPadding({
-    level,
-    hasExpandButton: hasExpandButtonAsFirstChild,
-  });
-
-  const contentWidth = getContentWidth({
-    level,
-    hasExpandButton: hasExpandButtonAsFirstChild,
-    contentPadding,
-    expandButton,
-  });
-
   const { connectors, connectorsColumnWidth } = getConnectorsLayout({
     level,
     hasExpandButton: hasExpandButtonAsFirstChild,
@@ -359,14 +310,10 @@ export const SpanCard: FC<SpanCardProps> = ({
         <div
           className={cn(
             "relative grid w-full",
-            state.isSelected &&
-              "before:bg-agentprism-muted/75 before:absolute before:-top-2 before:h-2 before:w-full",
-            state.isSelected &&
-              "from-agentprism-muted/75 to-agentprism-muted/75 bg-gradient-to-b",
           )}
           style={{
             gridTemplateColumns,
-            backgroundSize: "auto calc(100% - 8px)",
+            backgroundSize: "auto calc(100% - 6px)",
             backgroundPosition: "top",
             backgroundRepeat: "no-repeat",
           }}
@@ -396,58 +343,62 @@ export const SpanCard: FC<SpanCardProps> = ({
               </div>
             )}
           </div>
+          {/* One constant-height line: the name takes the flexible width;
+              kind label, tokens and the timeline bar drop as the tree
+              narrows (container queries on the tree). */}
           <div
             className={cn(
-              "flex flex-wrap items-start gap-x-2 gap-y-1",
-              "mb-3 min-h-5 w-full cursor-pointer",
+              // Same 26px pitch as before (-4 + 24 + 6), centred on the
+              // connectors; the selection marks this row's own content.
+              "relative -mt-1 mb-1.5 flex h-6 min-w-0 cursor-pointer items-center gap-2 pr-1",
               level !== 0 && !hasExpandButtonAsFirstChild && "pl-2",
               level !== 0 && hasExpandButtonAsFirstChild && "pl-1",
+              // DESIGN.md selected row: canvas-soft-2 fill + primary left edge.
+              state.isSelected &&
+                "bg-secondary before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-primary",
             )}
           >
-            <div
-              className="relative flex min-h-4 shrink-0 flex-wrap items-center gap-1.5"
-              style={{
-                width: `min(${contentWidth}px, 100%)`,
-                minWidth: 140,
-              }}
+            {avatar && <Avatar size="4" {...avatar} />}
+            <span
+              className={cn("size-2 shrink-0 rounded-full", SPAN_KIND_DOT[data.type])}
+              title={getSpanCategoryLabel(data.type)}
+            />
+            <h3
+              className="text-agentprism-foreground min-w-0 flex-1 truncate text-sm leading-[14px]"
+              title={data.title}
             >
-              {avatar && <Avatar size="4" {...avatar} />}
-
-              <h3
-                className="text-agentprism-foreground max-w-32 truncate text-sm leading-[14px]"
-                title={data.title}
+              {data.title}
+            </h3>
+            <span className="text-agentprism-muted-foreground hidden w-12 shrink-0 text-xs @md:inline">
+              {getSpanCategoryLabel(data.type)}
+            </span>
+            {typeof data.tokensCount === "number" && (
+              <span
+                className="text-agentprism-muted-foreground hidden w-20 shrink-0 text-right font-mono text-xs @lg:inline"
+                title={`${data.tokensCount.toLocaleString()} tokens`}
               >
-                {data.title}
-              </h3>
-
-              <SpanCardBadges data={data} />
-            </div>
-
-            <div className="flex grow flex-wrap items-center justify-end gap-1">
-              {expandButton === "outside" && withStatus && (
-                <div>
-                  <SpanStatus status={data.status} />
-                </div>
-              )}
-
-              <SpanCardTimeline
-                minStart={minStart}
-                maxEnd={maxEnd}
-                spanCard={data}
-              />
-
-              <div className="flex items-center gap-2">
-                <span className="text-agentprism-foreground inline-block w-14 flex-1 shrink-0 whitespace-nowrap px-1 text-right text-xs">
-                  {formatDuration(durationMs)}
-                </span>
-
-                {expandButton === "inside" && withStatus && (
-                  <div>
-                    <SpanStatus status={data.status} />
-                  </div>
-                )}
-              </div>
-            </div>
+                {formatCompact(data.tokensCount)} tok
+              </span>
+            )}
+            <SpanCardTimeline
+              minStart={minStart}
+              maxEnd={maxEnd}
+              spanCard={data}
+              className="hidden w-24 flex-none @2xl:flex"
+            />
+            {viewOptions.durationUnknown?.(data) ? (
+              <span
+                className="text-agentprism-muted-foreground w-16 shrink-0 text-right font-mono text-xs"
+                title="Durations are not recorded for session imports"
+              >
+                —
+              </span>
+            ) : (
+              <span className="text-agentprism-foreground w-16 shrink-0 whitespace-nowrap text-right font-mono text-xs">
+                {formatDuration(durationMs)}
+              </span>
+            )}
+            {withStatus && <SpanStatus status={data.status} />}
           </div>
 
           {expandButton === "outside" &&

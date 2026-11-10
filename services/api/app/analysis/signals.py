@@ -162,11 +162,6 @@ async def run_signals(trace: TraceInput, settings: AnalysisSettings) -> SignalsR
     has_retry_loop = (loop_kind is not None) if actions else None
     recovered = _recovered_from_error(trace.spans)
     truncation = _truncation_suspected(trace.spans)
-    # True on strong negatives only; false means "no opinion", never
-    # "success". Stored for routing auditability, never promoted.
-    failure_suspected = bool(
-        (trace.status == "error" and recovered is not True) or has_retry_loop or truncation
-    )
     return SignalsResult(
         has_retry_loop=has_retry_loop,
         loop_kind=loop_kind,
@@ -174,5 +169,28 @@ async def run_signals(trace: TraceInput, settings: AnalysisSettings) -> SignalsR
         truncation_suspected=truncation,
         llm_call_count=sum(1 for s in trace.spans if s.kind == "llm"),
         tool_call_count=len(actions),
-        failure_suspected=failure_suspected,
+    )
+
+
+def _any(values: list[bool | None]) -> bool | None:
+    if True in values:
+        return True
+    return False if False in values else None
+
+
+def _sum(values: list[int | None]) -> int | None:
+    present = [v for v in values if v is not None]
+    return sum(present) if present else None
+
+
+def combine(turns: list[SignalsResult]) -> SignalsResult:
+    """Session-level signals from per-turn ones (9_session-analysis.md):
+    flags are "any turn", counts are sums; the first loop kind found wins."""
+    return SignalsResult(
+        has_retry_loop=_any([t.has_retry_loop for t in turns]),
+        loop_kind=next((t.loop_kind for t in turns if t.loop_kind), None),
+        recovered_from_error=_any([t.recovered_from_error for t in turns]),
+        truncation_suspected=_any([t.truncation_suspected for t in turns]),
+        llm_call_count=_sum([t.llm_call_count for t in turns]),
+        tool_call_count=_sum([t.tool_call_count for t in turns]),
     )

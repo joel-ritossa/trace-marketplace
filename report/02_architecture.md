@@ -23,7 +23,7 @@ flowchart LR
     auth["Auth"]
   end
 
-  llm["LLM provider (via litellm)"]
+  llm["OpenAI (Agents SDK)"]
 
   web -->|"/v1/*"| api
   cli -->|"API key"| api
@@ -37,7 +37,7 @@ flowchart LR
   sched -->|"cron"| redis
   worker --> pg
   worker --> store
-  worker -->|"judge / metrics / embeddings"| llm
+  worker -->|"agent judge / embeddings"| llm
 ```
 
 Locally, the four app containers run under Docker Compose against a host-run Supabase CLI stack. Production runs the same four containers on ECS Fargate against Supabase Cloud (see [External Services](#external-services)).
@@ -76,7 +76,7 @@ Both speak the same `/v1/uploads` API as the web dropzone; upload paths in detai
 ## Key Invariants
 
 - **Postgres, not Redis, is the source of truth.** The Redis list broker has no acks; a lost message costs latency, never the upload. At-least-once delivery + an idempotent consumer + the 60s sweep mean that once a client gets a 201, the upload always terminates in `complete` or in `failed` with a `dead_letters` audit row. Full mechanism and caveats: [docs/explainers/trace-upload-delivery-guarantee.md](../docs/explainers/trace-upload-delivery-guarantee.md).
-- **Ingestion is a pure function of the raw stored payload.** Re-running is delete-and-rewrite in one transaction, under stable trace identity (upsert keyed on `owner_id` + `source_trace_id`), so `traces.id` survives re-ingestion and rows hung off it — acquisitions, human-provenance labels, review items — never cascade away. Raw bytes are preserved verbatim — the owner's download serves the stored raw object unchanged, and the smoke script (`tools/smoke.py`) verifies an end-to-end byte-identical download on its fixture.
+- **Ingestion is a pure function of the raw stored payload.** Re-running is delete-and-rewrite in one transaction, under stable trace identity (upsert keyed on `owner_id` + `source_trace_id`), so `traces.id` survives re-ingestion and rows hung off it — acquisitions, human-relabelled turns, review items — never cascade away. Raw bytes are preserved verbatim — the owner's download serves the stored raw object unchanged, and the smoke script (`tools/smoke.py`) verifies an end-to-end byte-identical download on its fixture.
 - **Errors classify as permanent vs transient via typed exceptions** — no blanket retries, and the dead-letter queue is Postgres (durable, queryable), never Redis.
 - **Redaction is structural.** The `spans` tables hold the scrubbed form, so every code path reading them — search, inspection, the LLM analyzers — is clean automatically; raw content exists only in the owner-only `span_raw` table and the immutable raw object. Boundary details: [06](06_privacy-and-redaction.md) and [docs/explainers/redaction-boundary.md](../docs/explainers/redaction-boundary.md).
 - **Span `attributes`, `events`, and raw payload bodies are never logged.**
@@ -84,5 +84,5 @@ Both speak the same `/v1/uploads` API as the web dropzone; upload paths in detai
 ## External Services
 
 - **Supabase** — Postgres, auth (JWT/JWKS), storage, realtime. Locally a host-run CLI stack (`supabase start`); in production a supabase.com project.
-- **LLM provider via litellm** — the only provider layer, with a single call site (`app/analysis/llm.py`); provider SDKs are never imported. Models are env vars (`ANALYSIS_JUDGE_MODEL`, default `openai/gpt-5-mini`; `ANALYSIS_EMBEDDING_MODEL`, default `openai/text-embedding-3-small`), and per-call latency/tokens/cost are recorded in result metadata. Without a provider key the system runs fully except LLM analysis: the upload→inspect→list→acquire→download loop and the deterministic signals work, and LLM-derived fields stay null with a recorded skip reason — never a fake "pending".
+- **OpenAI via the Agents SDK / OpenAI SDK** — the only provider, with a single call site (`app/analysis/llm.py`; SDK tracing export is disabled; litellm was dropped in the 2026-11-10 redesign). Models are env vars (`ANALYSIS_JUDGE_MODEL`, default `gpt-5-mini`; `ANALYSIS_EMBEDDING_MODEL`, default `text-embedding-3-small`), and per-call latency/tokens are recorded in result metadata. Without an API key the system runs fully except LLM analysis: the upload→inspect→list→acquire→download loop and the deterministic signals work, and LLM-derived fields stay null with a recorded skip reason — never a fake "pending".
 - **Production** ([trace-mp.com](https://trace-mp.com), Terraform in `infra/`) adds AWS around the same four containers: ECS Fargate, an ALB + WAF with path routing (`/v1/*` → api, rest → web — one domain, no CORS), ElastiCache Redis over TLS, secrets in SSM Parameter Store, CloudWatch logs, and GitHub Actions deploys via OIDC. Mailgun provides SMTP for Supabase confirmation emails. Setup and cost notes: `infra/README.md`.

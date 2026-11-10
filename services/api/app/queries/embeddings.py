@@ -6,6 +6,7 @@ the anchor clause shared by subscription matching and live counts.
 
 import asyncpg
 
+from app.queries.analysis import TURN_COUNT_SQL
 from app.queries.traces import anchor_clauses, make_param
 
 
@@ -21,22 +22,22 @@ async def upsert(
     *,
     embedding: list[float],
     model: str,
-    renderer_version: str,
+    input_version: str,
 ) -> None:
     await pool.execute(
         """
-        insert into trace_embeddings (trace_id, embedding, model, renderer_version)
+        insert into trace_embeddings (trace_id, embedding, model, input_version)
         values ($1, $2::vector, $3, $4)
         on conflict (trace_id) do update set
           embedding = excluded.embedding,
           model = excluded.model,
-          renderer_version = excluded.renderer_version,
+          input_version = excluded.input_version,
           created_at = now()
         """,
         trace_id,
         vector_literal(embedding),
         model,
-        renderer_version,
+        input_version,
     )
 
 
@@ -63,14 +64,15 @@ async def similar_traces(
     also returns the count of visible traces at or above it — the
     subscription slider's live preview."""
     rows = await pool.fetch(
-        """
+        f"""
         select t.id, t.name, t.status, t.started_at, t.duration_ms, t.span_count,
                t.error_count, t.provider, t.model, t.created_at, t.visibility,
-               t.tags, t.description, t.listed_at,
+               t.tags, t.description, t.listed_at, t.skill_names,
                p.display_name as owner_display_name,
                (t.owner_id = $2) as is_owner,
                (a.id is not null) as acquired, a.acquired_at,
-               ta.outcome, ta.outcome_confidence, ta.outcome_provenance, ta.llm_status,
+               t.analysis_attempts, ta.goal, ta.outcome, ta.task_categories, ta.failure_modes,
+               ta.llm_status, ta.analyzed_at,
                exists (
                  select 1 from dead_letters dl
                  where dl.trace_id = t.id and dl.requeued_at is null
@@ -80,6 +82,7 @@ async def similar_traces(
                  where ri.trace_id = t.id and ri.status = 'open' and t.owner_id = $2
                  limit 1
                ) as open_review_item_id,
+               {TURN_COUNT_SQL} as turn_count,
                1 - (te.embedding <=> qe.embedding) as similarity
         from trace_embeddings qe
         join trace_embeddings te on te.trace_id <> qe.trace_id

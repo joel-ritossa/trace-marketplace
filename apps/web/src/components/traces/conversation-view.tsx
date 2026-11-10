@@ -1,16 +1,94 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Brain, ChevronDown, ChevronRight, Wrench } from "lucide-react";
 
 import type { ConversationItem } from "@/components/traces/conversation";
+import { cleanMessage } from "@/components/traces/names";
 import { cn } from "@/lib/utils";
 
 const CLAMP_CHARS = 1500;
 
+// No markdown renderer in the dependencies: the cheap, safe subset —
+// **bold**, `code` and "#" headings — as React elements; the rest stays text.
+const INLINE = /(\*\*[^*\n]+\*\*|`[^`\n]+`)/g;
+
+function inline(line: string, key: string): ReactNode[] {
+  return line.split(INLINE).map((part, i) => {
+    if (part.startsWith("**") && part.endsWith("**") && part.length > 4)
+      return <strong key={`${key}-${i}`} className="font-semibold">{part.slice(2, -2)}</strong>;
+    if (part.startsWith("`") && part.endsWith("`") && part.length > 2)
+      return (
+        <code key={`${key}-${i}`} className="rounded-sm bg-secondary px-1 font-mono text-[0.85em]">
+          {part.slice(1, -1)}
+        </code>
+      );
+    return part;
+  });
+}
+
+const TABLE_SEP = /^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/;
+const cells = (line: string) => line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+
+/** A simple pipe table: header row, separator, body rows. Null when the
+ *  block doesn't parse (it then renders as text). */
+function PipeTable({ lines, id }: { lines: string[]; id: string }) {
+  const [header, , ...rows] = lines.map(cells);
+  return (
+    <span className="my-1 block overflow-x-auto">
+      <table className="text-xs">
+        <thead>
+          <tr className="border-b">
+            {header.map((c, i) => (
+              <th key={i} className="px-2 py-1 text-left font-medium whitespace-nowrap">
+                {inline(c, `${id}-h${i}`)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, r) => (
+            <tr key={r} className="border-b last:border-b-0">
+              {header.map((_, i) => (
+                <td key={i} className="px-2 py-1 align-top">
+                  {inline(row[i] ?? "", `${id}-${r}-${i}`)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </span>
+  );
+}
+
+function LightMarkdown({ text }: { text: string }) {
+  const lines = text.split("\n");
+  const out: ReactNode[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.trim().startsWith("|") && TABLE_SEP.test(lines[i + 1] ?? "") && cells(line).length > 1) {
+      let end = i + 2;
+      while (end < lines.length && lines[end].trim().startsWith("|")) end++;
+      out.push(<PipeTable key={i} id={String(i)} lines={lines.slice(i, end)} />);
+      i = end - 1;
+      continue;
+    }
+    const heading = /^#{1,6}\s+(.*)$/.exec(line);
+    out.push(
+      <span key={i} className={cn(heading && "font-semibold")}>
+        {i > 0 && !lines[i - 1].trim().startsWith("|") && "\n"}
+        {inline(heading ? heading[1] : line, String(i))}
+      </span>,
+    );
+  }
+  return out;
+}
+
 function ClampedText({ text, mono = false }: { text: string; mono?: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const clipped = !expanded && text.length > CLAMP_CHARS;
+  const shown = clipped ? `${text.slice(0, CLAMP_CHARS)}…` : text;
   return (
     <div>
       <div
@@ -19,7 +97,7 @@ function ClampedText({ text, mono = false }: { text: string; mono?: boolean }) {
           mono ? "font-mono text-xs" : "text-sm leading-relaxed",
         )}
       >
-        {clipped ? `${text.slice(0, CLAMP_CHARS)}…` : text}
+        {mono ? shown : <LightMarkdown text={shown} />}
       </div>
       {text.length > CLAMP_CHARS && (
         <button
@@ -34,9 +112,26 @@ function ClampedText({ text, mono = false }: { text: string; mono?: boolean }) {
   );
 }
 
+// Tool-call argument keys that say what a call did, in preference order.
+const PREVIEW_KEYS = ["command", "file_path", "path", "pattern", "query", "url", "description", "prompt"];
+
+/** "Bash · `git status`" instead of raw JSON: the telling argument, else the
+ *  compacted input. */
+function toolPreview(input: string | null, output: string | null): string {
+  try {
+    const args = JSON.parse(input ?? "");
+    for (const key of PREVIEW_KEYS) {
+      if (typeof args?.[key] === "string" && args[key]) return args[key];
+    }
+  } catch {
+    // Not JSON: fall through to the raw text.
+  }
+  return input ?? output ?? "";
+}
+
 function ToolCard({ item }: { item: Extract<ConversationItem, { kind: "tool" }> }) {
   const [open, setOpen] = useState(false);
-  const preview = (item.input ?? item.output ?? "").replace(/\s+/g, " ").slice(0, 80);
+  const preview = toolPreview(item.input, item.output).replace(/\s+/g, " ").slice(0, 120);
   return (
     <div
       className={cn(
@@ -61,7 +156,7 @@ function ToolCard({ item }: { item: Extract<ConversationItem, { kind: "tool" }> 
         )}
         {!open && preview && (
           <span className="min-w-0 truncate font-mono text-xs text-muted-foreground">
-            {preview}
+            · {preview}
           </span>
         )}
       </button>
@@ -141,32 +236,97 @@ function SystemCard({ text }: { text: string }) {
   );
 }
 
-/** Chronological chat rendering of a reconstructed conversation. */
-export function ConversationView({ items }: { items: ConversationItem[] }) {
+// Client wrappers around pasted text; they fold into a toggle.
+const PASTED = /<(pasted[\w-]*)\b[^>]*>([\s\S]*?)<\/\1>/g;
+
+function PastedBlock({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="my-1 rounded-md border border-dashed">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-xs text-muted-foreground hover:text-foreground"
+      >
+        {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+        Pasted content · {text.length.toLocaleString()} chars
+      </button>
+      {open && (
+        <div className="border-t px-2.5 py-2">
+          <ClampedText text={text} mono />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A message's text with pasted blocks folded and runs of blank lines
+ *  collapsed (they rendered as large gaps). */
+export function MessageText({ text }: { text: string }) {
+  const parts: ReactNode[] = [];
+  let last = 0;
+  for (const match of text.matchAll(PASTED)) {
+    const before = cleanMessage(text.slice(last, match.index));
+    if (before) parts.push(<ClampedText key={last} text={before} />);
+    parts.push(<PastedBlock key={`p${match.index}`} text={match[2].trim()} />);
+    last = match.index + match[0].length;
+  }
+  const rest = cleanMessage(text.slice(last));
+  if (rest) parts.push(<ClampedText key={last} text={rest} />);
+  return <>{parts}</>;
+}
+
+/** Chronological chat rendering of a reconstructed conversation. With
+ *  `turnOf`, a quiet "Turn N" divider (an anchor, `conv-turn-N`) opens each
+ *  turn so the page can bring a selected turn into view. */
+export function ConversationView({
+  items,
+  turnOf,
+  activeTurn,
+}: {
+  items: ConversationItem[];
+  turnOf?: (spanId: string) => number | undefined;
+  activeTurn?: number;
+}) {
+  let lastTurn: number | undefined;
   return (
     <div className="flex flex-col gap-3">
       {items.map((item) => {
-        if (item.kind === "tool") return <ToolCard key={item.id} item={item} />;
-        if (item.kind === "reasoning") return <ReasoningCard key={item.id} text={item.text} />;
-        if (item.role === "system") return <SystemCard key={item.id} text={item.text} />;
-        const user = item.role === "user";
-        return (
-          <div
-            key={item.id}
-            className={cn("flex max-w-[92%] flex-col", user ? "self-end items-end" : "self-start")}
-          >
-            <p className="mb-1 px-0.5 text-xs font-medium text-muted-foreground">{item.label}</p>
+        const turn = item.spanId && turnOf ? turnOf(item.spanId) : undefined;
+        const divider =
+          turn !== undefined && turn !== lastTurn ? (
             <div
+              key={`turn-${turn}-${item.id}`}
+              id={`conv-turn-${turn}`}
               className={cn(
-                "rounded-lg px-3 py-2",
-                user ? "bg-accent border" : "border bg-background",
+                "flex scroll-mt-2 items-center gap-2 font-mono text-xs text-muted-foreground",
+                activeTurn === turn && "text-foreground",
               )}
             >
-              <ClampedText text={item.text} />
+              <span className={cn("h-px flex-1 bg-border", activeTurn === turn && "bg-primary")} />
+              Turn {turn + 1}
+              <span className={cn("h-px flex-1 bg-border", activeTurn === turn && "bg-primary")} />
             </div>
-          </div>
-        );
+          ) : null;
+        if (turn !== undefined) lastTurn = turn;
+        return [divider, <Item key={item.id} item={item} />];
       })}
+    </div>
+  );
+}
+
+function Item({ item }: { item: ConversationItem }) {
+  if (item.kind === "tool") return <ToolCard item={item} />;
+  if (item.kind === "reasoning") return <ReasoningCard text={item.text} />;
+  if (item.role === "system") return <SystemCard text={item.text} />;
+  const user = item.role === "user";
+  return (
+    <div className={cn("flex max-w-[92%] flex-col", user ? "self-end items-end" : "self-start")}>
+      <p className="mb-1 px-0.5 text-xs font-medium text-muted-foreground">{item.label}</p>
+      <div className={cn("rounded-lg px-3 py-2", user ? "bg-accent border" : "border bg-background")}>
+        <MessageText text={item.text} />
+      </div>
     </div>
   );
 }

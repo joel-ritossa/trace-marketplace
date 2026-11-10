@@ -1,8 +1,9 @@
 """Analysis-domain queries: trace loading, the analyze_trace bookkeeping
-(claim / budget / sweep), and the delete-and-rewrite persistence of
-`analyzer_results` + `trace_analysis` (1_analysis.md persistence rules) —
-which, since A3, also carries the HIL routing writes (review item + digest)
-in the same transaction.
+(claim / budget / sweep), and the persistence of per-turn verdicts
+(`turn_analysis` + `trace_labels`), subagent verdicts
+(`subagent_analysis`) and the session roll-up
+(`trace_analysis`) per 9_session-analysis.md — with the review-item sync in
+the same transaction.
 """
 
 from collections.abc import Mapping
@@ -11,55 +12,121 @@ from typing import Any
 
 import asyncpg
 
-from app.analysis import AnalyzerRun, RoutingReason, TraceInput
+from app.analysis import AnalyzerRun, SignalsResult, TraceInput
+from app.analysis.agent.models import (
+    AgentMeta,
+    FailureLabel,
+    SessionVerdict,
+    SubagentVerdict,
+    TurnVerdict,
+    merge_labels,
+)
+from app.importers.otlp import SOURCE_FORMAT as OTLP_FORMAT
 from app.queries import dead_letters
+from app.queries import review_items as review_items_q
 
-# Label triplets whose human provenance must survive a machine rewrite
-# (1_analysis.md: human fields are never machine-overwritten).
-LABEL_FIELDS = ("outcome", "failure_mode", "task_category")
+SIGNAL_FIELDS = tuple(SignalsResult.model_fields)
 
-HUMAN_PROVENANCE = {"human", "human_confirmed"}
-
-# The label field each routing trigger questions (1_analysis.md HIL routing):
-# the three outcome triggers ask about the verdict, the category trigger
-# about task_category. failure_mode never routes on its own.
-REASON_FIELD = {
-    "signals_judge_disagreement": "outcome",
-    "outcome_indeterminate": "outcome",
-    "low_outcome_confidence": "outcome",
-    "low_task_category_confidence": "task_category",
-}
+# (field, value, span_ids, reason) — one trace_labels row.
+Label = tuple[str, str, list[str], str | None]
 
 
 @dataclass(frozen=True)
-class RoutingContext:
-    """What the worker hands `rewrite` to turn routing reasons into a review
-    item + digested notification (A3 decision 1: atomic with the analysis
-    rows). `verdict_snapshot` is the capped machine verdict recorded on the
-    item's context."""
+class TurnWrite:
+    """One machine turn row to persist. No verdict = LLM analysis skipped:
+    signals only, never a fake label."""
 
-    reasons: list[RoutingReason]
-    verdict_snapshot: dict[str, Any]
-    owner_id: str
-    upload_id: str
+    turn_index: int
+    fingerprint: str
+    signals: SignalsResult
+    verdict: TurnVerdict | None = None
+    meta: AgentMeta | None = None
 
 
-def filter_reasons(
-    reasons: list[RoutingReason], provenances: Mapping[str, str | None]
-) -> list[RoutingReason]:
-    """Human-answered questions are not re-asked (A3 decision 3): drop each
-    reason whose target field carries human provenance on the row being
-    written. All filtered -> no fresh item (the stale open item is still
-    superseded — the question is answered)."""
-    return [r for r in reasons if provenances.get(REASON_FIELD[r.code]) not in HUMAN_PROVENANCE]
+@dataclass(frozen=True)
+class SubagentWrite:
+    """One judged subagent to persist. No verdict = the judge produced none
+    it can stand behind: any row it had is removed."""
+
+    span_id: str
+    turn_index: int
+    fingerprint: str
+    verdict: SubagentVerdict | None = None
+    meta: AgentMeta | None = None
+
+
+def is_session_format(source_format: str) -> bool:
+    return source_format != OTLP_FORMAT
+
+
+def needs_judging(row: Mapping[str, Any] | None, fingerprint: str, llm: bool) -> bool:
+    """A turn is (re)judged when it has no row, its spans changed, or it was
+    stored unjudged and a judge is now available. Human turns never are."""
+    if row is None:
+        return True
+    if row["provenance"] == "human":
+        return False
+    return row["fingerprint"] != fingerprint or (llm and row["outcome"] is None)
+
+
+def verdict_labels(verdict: TurnVerdict) -> list[Label]:
+    """One row per (field, value): a failure mode the judge cites twice is
+    merged (`merge_labels`)."""
+    return [
+        *(("task_category", value, [], None) for value in dict.fromkeys(verdict.task_categories)),
+        *(
+            ("failure_mode", label.value, label.span_ids, label.reason)
+            for label in merge_labels(verdict.failure_modes)
+        ),
+    ]
+
+
+def roll_up_state(finalized: bool, written: int, applied: int, changed: bool) -> str:
+    """What a rewrite does to the roll-up stamp (`analyzed_at`): `stamp` a
+    finalize whose every turn write landed; mark it `stale` when a turn the
+    roll-up saw actually changed (written, deleted, or still outdated);
+    otherwise `keep` it as is."""
+    if finalized and applied == written:
+        return "stamp"
+    return "stale" if changed else "keep"
+
+
+def stored_verdict(turn: Mapping[str, Any]) -> TurnVerdict:
+    """A stored judged turn back as the verdict the roll-up consumes.
+    Constructed without validation: human labels may cite no spans."""
+    labels = turn["labels"]
+    return TurnVerdict.model_construct(
+        turn_index=turn["turn_index"],
+        outcome=turn["outcome"],
+        summary=turn["summary"] or "",
+        task_categories=[lb["value"] for lb in labels if lb["field"] == "task_category"],
+        failure_modes=[
+            FailureLabel.model_construct(
+                value=lb["value"], span_ids=list(lb["span_ids"]), reason=lb["reason"] or ""
+            )
+            for lb in labels
+            if lb["field"] == "failure_mode"
+        ],
+        uncertain=turn["uncertain"],
+    )
+
+
+def derive_status(llm_status: str | None, analyzed_at: Any, attempts: int) -> str:
+    """The session analysis status (9_session-analysis.md API): one rule for
+    every surface. `final` needs a current roll-up and no re-ingest since
+    the last claim (attempts reset to 0 = content changed, not yet seen)."""
+    if llm_status is None:
+        return "pending"
+    if llm_status == "skipped":
+        return "skipped"
+    return "final" if analyzed_at is not None and attempts > 0 else "in_progress"
 
 
 async def fetch_trace_input(pool: asyncpg.Pool, trace_id: str) -> TraceInput | None:
     """Normalized rows → `TraceInput` — the one DB read path into the
-    analysis contract, shared by the offline runner's DB mode and the
-    `analyze_trace` worker job. `select *` is deliberate: `TraceInput`
-    mirrors the full normalized column set and ignores platform-only
-    columns (owner_id, upload_id, …)."""
+    analysis contract, shared by the offline runner's DB mode, the
+    `analyze_trace` worker job, and relabel span validation. `select *` is
+    deliberate: `TraceInput` ignores platform-only columns."""
     trace_row = await pool.fetchrow(
         """
         select t.*, p.task_categories as owner_task_categories
@@ -79,14 +146,13 @@ async def fetch_trace_input(pool: asyncpg.Pool, trace_id: str) -> TraceInput | N
 
 async def fetch_llm_gate(pool: asyncpg.Pool, trace_id: str) -> asyncpg.Record | None:
     """The facts the worker's LLM gate needs (1_analysis.md owner opt-out):
-    trace visibility, the owner's consent flag, and the upload id (fault
-    injection is armed per upload). owner_id rides along for A3's routing
-    writes (review digest recipient); tags/description for the listing-copy
-    fill-if-empty check (already-set copy skips the call entirely)."""
+    visibility, consent, upload id (fault injection is armed per upload),
+    owner id (review digest recipient), source format (session or not) and
+    tags/description (listing-copy fill-if-empty)."""
     return await pool.fetchrow(
         """
         select t.visibility, t.upload_id, t.owner_id, t.tags, t.description,
-               p.allow_private_llm_analysis
+               t.source_format, p.allow_private_llm_analysis
         from traces t
         join profiles p on p.id = t.owner_id
         where t.id = $1
@@ -95,16 +161,73 @@ async def fetch_llm_gate(pool: asyncpg.Pool, trace_id: str) -> asyncpg.Record | 
     )
 
 
-async def claim(pool: asyncpg.Pool, trace_id: str) -> int | None:
-    """Count the attempt and stamp the claim — the durable retry budget,
-    mirroring uploads.mark_processing. Returns None when the trace is gone
-    (deleted mid-flight); analysis has no terminal status to guard."""
+async def note_rerun_if_leased(
+    executor: asyncpg.Pool | asyncpg.Connection, trace_id: str, finalize: bool
+) -> bool:
+    """When a run holds the trace's lease, record that another run is
+    wanted (finalize wins over incremental) for the holder to enqueue on
+    release, and return True."""
+    return bool(
+        await executor.fetchval(
+            """
+            update traces
+            set analysis_rerun = case when $2 then 'finalize'
+                                      else coalesce(analysis_rerun, 'incremental') end
+            where id = $1 and analysis_lease_until > now()
+            returning true
+            """,
+            trace_id,
+            finalize,
+        )
+    )
+
+
+async def claim(
+    pool: asyncpg.Pool, trace_id: str, *, finalize: bool, lease_seconds: int
+) -> int | str | None:
+    """Take the per-trace run lease and count the attempt — the durable
+    retry budget, mirroring uploads.mark_processing. Returns the attempt
+    number, "leased" when another run holds the lease (this run's mode is
+    recorded for it), or None when the trace is gone."""
+    async with pool.acquire() as conn, conn.transaction():
+        if not await _lock_trace(conn, trace_id):
+            return None
+        if await note_rerun_if_leased(conn, trace_id, finalize):
+            return "leased"
+        return await conn.fetchval(
+            """
+            update traces
+            set analysis_attempts = analysis_attempts + 1, analysis_attempted_at = now(),
+                analysis_lease_until = now() + make_interval(secs => $2)
+            where id = $1
+            returning analysis_attempts
+            """,
+            trace_id,
+            lease_seconds,
+        )
+
+
+async def extend_lease(pool: asyncpg.Pool, trace_id: str, lease_seconds: int) -> None:
+    """Heartbeat: a live run keeps its lease."""
+    await pool.execute(
+        """
+        update traces set analysis_lease_until = now() + make_interval(secs => $2)
+        where id = $1 and analysis_lease_until is not null
+        """,
+        trace_id,
+        lease_seconds,
+    )
+
+
+async def release(pool: asyncpg.Pool, trace_id: str) -> str | None:
+    """Drop the lease; returns the rerun mode other runs asked for meanwhile
+    ('incremental' / 'finalize'), cleared here, for the holder to enqueue."""
     return await pool.fetchval(
         """
-        update traces
-        set analysis_attempts = analysis_attempts + 1, analysis_attempted_at = now()
-        where id = $1
-        returning analysis_attempts
+        with old as (select id, analysis_rerun from traces where id = $1 for update)
+        update traces t set analysis_lease_until = null, analysis_rerun = null
+        from old where t.id = old.id
+        returning old.analysis_rerun
         """,
         trace_id,
     )
@@ -115,193 +238,398 @@ async def attempt_count(pool: asyncpg.Pool, trace_id: str) -> int | None:
 
 
 async def reset_attempts(pool: asyncpg.Pool, trace_id: str) -> None:
-    """Fresh budget for an operator requeue (cli/requeue.py trace mode)."""
+    """Fresh budget before an explicit enqueue (operator requeue, owner
+    analyze). Stamped now so the sweep doesn't re-kick it meanwhile."""
     await pool.execute(
-        "update traces set analysis_attempts = 0, analysis_attempted_at = null where id = $1",
+        "update traces set analysis_attempts = 0, analysis_attempted_at = now() where id = $1",
         trace_id,
     )
 
 
-async def stale_pending_ids(pool: asyncpg.Pool, *, older_than_minutes: int) -> list[str]:
-    """Traces whose analysis job was likely lost, keyed off the claim stamp
-    so a trace re-enqueues at most once per timeout window (mirrors
-    uploads.stuck_ids). Two shapes of "lost":
+async def due_ids(
+    pool: asyncpg.Pool, *, older_than_minutes: int, idle_seconds: int, limit: int
+) -> list[tuple[str, bool]]:
+    """What the minute sweep enqueues, as (trace_id, finalize):
 
-    - never analyzed: no result row, at any attempt count — no budget
-      filter, because a crash on the final budgeted attempt would otherwise
-      leave an eternal `pending`; like ingestion, the sweep re-kicks and the
-      middleware enforces the budget on failure (dead letter, not a loop);
-    - re-ingested but never re-claimed: the ingest upsert resets the budget
-      to zero and kicks best-effort, so attempts = 0 beside an existing row
-      marks a lost re-analysis kick (the claim immediately sets it to 1).
+    - lost kicks: re-ingested (attempts reset to 0) or never analyzed
+      traces whose claim stamp is older than the timeout;
+    - finalization: traces that should be final but are not — non-session
+      traces always, session traces once `ended_at` is idle.
 
-    Open dead letters are excluded — those traces are `failed`, not pending.
+    Stamps the claim time so each trace re-enqueues at most once per
+    timeout window, oldest claim first, at most `limit` per tick. Traces
+    with a live run lease or an open dead letter (failed) are skipped.
     """
     rows = await pool.fetch(
         """
-        select t.id from traces t
-        where coalesce(t.analysis_attempted_at, t.created_at)
-              < now() - make_interval(mins => $1)
-          and not exists (
-            select 1 from dead_letters dl
-            where dl.trace_id = t.id and dl.requeued_at is null
-          )
-          and (
-            not exists (select 1 from trace_analysis ta where ta.trace_id = t.id)
-            or t.analysis_attempts = 0
-          )
+        update traces t set analysis_attempted_at = now()
+        from (
+          select c.id, c.finalize from (
+            select t.id, coalesce(t.analysis_attempted_at, t.created_at) as claimed,
+                   t.analysis_attempts,
+                   (t.source_format = $3 or t.ended_at < now() - make_interval(secs => $2))
+                     as finalize,
+                   coalesce(ta.analyzed_at is not null, false) as rolled_up
+            from traces t
+            left join trace_analysis ta on ta.trace_id = t.id
+            where coalesce(t.analysis_attempted_at, t.created_at)
+                    < now() - make_interval(mins => $1)
+              and (t.analysis_lease_until is null or t.analysis_lease_until < now())
+              and not exists (
+                select 1 from dead_letters dl
+                where dl.trace_id = t.id and dl.requeued_at is null
+              )
+          ) c
+          where c.analysis_attempts = 0 or (c.finalize and not c.rolled_up)
+          order by c.claimed
+          limit $4
+        ) d
+        where t.id = d.id
+        returning t.id, d.finalize
         """,
         older_than_minutes,
+        idle_seconds,
+        OTLP_FORMAT,
+        limit,
     )
-    return [str(r["id"]) for r in rows]
+    return [(str(r["id"]), r["finalize"]) for r in rows]
 
 
-async def rewrite(
-    pool: asyncpg.Pool,
-    trace_id: str,
-    *,
-    runs: list[AnalyzerRun],
-    promoted: dict[str, Any],
-    llm_status: str,
-    llm_skip_reason: str | None,
-    routing: RoutingContext | None = None,
-) -> None:
-    """Delete-and-rewrite this trace's analysis rows in one transaction —
-    idempotent by construction (1_analysis.md runtime rules).
-
-    Exception, applied here so no caller can forget it: label triplets whose
-    existing provenance is human/human_confirmed are carried over the new
-    machine values, never overwritten.
-
-    Routing (A3): a run that produced a verdict supersedes the trace's open
-    review item — the fresh verdict re-answers the questions, stale items
-    must not outlive it (1_analysis.md supersede rule). When reasons survive
-    the provenance filter, the same transaction creates the fresh item and
-    upserts the per-upload digest — labels never commit without the item
-    that routed them.
-    """
-    # Local imports break the queries-module cycle (review_items/notifications
-    # import this module for the label vocabulary).
-    from app.queries import notifications as notifications_q
-    from app.queries import review_items as review_items_q
-
-    promoted = dict(promoted)  # the carryover mutates; don't leak into the caller
-    async with pool.acquire() as conn, conn.transaction():
-        prior = await conn.fetchrow(
-            "select * from trace_analysis where trace_id = $1 for update", trace_id
-        )
-        if prior is not None:
-            for field in LABEL_FIELDS:
-                if prior[f"{field}_provenance"] in HUMAN_PROVENANCE:
-                    promoted[field] = prior[field]
-                    promoted[f"{field}_confidence"] = prior[f"{field}_confidence"]
-                    promoted[f"{field}_provenance"] = prior[f"{field}_provenance"]
-        await conn.execute("delete from analyzer_results where trace_id = $1", trace_id)
-        await conn.execute("delete from trace_analysis where trace_id = $1", trace_id)
-        await conn.executemany(
-            """
-            insert into analyzer_results
-              (trace_id, analyzer, analyzer_version, model_id, output, confidence)
-            values ($1, $2, $3, $4, $5, $6)
-            """,
-            [
-                (
-                    trace_id,
-                    run.analyzer,
-                    run.analyzer_version,
-                    run.model_id,
-                    run.output,
-                    run.confidence,
-                )
-                for run in runs
-            ],
-        )
-        columns = ["trace_id", "llm_status", "llm_skip_reason", *promoted.keys()]
-        values = [trace_id, llm_status, llm_skip_reason, *promoted.values()]
-        placeholders = ", ".join(f"${i + 1}" for i in range(len(values)))
-        await conn.execute(
-            f"insert into trace_analysis ({', '.join(columns)}) values ({placeholders})",
-            *values,
-        )
-        if routing is not None:
-            # Filter against the row as written — carryover already swapped
-            # human-provenance triplets in, so human-answered fields drop out.
-            kept = filter_reasons(
-                routing.reasons,
-                {field: promoted.get(f"{field}_provenance") for field in LABEL_FIELDS},
-            )
-            if kept:
-                await review_items_q.supersede_and_create(
-                    conn,
-                    trace_id=trace_id,
-                    context={
-                        "verdict": routing.verdict_snapshot,
-                        "reasons": [r.model_dump() for r in kept],
-                    },
-                )
-                await notifications_q.review_digest_upsert(
-                    conn, user_id=routing.owner_id, upload_id=routing.upload_id
-                )
-            else:
-                await review_items_q.supersede_open(conn, trace_id)
-        # A successful run is newer truth than any old failure: close open
-        # analyze dead letters so the derived state can't stay `failed`
-        # after a recovery that bypassed the trace-requeue CLI (operator
-        # re-ingest of the upload, a sweep re-kick that succeeded).
-        await dead_letters.mark_requeued_for_trace(conn, trace_id)
-
-
-async def fetch_results(pool: asyncpg.Pool, trace_id: str) -> list[asyncpg.Record]:
-    """The audit rows in run order — signals, judge, then metrics by name.
-    The rank is explicit: created_at is the transaction timestamp, identical
-    across one rewrite, so insertion order is not recoverable from it."""
-    return await pool.fetch(
+async def fetch_turns(
+    executor: asyncpg.Pool | asyncpg.Connection, trace_id: str
+) -> list[dict[str, Any]]:
+    """The trace's turn rows in order, each with its `labels`."""
+    turns = await executor.fetch(
+        "select * from turn_analysis where trace_id = $1 order by turn_index", trace_id
+    )
+    labels = await executor.fetch(
         """
-        select * from analyzer_results where trace_id = $1
-        order by case analyzer when 'signals' then 0 when 'judge' then 1 else 2 end,
-                 analyzer
+        select turn_index, field, value, span_ids, reason from trace_labels
+        where trace_id = $1 order by turn_index, field, id
         """,
         trace_id,
     )
+    by_turn: dict[int, list[dict[str, Any]]] = {}
+    for label in labels:
+        by_turn.setdefault(label["turn_index"], []).append(dict(label))
+    return [{**dict(t), "labels": by_turn.get(t["turn_index"], [])} for t in turns]
+
+
+async def fetch_subagents(
+    executor: asyncpg.Pool | asyncpg.Connection, trace_id: str
+) -> dict[str, dict[str, Any]]:
+    """The trace's subagent verdict rows by spawn span id."""
+    rows = await executor.fetch("select * from subagent_analysis where trace_id = $1", trace_id)
+    return {r["span_id"]: dict(r) for r in rows}
+
+
+# Scalar subquery: the turn count `turn_origins` yields (distinct valid
+# `turn.index` values, at least the one synthetic turn), for list rows
+# aliased `t`.
+TURN_COUNT_SQL = """(
+    select greatest(count(distinct (s.attributes ->> 'turn.index')::int), 1)
+    from spans s
+    where s.trace_id = t.id and s.attributes ? 'turn.index'
+      and jsonb_typeof(s.attributes -> 'turn.index') = 'number'
+      and s.attributes ->> 'turn.index' ~ '^-?[0-9]+$'
+  )"""
+
+
+async def turn_origins(
+    executor: asyncpg.Pool | asyncpg.Connection, trace_id: str
+) -> dict[int, str]:
+    """The trace's current turns as the judge splits them (agent/turns.split),
+    each with its origin: the distinct integer `turn.index` values on its
+    spans, `automated` when the turn span says `turn.origin = automated`,
+    else `human` — or the one synthetic human turn 0 when there are none."""
+    rows = await executor.fetch(
+        """
+        select (attributes ->> 'turn.index')::int as turn_index,
+               bool_or(attributes ->> 'turn.origin' = 'automated') as automated
+        from spans
+        where trace_id = $1 and attributes ? 'turn.index'
+          and jsonb_typeof(attributes -> 'turn.index') = 'number'
+          and attributes ->> 'turn.index' ~ '^-?[0-9]+$'
+        group by 1
+        """,
+        trace_id,
+    )
+    return {r["turn_index"]: "automated" if r["automated"] else "human" for r in rows} or {
+        0: "human"
+    }
 
 
 async def fetch_analysis(pool: asyncpg.Pool, trace_id: str) -> asyncpg.Record | None:
     return await pool.fetchrow("select * from trace_analysis where trace_id = $1", trace_id)
 
 
-async def labels_for_traces(pool: asyncpg.Pool, trace_ids: list[str]) -> dict[str, asyncpg.Record]:
-    """The labels.jsonl source rows (3_api.md bulk download): label triplets,
-    promoted signals, metric scores, and analyzer versions per trace.
-    Left-joined — unanalyzed traces come back all-null."""
-    rows = await pool.fetch(
-        """
-        select t.id, ta.*,
-               (
-                 select jsonb_object_agg(ar.analyzer, ar.analyzer_version)
-                 from analyzer_results ar where ar.trace_id = t.id
-               ) as analyzer_versions
-        from traces t
-        left join trace_analysis ta on ta.trace_id = t.id
-        where t.id = any($1::uuid[])
-        """,
-        trace_ids,
+async def _lock_trace(conn: asyncpg.Connection, trace_id: str) -> bool:
+    """Serializes the analysis rewrite and owner relabels per trace."""
+    return await conn.fetchval("select true from traces where id = $1 for update", trace_id)
+
+
+async def _replace_labels(
+    conn: asyncpg.Connection, trace_id: str, turn_index: int, labels: list[Label]
+) -> None:
+    await conn.execute(
+        "delete from trace_labels where trace_id = $1 and turn_index = $2", trace_id, turn_index
     )
-    return {str(r["id"]): r for r in rows}
+    await conn.executemany(
+        """
+        insert into trace_labels (trace_id, turn_index, field, value, span_ids, reason)
+        values ($1, $2, $3, $4, $5, $6)
+        """,
+        [(trace_id, turn_index, *label) for label in labels],
+    )
 
 
-def derive_state(llm_status: str | None, failed: bool) -> str:
-    """The derived analysis state (2_data-model.md): one rule for every
-    surface — list rows, trace detail, and the analysis endpoint."""
-    if failed:
-        return "failed"
-    if llm_status is None:
-        return "pending"
-    return "complete" if llm_status == "complete" else "skipped"
+async def _write_subagent(conn: asyncpg.Connection, trace_id: str, sub: SubagentWrite) -> None:
+    verdict, meta = sub.verdict, sub.meta
+    if verdict is None:
+        await conn.execute(
+            "delete from subagent_analysis where trace_id = $1 and span_id = $2",
+            trace_id,
+            sub.span_id,
+        )
+        return
+    await conn.execute(
+        """
+        insert into subagent_analysis (trace_id, span_id, turn_index, fingerprint, outcome,
+                                       summary, failure_modes, model, usage)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        on conflict (trace_id, span_id) do update set
+          turn_index = excluded.turn_index, fingerprint = excluded.fingerprint,
+          outcome = excluded.outcome, summary = excluded.summary,
+          failure_modes = excluded.failure_modes, model = excluded.model,
+          usage = excluded.usage, analyzed_at = now()
+        """,
+        trace_id,
+        sub.span_id,
+        sub.turn_index,
+        sub.fingerprint,
+        verdict.outcome,
+        verdict.summary,
+        [label.model_dump(mode="json") for label in verdict.failure_modes],
+        meta.model if meta else None,
+        meta.model_dump(mode="json", exclude={"model"}) if meta else None,
+    )
+
+
+async def _recompute_arrays(conn: asyncpg.Connection, trace_id: str) -> None:
+    """Session task_categories / failure_modes = the union over every turn's
+    labels, human and machine alike — ordered by how many turns carry each
+    value (then alphabetically), so truncated displays show the dominant ones."""
+    await conn.execute(
+        """
+        update trace_analysis set
+          task_categories = coalesce((
+            select array_agg(value order by turns desc, value) from (
+              select value, count(distinct turn_index) as turns from trace_labels
+              where trace_id = $1 and field = 'task_category' group by value
+            ) c
+          ), '{}'),
+          failure_modes = coalesce((
+            select array_agg(value order by turns desc, value) from (
+              select value, count(distinct turn_index) as turns from trace_labels
+              where trace_id = $1 and field = 'failure_mode' group by value
+            ) c
+          ), '{}')
+        where trace_id = $1
+        """,
+        trace_id,
+    )
+
+
+async def rewrite(
+    pool: asyncpg.Pool,
+    trace_id: str,
+    *,
+    turns: list[TurnWrite],
+    subagents: list[SubagentWrite],
+    expected: Mapping[int, str | None],
+    signals: SignalsResult,
+    llm_status: str,
+    llm_skip_reason: str | None,
+    finalized: bool,
+    succeeded: bool,
+    session: SessionVerdict | None = None,
+    run: AnalyzerRun | None = None,
+    owner_id: str,
+    upload_id: str,
+) -> None:
+    """Persist one analysis run in one transaction, defensively against the
+    rows having moved since the run read them:
+
+    - turns absent from the trace's CURRENT spans are dropped;
+    - a judged turn is written only if its stored fingerprint still equals
+      the one this run read (`expected`; None = no row) and it is not human;
+    - the roll-up is stamped only by a finalize whose every write landed,
+      and marked stale (`analyzed_at` null) only when a turn it saw really
+      changed (`roll_up_state`); `session` is None when the LLM is gated;
+    - subagent verdicts are written as judged (each carries its own
+      fingerprint), then rows whose spawn span left the trace are dropped.
+
+    Then the session row, the union arrays, the audit row and the review
+    item; open dead letters close only when the run `succeeded`.
+    """
+    async with pool.acquire() as conn, conn.transaction():
+        if not await _lock_trace(conn, trace_id):
+            return
+        live = set(await turn_origins(conn, trace_id))
+        deleted = await conn.fetch(
+            """
+            delete from turn_analysis where trace_id = $1 and not (turn_index = any($2::int[]))
+            returning turn_index
+            """,
+            trace_id,
+            list(live),
+        )
+        rows = {
+            r["turn_index"]: r
+            for r in await conn.fetch(
+                "select turn_index, fingerprint, provenance from turn_analysis where trace_id = $1",
+                trace_id,
+            )
+        }
+        unchanged = {
+            index
+            for index, fingerprint in expected.items()
+            if index in live
+            and (rows[index]["fingerprint"] if index in rows else None) == fingerprint
+            and not (index in rows and rows[index]["provenance"] == "human")
+        }
+        applied = [t for t in turns if t.turn_index in unchanged]
+        state = roll_up_state(finalized, len(turns), len(applied), bool(unchanged or deleted))
+        for turn in applied:
+            verdict, meta = turn.verdict, turn.meta
+            await conn.execute(
+                """
+                insert into turn_analysis (trace_id, turn_index, fingerprint, outcome, summary,
+                                           uncertain, signals, model, usage)
+                values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                on conflict (trace_id, turn_index) do update set
+                  fingerprint = excluded.fingerprint, outcome = excluded.outcome,
+                  summary = excluded.summary, uncertain = excluded.uncertain,
+                  signals = excluded.signals, model = excluded.model, usage = excluded.usage,
+                  analyzed_at = now()
+                """,
+                trace_id,
+                turn.turn_index,
+                turn.fingerprint,
+                verdict.outcome if verdict else None,
+                verdict.summary if verdict else None,
+                verdict.uncertain if verdict else None,
+                turn.signals.model_dump(mode="json"),
+                meta.model if meta else None,
+                meta.model_dump(mode="json", exclude={"model"}) if meta else None,
+            )
+            labels = verdict_labels(verdict) if verdict else []
+            await _replace_labels(conn, trace_id, turn.turn_index, labels)
+
+        for sub in subagents:
+            await _write_subagent(conn, trace_id, sub)
+        await conn.execute(
+            """
+            delete from subagent_analysis a
+            where a.trace_id = $1 and not exists (
+              select 1 from spans s
+              where s.trace_id = a.trace_id and s.source_span_id = a.span_id
+            )
+            """,
+            trace_id,
+        )
+
+        await conn.execute(
+            f"""
+            insert into trace_analysis (trace_id, llm_status, llm_skip_reason,
+                                        {", ".join(SIGNAL_FIELDS)},
+                                        goal, outcome, summary, analyzed_at)
+            values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+                    case when $13 = 'stamp' then now() end)
+            on conflict (trace_id) do update set
+              llm_status = excluded.llm_status,
+              llm_skip_reason = excluded.llm_skip_reason,
+              {", ".join(f"{f} = excluded.{f}" for f in SIGNAL_FIELDS)},
+              goal = case when $13 = 'stamp' then excluded.goal else trace_analysis.goal end,
+              outcome = case when $13 = 'stamp' then excluded.outcome
+                             else trace_analysis.outcome end,
+              summary = case when $13 = 'stamp' then excluded.summary
+                             else trace_analysis.summary end,
+              analyzed_at = case $13 when 'stamp' then now() when 'stale' then null
+                                     else trace_analysis.analyzed_at end
+            """,
+            trace_id,
+            llm_status,
+            llm_skip_reason,
+            *(getattr(signals, f) for f in SIGNAL_FIELDS),
+            session.goal if session else None,
+            session.outcome if session else None,
+            session.summary if session else None,
+            state,
+        )
+        await _recompute_arrays(conn, trace_id)
+        if run is not None:
+            await conn.execute(
+                """
+                insert into analyzer_results
+                  (trace_id, analyzer, analyzer_version, model_id, output)
+                values ($1, $2, $3, $4, $5)
+                """,
+                trace_id,
+                run.analyzer,
+                run.analyzer_version,
+                run.model_id,
+                run.output,
+            )
+        await review_items_q.sync(conn, trace_id, owner_id=owner_id, upload_id=upload_id)
+        # A successful run is newer truth than any old failure: close open
+        # analyze dead letters so the trace can't stay failed after a
+        # recovery that bypassed the requeue CLI. A failing run leaves them.
+        if succeeded:
+            await dead_letters.mark_requeued_for_trace(conn, trace_id)
+
+
+async def relabel(
+    pool: asyncpg.Pool,
+    trace_id: str,
+    turn_index: int,
+    *,
+    outcome: str,
+    labels: list[Label],
+    owner_id: str,
+) -> bool:
+    """Owner relabel of one turn: it becomes `human` (never re-judged),
+    `uncertain` clears, the session arrays are recomputed, the roll-up is
+    marked stale (the caller enqueues a finalize to redo it), and the review
+    item closes once no uncertain turn is left. False when the turn has no
+    row (not analyzed yet)."""
+    async with pool.acquire() as conn, conn.transaction():
+        if not await _lock_trace(conn, trace_id):
+            return False
+        updated = await conn.fetchval(
+            """
+            update turn_analysis set outcome = $3, uncertain = null, provenance = 'human'
+            where trace_id = $1 and turn_index = $2
+            returning true
+            """,
+            trace_id,
+            turn_index,
+            outcome,
+        )
+        if not updated:
+            return False
+        await _replace_labels(conn, trace_id, turn_index, labels)
+        await _recompute_arrays(conn, trace_id)
+        await conn.execute(
+            "update trace_analysis set analyzed_at = null where trace_id = $1", trace_id
+        )
+        await review_items_q.sync(conn, trace_id, resolved_by=owner_id)
+        return True
 
 
 async def fetch_open_dead_letter(pool: asyncpg.Pool, trace_id: str) -> asyncpg.Record | None:
-    """The failed-state probe: a non-requeued analyze dead letter. Newest
-    first in the pathological multi-row case."""
+    """The failed probe: a non-requeued analyze dead letter. Newest first in
+    the pathological multi-row case."""
     return await pool.fetchrow(
         """
         select last_error, failed_at from dead_letters

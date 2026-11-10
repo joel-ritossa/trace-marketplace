@@ -13,6 +13,7 @@
       "model": null,
       "service_name": "redaction-demo",
       "tool_names": [],
+      "skill_names": [],
       "error_types": [],
       "total_tokens": null,
       "spans": [

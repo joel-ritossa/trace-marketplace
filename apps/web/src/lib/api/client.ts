@@ -18,6 +18,22 @@ export class ApiError extends Error {
   }
 }
 
+/** A readable message for a failed call. Request-validation 422s carry the
+ *  useful text in `details.errors[].msg`, so those are shown verbatim. */
+export function errorText(err: unknown, fallback: string): string {
+  if (!(err instanceof ApiError)) return fallback;
+  const errors = err.details.errors;
+  if (Array.isArray(errors)) {
+    const messages = errors
+      .map((e) => (typeof e === "object" && e !== null && "msg" in e ? String(e.msg) : null))
+      .filter((m): m is string => m !== null);
+    if (messages.length > 0) return messages.join(" ");
+  }
+  return err.message;
+}
+
+const GET_RETRIES = 3;
+
 async function authedRequest(path: string, init?: RequestInit): Promise<Response> {
   const supabase = createClient();
   const {
@@ -33,7 +49,16 @@ async function authedRequest(path: string, init?: RequestInit): Promise<Response
     headers.set("Content-Type", "application/json");
   }
 
-  const res = await fetch(`${publicEnv.apiUrl}${path}`, { ...init, headers });
+  const method = (init?.method ?? "GET").toUpperCase();
+  let res = await fetch(`${publicEnv.apiUrl}${path}`, { ...init, headers });
+  // Rate limited: GETs back off and retry (Retry-After when the API sends it,
+  // else 1s, 2s, 4s); writes surface the 429 to the caller.
+  for (let attempt = 0; res.status === 429 && method === "GET" && attempt < GET_RETRIES; attempt++) {
+    const after = Number(res.headers.get("Retry-After"));
+    const wait = Number.isFinite(after) && after > 0 ? after * 1000 : 1000 * 2 ** attempt;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(wait, 10_000)));
+    res = await fetch(`${publicEnv.apiUrl}${path}`, { ...init, headers });
+  }
   if (!res.ok) {
     const body = (await res.json().catch(() => null)) as ApiErrorBody | null;
     throw new ApiError(

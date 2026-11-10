@@ -1,30 +1,69 @@
 {
   "traces": [
     {
-      "source_trace_id": "793e9c04405c9ced4b1cb20eef902009",
+      "source_trace_id": "e025995401fa7b8e163959bc26db4abe",
       "name": "codex: Add retry logic to the fetch client",
       "status": "ok",
-      "started_at": "2026-01-15T09:00:05+00:00",
-      "ended_at": "2026-01-15T09:00:11+00:00",
-      "duration_ms": 6000,
-      "span_count": 4,
+      "started_at": "2026-01-15T09:00:04.999998+00:00",
+      "ended_at": "2026-01-15T09:01:09+00:00",
+      "duration_ms": 64000,
+      "span_count": 10,
       "error_count": 0,
       "provider": "openai",
       "model": "gpt-5.3-codex",
       "service_name": "codex-cli",
       "tool_names": [
         "shell",
-        "tool_search"
+        "tool_search",
+        "web_search"
       ],
+      "skill_names": [],
       "error_types": [],
-      "total_tokens": 2520,
+      "total_tokens": 3070,
       "spans": [
         {
-          "source_span_id": "0da7091e8dbe4603",
+          "source_span_id": "023100edcd74af15",
           "source_parent_span_id": null,
           "name": "codex: Add retry logic to the fetch client",
           "kind": "agent",
-          "started_at": "2026-01-15T09:00:05+00:00",
+          "started_at": "2026-01-15T09:00:04.999998+00:00",
+          "ended_at": "2026-01-15T09:01:09+00:00",
+          "duration_ms": 64000,
+          "status": "ok",
+          "status_message": null,
+          "error_type": null,
+          "provider": null,
+          "model": null,
+          "tool_name": null,
+          "input_tokens": null,
+          "output_tokens": null,
+          "total_tokens": null,
+          "attributes": {
+            "gen_ai.operation.name": "invoke_agent",
+            "gen_ai.agent.name": "codex",
+            "session.id": "sess-golden-codex",
+            "session.turn_count": 2,
+            "workspace.cwd": "/home/dev/fetcher",
+            "converted.synthesized_root": true
+          },
+          "events": [],
+          "raw_attributes": {
+            "gen_ai.operation.name": "invoke_agent",
+            "gen_ai.agent.name": "codex",
+            "session.id": "sess-golden-codex",
+            "session.turn_count": 2,
+            "workspace.cwd": "/home/dev/fetcher",
+            "converted.synthesized_root": true
+          },
+          "raw_events": [],
+          "raw_status_message": null
+        },
+        {
+          "source_span_id": "9f0530f5cf9ce74b",
+          "source_parent_span_id": "023100edcd74af15",
+          "name": "turn 1: Add retry logic to the fetch client",
+          "kind": "agent",
+          "started_at": "2026-01-15T09:00:04.999999+00:00",
           "ended_at": "2026-01-15T09:00:11+00:00",
           "duration_ms": 6000,
           "status": "ok",
@@ -39,10 +78,9 @@
           "attributes": {
             "gen_ai.operation.name": "invoke_agent",
             "gen_ai.agent.name": "codex",
-            "session.id": "sess-golden-codex",
             "turn.index": 0,
-            "workspace.cwd": "/home/dev/fetcher",
-            "converted.synthesized_root": true,
+            "turn.user_message": "Add retry logic to the fetch client",
+            "turn.origin": "human",
             "gen_ai.usage.input_tokens": 2300,
             "gen_ai.usage.output_tokens": 220,
             "gen_ai.usage.total_tokens": 2520
@@ -51,10 +89,9 @@
           "raw_attributes": {
             "gen_ai.operation.name": "invoke_agent",
             "gen_ai.agent.name": "codex",
-            "session.id": "sess-golden-codex",
             "turn.index": 0,
-            "workspace.cwd": "/home/dev/fetcher",
-            "converted.synthesized_root": true,
+            "turn.user_message": "Add retry logic to the fetch client",
+            "turn.origin": "human",
             "gen_ai.usage.input_tokens": 2300,
             "gen_ai.usage.output_tokens": 220,
             "gen_ai.usage.total_tokens": 2520
@@ -64,7 +101,7 @@
         },
         {
           "source_span_id": "897722e7b1e04859",
-          "source_parent_span_id": "0da7091e8dbe4603",
+          "source_parent_span_id": "9f0530f5cf9ce74b",
           "name": "shell",
           "kind": "tool",
           "started_at": "2026-01-15T09:00:05+00:00",
@@ -97,7 +134,7 @@
         },
         {
           "source_span_id": "c4565e3352eea09c",
-          "source_parent_span_id": "0da7091e8dbe4603",
+          "source_parent_span_id": "9f0530f5cf9ce74b",
           "name": "assistant turn",
           "kind": "llm",
           "started_at": "2026-01-15T09:00:09+00:00",
@@ -134,7 +171,7 @@
         },
         {
           "source_span_id": "ca66f3b5363bc2cc",
-          "source_parent_span_id": "0da7091e8dbe4603",
+          "source_parent_span_id": "9f0530f5cf9ce74b",
           "name": "tool_search",
           "kind": "tool",
           "started_at": "2026-01-15T09:00:10+00:00",
@@ -164,34 +201,13 @@
           },
           "raw_events": [],
           "raw_status_message": null
-        }
-      ]
-    },
-    {
-      "source_trace_id": "35d037239ea55fbdb21740843f2f8fb5",
-      "name": "codex: Now run the tests",
-      "status": "ok",
-      "started_at": "2026-01-15T09:01:02+00:00",
-      "ended_at": "2026-01-15T09:01:09+00:00",
-      "duration_ms": 7000,
-      "span_count": 5,
-      "error_count": 0,
-      "provider": "openai",
-      "model": "gpt-5.3-codex",
-      "service_name": "codex-cli",
-      "tool_names": [
-        "shell",
-        "web_search"
-      ],
-      "error_types": [],
-      "total_tokens": 550,
-      "spans": [
+        },
         {
-          "source_span_id": "5a40b428f125699c",
-          "source_parent_span_id": null,
-          "name": "codex: Now run the tests",
+          "source_span_id": "8c404e751525b15f",
+          "source_parent_span_id": "023100edcd74af15",
+          "name": "turn 2: Now run the tests",
           "kind": "agent",
-          "started_at": "2026-01-15T09:01:02+00:00",
+          "started_at": "2026-01-15T09:01:01.999999+00:00",
           "ended_at": "2026-01-15T09:01:09+00:00",
           "duration_ms": 7000,
           "status": "ok",
@@ -206,10 +222,9 @@
           "attributes": {
             "gen_ai.operation.name": "invoke_agent",
             "gen_ai.agent.name": "codex",
-            "session.id": "sess-golden-codex",
             "turn.index": 1,
-            "workspace.cwd": "/home/dev/fetcher",
-            "converted.synthesized_root": true,
+            "turn.user_message": "Now run the tests",
+            "turn.origin": "human",
             "gen_ai.usage.input_tokens": 500,
             "gen_ai.usage.output_tokens": 50,
             "gen_ai.usage.total_tokens": 550
@@ -218,10 +233,9 @@
           "raw_attributes": {
             "gen_ai.operation.name": "invoke_agent",
             "gen_ai.agent.name": "codex",
-            "session.id": "sess-golden-codex",
             "turn.index": 1,
-            "workspace.cwd": "/home/dev/fetcher",
-            "converted.synthesized_root": true,
+            "turn.user_message": "Now run the tests",
+            "turn.origin": "human",
             "gen_ai.usage.input_tokens": 500,
             "gen_ai.usage.output_tokens": 50,
             "gen_ai.usage.total_tokens": 550
@@ -231,7 +245,7 @@
         },
         {
           "source_span_id": "ad2c888ba8d96e54",
-          "source_parent_span_id": "5a40b428f125699c",
+          "source_parent_span_id": "8c404e751525b15f",
           "name": "shell",
           "kind": "tool",
           "started_at": "2026-01-15T09:01:02+00:00",
@@ -264,7 +278,7 @@
         },
         {
           "source_span_id": "f8b22a942d25a70f",
-          "source_parent_span_id": "5a40b428f125699c",
+          "source_parent_span_id": "8c404e751525b15f",
           "name": "web_search",
           "kind": "tool",
           "started_at": "2026-01-15T09:01:05+00:00",
@@ -295,7 +309,7 @@
         },
         {
           "source_span_id": "2200c908cebad685",
-          "source_parent_span_id": "5a40b428f125699c",
+          "source_parent_span_id": "8c404e751525b15f",
           "name": "assistant turn",
           "kind": "llm",
           "started_at": "2026-01-15T09:01:07+00:00",
@@ -330,7 +344,7 @@
         },
         {
           "source_span_id": "5ec65b412299d9e1",
-          "source_parent_span_id": "5a40b428f125699c",
+          "source_parent_span_id": "8c404e751525b15f",
           "name": "shell",
           "kind": "tool",
           "started_at": "2026-01-15T09:01:08+00:00",

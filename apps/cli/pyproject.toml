@@ -5,7 +5,7 @@ description = "Trace Marketplace sync CLI: upload local trace files via the uplo
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
-dependencies = ["httpx>=0.28.1"]
+dependencies = ["httpx>=0.28.1", "zstandard>=0.23.0"]
 
 [project.urls]
 Repository = "https://github.com/worktrial-joel-ritossa-dot/trace-marketplace"

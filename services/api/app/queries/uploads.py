@@ -55,9 +55,17 @@ async def list_owned(
                  array_agg(t.id order by t.started_at) filter (where t.id is not null),
                  '{}'
                ) as trace_ids,
+               coalesce(
+                 jsonb_agg(
+                   jsonb_build_object('trace_id', t.id, 'name', t.name, 'goal', ta.goal)
+                   order by t.started_at
+                 ) filter (where t.id is not null),
+                 '[]'
+               ) as traces,
                count(*) over () as total
         from uploads u
         left join traces t on t.upload_id = u.id
+        left join trace_analysis ta on ta.trace_id = t.id
         where u.owner_id = $1
         group by u.id
         order by u.created_at desc

@@ -25,5 +25,7 @@ def sniff_format(data: bytes) -> str | None:
     if isinstance(payload, dict) and otlp.matches(payload):
         return otlp.SOURCE_FORMAT
     # Not OTLP: try JSONL session schemas. A single-record transcript parses
-    # as whole-document JSON above, so this path must run for dicts too.
-    return sessions.detect(sessions.parse_records(data, limit=50))
+    # as whole-document JSON above, so this path must run for dicts too. No
+    # record cap: newer Claude Code logs open with dozens of bookkeeping
+    # records before the first message.
+    return sessions.detect(sessions.parse_records(data))

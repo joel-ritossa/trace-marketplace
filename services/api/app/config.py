@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     # gets the safe outcome; local .env opts in.
     dev_routes: bool = False
 
-    upload_max_bytes: int = 25 * 1024 * 1024
+    upload_max_bytes: int = 50 * 1024 * 1024
 
     # Logging (app/obs.py): JSON lines on stdout plus an in-process ring
     # buffer of recent records; log_file adds a JSON-lines file sink (the
@@ -41,6 +41,15 @@ class Settings(BaseSettings):
     ingest_retry_base_seconds: float = 2.0
     ingest_retry_cap_seconds: float = 60.0
     sweep_stuck_after_minutes: int = 10
+    # Session traces are finalized (last turn + roll-up) once idle this
+    # long (9_session-analysis.md); read by the minute sweep.
+    analysis_idle_seconds: int = 7200
+    # Analysis runs per sweep tick, at most (oldest claim first).
+    sweep_analysis_batch: int = 50
+    # Per-trace analysis run lease (9_session-analysis.md); a live run
+    # extends it every third of this, so a crashed worker frees the trace
+    # within one period.
+    analysis_lease_seconds: int = 120
 
     @property
     def supabase_jwks_url(self) -> str:

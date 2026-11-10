@@ -2,8 +2,9 @@
 
 Pure function of (trace, RENDERER_VERSION, config) — 1_analysis.md. Budget
 mechanics in spec order: per-step content caps first (middle-out, per field),
-then priority tiering — the first user message, all error spans, and the
-final K steps are must-haves; remaining middle steps fill the budget
+then priority tiering — the first user message (or, for session traces,
+every turn's user ask), all error spans, and the final K steps are
+must-haves; remaining middle steps fill the budget
 newest-first with explicit elision markers. The step skeleton (name, status,
 ordering) of every rendered step survives capping; whole-step elision is
 always marked.
@@ -16,14 +17,14 @@ from app.analysis.config import RendererConfig
 from app.analysis.models import RenderedMessage, RenderedTrace
 from app.analysis.trace_input import SpanInput, TraceInput
 
-RENDERER_VERSION = "2"
+RENDERER_VERSION = "3"
 
 _ROLE_BY_KIND = {"llm": "assistant", "tool": "tool"}
 # Cap-shrink floor: after this many halvings, steps render skeleton-only.
 _MAX_CAP_HALVINGS = 6
 
 
-def _middle_out(text: str, cap: int) -> tuple[str, bool]:
+def middle_out(text: str, cap: int) -> tuple[str, bool]:
     if len(text) <= cap:
         return text, False
     if cap < 48:
@@ -43,15 +44,18 @@ class _Step:
     output_text: str | None
     summary: str | None
     is_error: bool
+    ask: str | None = None  # session turn: the user's ask, rendered as a user message
 
     def render(self, field_cap: int) -> tuple[str, bool]:
         """Step text at a given per-field cap; cap 0 = skeleton only."""
+        if self.ask is not None:
+            return middle_out(self.ask, field_cap)
         lines = [self.skeleton]
         truncated = False
         if field_cap > 0:
             for label, text in (("input", self.input_text), ("output", self.output_text)):
                 if text:
-                    capped, cut = _middle_out(text, field_cap)
+                    capped, cut = middle_out(text, field_cap)
                     lines.append(f"{label}: {capped}")
                     truncated = truncated or cut
             if not self.input_text and not self.output_text and self.summary:
@@ -62,6 +66,9 @@ class _Step:
 
 
 def _build_step(span: SpanInput, index: int, total: int) -> _Step:
+    ask = span.attributes.get("turn.user_message")
+    if isinstance(ask, str) and ask:
+        return _Step(index, "user", "", None, None, None, False, ask)
     is_error = span.status == "error"
     status = span.status + (f", {span.error_type}" if span.error_type else "")
     skeleton = f"[step {index}/{total}] {span.kind} {span.name} ({status}, {span.duration_ms}ms)"
@@ -88,6 +95,8 @@ def _header(trace: TraceInput) -> str:
 
 
 def _field_cap(step: _Step, config: RendererConfig, halvings: int) -> int:
+    if step.ask is not None:
+        return config.conversation_cap_chars
     base = (
         config.conversation_cap_chars if step.role == "assistant" else config.tool_field_cap_chars
     )
@@ -129,14 +138,15 @@ def render_trace(trace: TraceInput, config: RendererConfig) -> RenderedTrace:
 
     fixed: list[RenderedMessage] = [RenderedMessage(role="system", content=_header(trace))]
     truncated = False
-    user_message = content.first_user_message(trace.spans)
+    is_session = any(s.ask is not None for s in steps)
+    user_message = None if is_session else content.first_user_message(trace.spans)
     if user_message:
-        capped, cut = _middle_out(user_message, config.conversation_cap_chars)
+        capped, cut = middle_out(user_message, config.conversation_cap_chars)
         truncated = truncated or cut
         fixed.append(RenderedMessage(role="user", content=capped))
 
     final_from = max(total - config.final_steps, 0)
-    mandatory = {s.index for s in steps if s.is_error or s.index > final_from}
+    mandatory = {s.index for s in steps if s.is_error or s.ask is not None or s.index > final_from}
 
     # Per-step caps, halved until the must-haves (with their elision markers)
     # fit the budget; floor is skeleton-only. Halvings apply to every step so
@@ -173,7 +183,7 @@ def render_trace(trace: TraceInput, config: RendererConfig) -> RenderedTrace:
     # alone exceed the budget (unreachable with sane configs; K skeletons are
     # a few hundred chars), the output runs over rather than dropping them.
     removable = sorted(
-        (s for s in steps if s.index in rendered and s.index <= final_from),
+        (s for s in steps if s.index in rendered and s.index <= final_from and s.ask is None),
         key=lambda s: (s.is_error, s.index),
     )
     while True:

@@ -178,6 +178,16 @@ def _placeholder(kind: str, value: str, salt: str) -> str:
     return f"<{kind}_{digest}>"
 
 
+# Every `_placeholder` shape. The digest is salted per upload, so identical
+# content differs between uploads only here.
+PLACEHOLDER_RE = re.compile(r"<([A-Z_]+)_[0-9a-f]{8}>")
+
+
+def unsalted(text: str) -> str:
+    """`text` with placeholder digests removed: equal across upload salts."""
+    return PLACEHOLDER_RE.sub(r"<\1>", text)
+
+
 def _detect_secrets(text: str, key: str | None, detections: dict[str, str]) -> None:
     """detect-secrets pass for one string value, merged into `detections`.
 

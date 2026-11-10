@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 from trace_sync.client import FatalError, SyncClient
+from trace_sync.files import DEFAULT_QUIET_SECONDS
 from trace_sync.run import EXIT_UNRUNNABLE, run_sync, run_watch
 
 DEFAULT_API_URL = "http://localhost:8000"
@@ -45,6 +46,14 @@ def _parser() -> argparse.ArgumentParser:
             default=None,
             help="only consider files modified in the last N hours (default: all)",
         )
+        if name == "watch":
+            cmd.add_argument(
+                "--quiet-seconds",
+                type=float,
+                default=float(os.environ.get("TRACE_SYNC_QUIET_SECONDS", DEFAULT_QUIET_SECONDS)),
+                help="upload a changed file only after it has been unchanged this long "
+                f"(env TRACE_SYNC_QUIET_SECONDS, default {DEFAULT_QUIET_SECONDS:.0f})",
+            )
     return parser
 
 
@@ -67,8 +76,11 @@ def main() -> None:
     client = SyncClient(args.api_url, args.api_key)
     try:
         client.preflight()
-        run = run_watch if args.command == "watch" else run_sync
-        sys.exit(run(client, args.paths, args.since_hours))
+        if args.command == "watch":
+            code = run_watch(client, args.paths, args.since_hours, args.quiet_seconds)
+        else:
+            code = run_sync(client, args.paths, args.since_hours)
+        sys.exit(code)
     except FatalError as exc:
         print(str(exc), file=sys.stderr)
         sys.exit(EXIT_UNRUNNABLE)

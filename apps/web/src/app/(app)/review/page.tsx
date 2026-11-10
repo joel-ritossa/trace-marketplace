@@ -3,58 +3,103 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { CheckCircle2, ChevronRight, X } from "lucide-react";
-import { OutcomeBadge } from "@/components/traces/badges";
+import { CheckCircle2, CircleHelp, TriangleAlert, X } from "lucide-react";
 import { Pager, usePageParam } from "@/components/shell/pager";
+import { AgentBadge } from "@/components/traces/badges";
+import { Button } from "@/components/ui/button";
+import { ExpandableText } from "@/components/ui/expandable-text";
+import { analyzeTrace } from "@/lib/api/traces";
+import { agentOf, cleanName, traceTitle } from "@/components/traces/names";
 import { listReviewItems, type ReviewItem, type ReviewItemList } from "@/lib/api/review";
 import { formatDate } from "@/lib/format";
 import { useRealtimeRefetch } from "@/lib/realtime";
-import { humanize } from "@/components/review/taxonomy";
 
-function Row({ item, uploadFilter }: { item: ReviewItem; uploadFilter: string | null }) {
-  const verdict = item.context.verdict;
-  const href = uploadFilter
-    ? `/review/${item.review_item_id}?upload_id=${uploadFilter}`
-    : `/review/${item.review_item_id}`;
+/** One open item: its trace's uncertain turns, each linking to that turn on
+ *  the trace page, where the owner relabels it. Per turn the uncertainty
+ *  reason leads; the turn's summary is secondary context. */
+function Row({ item }: { item: ReviewItem }) {
+  const { turns } = item.context;
   return (
-    <Link href={href} className="block px-4 py-3 transition-colors hover:bg-accent/50">
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <span className="truncate text-sm font-medium">{item.trace.name}</span>
-          {verdict.outcome ? (
-            <OutcomeBadge
-              outcome={verdict.outcome}
-              confidence={verdict.outcome_confidence}
-              provenance="machine"
-            />
-          ) : (
-            <span className="text-xs text-muted-foreground">no machine verdict</span>
-          )}
-          {verdict.task_category && (
-            <span className="hidden text-xs text-muted-foreground sm:inline">
-              {humanize(verdict.task_category)}
-              {verdict.task_category_confidence !== null && (
-                <span className="ml-1 font-mono">
-                  {verdict.task_category_confidence.toFixed(2)}
-                </span>
-              )}
-            </span>
-          )}
-        </div>
-        <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-          <time>{formatDate(item.created_at)}</time>
-          <ChevronRight className="size-3.5" />
-        </div>
-      </div>
-      {item.context.reasons.length > 0 && (
-        <p className="mt-1 text-xs text-muted-foreground">
-          {item.context.reasons.map((r) => r.message).join(" ")}
+    <div className="px-4 py-3">
+      <div className="flex items-baseline justify-between gap-4">
+        <span className="flex min-w-0 items-center gap-2">
+          <Link
+            href={`/traces/${item.trace_id}`}
+            title={`First ask: ${cleanName(item.trace.name)}`}
+            className="min-w-0 truncate text-sm font-medium hover:underline"
+          >
+            {traceTitle(item.trace.name, item.trace.goal)}
+          </Link>
+          {agentOf(item.trace.name) && <AgentBadge agent={agentOf(item.trace.name)!} />}
+        </span>
+        <p className="shrink-0 text-xs text-muted-foreground">
+          {turns.length} uncertain turn{turns.length === 1 ? "" : "s"} ·{" "}
+          <time className="font-mono">{formatDate(item.created_at)}</time>
         </p>
-      )}
-      {item.context.reasons.length === 0 && (
-        <p className="mt-1 text-xs text-muted-foreground">Relabel requested by you.</p>
-      )}
-    </Link>
+      </div>
+      <ul className="mt-2 flex flex-col gap-1">
+        {turns.map((turn) => (
+          <li
+            key={turn.turn_index}
+            className="-mx-2 grid grid-cols-[4rem_minmax(0,1fr)] gap-x-3 rounded-md px-2 py-1.5 transition-colors hover:bg-accent/50"
+          >
+            {/* The turn label opens the turn; the reason and summary expand in place. */}
+            <Link
+              href={`/traces/${item.trace_id}?turn=${turn.turn_index}`}
+              className="self-start rounded-sm pt-0.5 font-mono text-xs text-link-deep hover:underline focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
+            >
+              Turn {turn.turn_index + 1}
+            </Link>
+            <div className="min-w-0">
+              {/* Advisory, not alarm (4_pages.md): muted icon, ink reason. */}
+              {isJudgeFailure(turn.reason) ? (
+                // Not uncertainty: the judge errored on this turn.
+                <div className="flex flex-wrap items-center gap-2 text-sm">
+                  <TriangleAlert className="size-3.5 shrink-0 text-error-deep" />
+                  <span className="text-error-deep">Analysis failed for this turn</span>
+                  <RetryAnalysis traceId={item.trace_id} />
+                </div>
+              ) : (
+                <div className="flex items-start gap-1.5 text-sm">
+                  <CircleHelp className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+                  <ExpandableText text={turn.reason} lines={2} className="min-w-0 flex-1" />
+                </div>
+              )}
+              {turn.summary && (
+                <ExpandableText
+                  text={turn.summary}
+                  lines={1}
+                  className="mt-0.5 pl-5 text-xs text-muted-foreground"
+                />
+              )}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// The judge's own failure marker, distinct from genuine uncertainty.
+const isJudgeFailure = (reason: string) => /^The judge could not process/i.test(reason);
+
+/** Re-run the trace's analysis (POST /analyze); the queue refreshes live. */
+function RetryAnalysis({ traceId }: { traceId: string }) {
+  const [state, setState] = useState<"idle" | "busy" | "queued" | "error">("idle");
+  return (
+    <Button
+      size="xs"
+      variant="outline"
+      disabled={state === "busy" || state === "queued"}
+      onClick={() => {
+        setState("busy");
+        analyzeTrace(traceId)
+          .then(() => setState("queued"))
+          .catch(() => setState("error"));
+      }}
+    >
+      {state === "queued" ? "Retry queued" : state === "error" ? "Retry failed — again" : "Retry analysis"}
+    </Button>
   );
 }
 
@@ -72,17 +117,19 @@ function Groups({ items, uploadFilter }: { items: ReviewItem[]; uploadFilter: st
       {groups.map((group) =>
         group.items.length === 1 || uploadFilter ? (
           group.items.map((item) => (
-            <Row key={item.review_item_id} item={item} uploadFilter={uploadFilter} />
+            <Row key={item.review_item_id} item={item} />
           ))
         ) : (
           <details key={`${group.uploadId}-${group.items[0].review_item_id}`} open>
-            <summary className="cursor-pointer px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground">
+            <summary className="cursor-pointer truncate px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground">
               {group.items.length} from upload{" "}
-              <span className="font-medium text-foreground">{group.filename}</span>
+              <span className="font-medium text-foreground" title={group.filename}>
+                {group.filename}
+              </span>
             </summary>
             <div className="divide-y border-t pl-4">
               {group.items.map((item) => (
-                <Row key={item.review_item_id} item={item} uploadFilter={uploadFilter} />
+                <Row key={item.review_item_id} item={item} />
               ))}
             </div>
           </details>
@@ -128,15 +175,21 @@ export default function ReviewQueuePage() {
     <div className="mx-auto w-full max-w-6xl">
       <h1 className="text-2xl font-semibold tracking-tight">Review</h1>
       <p className="mt-1 text-sm text-muted-foreground">
-        Traces the analyzers were uncertain about. Reviewing improves labels — it gates nothing.
+        Turns the judge was uncertain about. Relabeling them improves labels — it gates nothing.
       </p>
 
       {uploadFilter && (
         <div className="mt-4 flex items-center gap-2 text-sm">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-secondary px-2.5 py-0.5 text-xs">
+          <span className="inline-flex max-w-full min-w-0 items-center gap-1.5 rounded-full bg-secondary px-2 py-0.5 text-xs">
             {/* An empty filtered queue has no row to name the upload from. */}
-            upload: {result?.items[0]?.upload_filename ?? `${uploadFilter.slice(0, 8)}…`}
-            <Link href="/review" aria-label="Clear upload filter" className="hover:text-foreground">
+            <span className="truncate">
+              upload: {result?.items[0]?.upload_filename ?? `${uploadFilter.slice(0, 8)}…`}
+            </span>
+            <Link
+              href="/review"
+              aria-label="Clear upload filter"
+              className="shrink-0 rounded-full text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
+            >
               <X className="size-3" />
             </Link>
           </span>
@@ -153,7 +206,7 @@ export default function ReviewQueuePage() {
             <CheckCircle2 className="size-8 text-status-ok" strokeWidth={1.5} />
             <p className="mt-4 text-sm font-medium">Nothing needs review</p>
             <p className="mt-1 text-sm text-muted-foreground">
-              When the judge is uncertain about a trace, it lands here.
+              When the judge is uncertain about a turn, its trace lands here.
             </p>
           </div>
         ) : (

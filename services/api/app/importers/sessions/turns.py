@@ -1,15 +1,18 @@
-"""Shared session model: ordered llm/tool events split into per-turn traces,
-emitted as an OTLP JSON payload for the one normalize path (8_session-ingestion.md).
+"""Shared session model: ordered llm/tool events grouped into turns
+under one session trace, emitted as an OTLP JSON payload for the one normalize
+path (8_session-ingestion.md).
 
 A turn is one user message plus all assistant activity until the next user
-message. Identity is deterministic — sha256 over (agent, session id, turn
-index) — so re-uploads and re-ingests reproduce the same source trace ids.
+message. Identity is deterministic — sha256 over (agent, session id) for the
+trace, plus turn/event index for spans — so re-uploads and re-ingests
+reproduce the same source trace id.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -38,14 +41,34 @@ def _any_value(value: Any) -> dict:
     return {"stringValue": value if isinstance(value, str) else str(value)}
 
 
+_LEAD = NANO // 1_000_000
+# Harness context blocks prepended to an ask are dropped whole; wrapper tags
+# around the user's own words are unwrapped.
+_HARNESS_BLOCK = re.compile(
+    r"<(system-reminder|artifact-view-context|command-message)\b[^>]*>.*?</\1>", re.S
+)
+_WRAPPER_TAG = re.compile(r"</?(?:pasted_content|command-name|command-args)\b[^>]*>")
+
+
 def _attr_list(attributes: dict) -> list[dict]:
     return [{"key": k, "value": _any_value(v)} for k, v in attributes.items() if v is not None]
 
 
+def _usage_attrs(usage: dict[str, int]) -> dict[str, int | None]:
+    return {
+        f"gen_ai.usage.{k}": usage.get(k) for k in ("input_tokens", "output_tokens", "total_tokens")
+    }
+
+
 def clean_user_text(text: str) -> str:
-    """Harnesses wrap the real ask in <user_query> tags; titles want one line."""
+    """Harnesses wrap the real ask in <user_query> tags, pastes in
+    <pasted_content> tags and slash commands in <command-*> tags (read as
+    `/name args`), and prepend <system-reminder>/<artifact-view-context>
+    context (dropped); titles want one line."""
     if "<user_query>" in text:
         text = text.split("<user_query>", 1)[1].split("</user_query>", 1)[0]
+    text = _HARNESS_BLOCK.sub(" ", text)
+    text = _WRAPPER_TAG.sub(" ", text)
     return " ".join(text.split())
 
 
@@ -57,13 +80,24 @@ class Event:
     ts: int | None = None  # unix nanos
     end: int | None = None
     error: str | None = None
+    # A spawned subagent's own events nest under the tool call that spawned
+    # it; `agent_id` is the parser's link key until they are attached.
+    agent_id: str | None = None
+    children: list[Event] = field(default_factory=list)
+
+
+def flatten(events: list[Event]) -> list[Event]:
+    """Events depth-first, each followed by its nested subagent events."""
+    return [x for e in events for x in (e, *flatten(e.children))]
 
 
 @dataclass
 class Turn:
     title: str | None
+    origin: str | None = None  # human | automated; None for a promptless lead
+    skill: str | None = None  # skill a human slash command invoked
     events: list[Event] = field(default_factory=list)
-    # Turn-level usage sums (Codex token_count events); rendered on the root
+    # Turn-level usage sums (Codex token_count events); rendered on the turn
     # span — formats with per-message usage (Claude) put it on llm events.
     usage: dict[str, int] = field(default_factory=dict)
 
@@ -75,22 +109,28 @@ class SessionBuilder:
         self.agent = agent
         self.session_id = session_id
         self.cwd: str | None = None
+        self.root_attrs: dict[str, Any] = {}  # extra session-root attributes
         self.provider: str | None = None
         self.model: str | None = None
         self.turns: list[Turn] = []
         self._current: Turn | None = None
 
-    def user_message(self, text: str) -> None:
+    def user_message(self, text: str, origin: str = "human", skill: str | None = None) -> None:
+        """A prompt asking the agent to act: `human`, or `automated` (an
+        outside event); `skill` when it is a skill slash command. Consecutive
+        prompts with no activity between them stay one turn, titled by the
+        first."""
         title = clean_user_text(text)
         if not title:
             return
-        if self._current is None or self._current.events:
+        if self._current is not None and not self._current.title:
+            # Leading activity with no prompt before it (a log resumed after
+            # compaction) takes the first prompt that follows.
+            self._current.title, self._current.origin = title, origin
+        elif self._current is None or self._current.events:
             self._flush()
-            self._current = Turn(title=title)
-        elif not self._current.title:
-            self._current.title = title
-        # Consecutive user messages with no assistant activity between them
-        # stay one turn, titled by the first ask.
+            self._current = Turn(title=title, origin=origin)
+        self._current.skill = self._current.skill or skill
 
     def add(
         self,
@@ -100,10 +140,17 @@ class SessionBuilder:
         ts: int | None = None,
         end: int | None = None,
         error: str | None = None,
-    ) -> None:
+    ) -> Event:
         if self._current is None:
             self._current = Turn(title=None)  # leading activity before any ask
-        self._current.events.append(Event(kind, name, attrs, ts, end, error))
+        event = Event(kind, name, attrs, ts, end, error)
+        self._current.events.append(event)
+        return event
+
+    def events(self) -> list[Event]:
+        """Top-level events of every turn, in order (flushes the open turn)."""
+        self._flush()
+        return [e for turn in self.turns for e in turn.events]
 
     def add_turn_usage(self, input_tokens: Any, output_tokens: Any, total_tokens: Any) -> None:
         """Accumulate one model request's usage onto the current turn."""
@@ -126,7 +173,7 @@ class SessionBuilder:
         self._current = None
 
     def to_otlp(self, *, anchor_ns: int) -> dict:
-        """One OTLP payload, one trace per turn.
+        """One OTLP payload, one trace per session.
 
         `anchor_ns` ends the synthesized-timestamp walk for logs that carry
         no clocks (Cursor); callers pass the upload's created_at so
@@ -140,7 +187,7 @@ class SessionBuilder:
 
         # Fill missing timestamps across the whole session at one second per
         # event, so ordering survives without real timestamps.
-        events = [e for turn in self.turns for e in turn.events]
+        events = flatten([e for turn in self.turns for e in turn.events])
         synthesized = any(e.ts is None for e in events)
         first = next((i for i, e in enumerate(events) if e.ts is not None), None)
         if first is None:
@@ -159,58 +206,71 @@ class SessionBuilder:
             for i in range(first + 1, len(events)):
                 if events[i].ts is None:
                     events[i].ts = events[i - 1].ts + NANO
-        for i, event in enumerate(events):
-            if event.end is None:
-                nxt = events[i + 1].ts if i + 1 < len(events) else None
-                event.end = max(event.ts + NANO // 1000, nxt or event.ts + NANO)
+        # Missing ends run to the next event of the same turn; never across
+        # turns, or idle time between asks would read as model latency.
+        for turn in self.turns:
+            turn_events = flatten(turn.events)
+            for i, event in enumerate(turn_events):
+                if event.end is None:
+                    nxt = turn_events[i + 1].ts if i + 1 < len(turn_events) else None
+                    event.end = max(event.ts + NANO // 1000, nxt or event.ts + NANO)
 
-        spans: list[dict] = []
+        key = f"{self.agent}:{self.session_id}"
+        trace_id = hashlib.sha256(key.encode()).hexdigest()[:32]
+        root_id = hashlib.sha256(f"root:{key}".encode()).hexdigest()[:16]
+        title = self.turns[0].title or f"{self.agent} session"
+        spans: list[dict] = [
+            {
+                "traceId": trace_id,
+                "spanId": root_id,
+                "name": f"{self.agent}: {title}"[:120],
+                "kind": 1,
+                "startTimeUnixNano": str(min(e.ts for e in events) - 2 * _LEAD),
+                "endTimeUnixNano": str(max(e.end for e in events)),
+                "attributes": _attr_list(
+                    {
+                        "gen_ai.operation.name": "invoke_agent",
+                        "gen_ai.agent.name": self.agent,
+                        "session.id": self.session_id,
+                        "session.turn_count": len(self.turns),
+                        "workspace.cwd": self.cwd,
+                        "converted.synthesized_root": True,
+                        "converted.synthesized_timestamps": synthesized or None,
+                        **self.root_attrs,
+                    }
+                ),
+                "status": {"code": 1},
+            }
+        ]
         for turn_index, turn in enumerate(self.turns):
-            key = f"{self.agent}:{self.session_id}:{turn_index}"
-            trace_id = hashlib.sha256(key.encode()).hexdigest()[:32]
-            root_id = hashlib.sha256(f"root:{key}".encode()).hexdigest()[:16]
-            title = turn.title or f"{self.agent} session"
+            turn_id = hashlib.sha256(f"turn:{key}:{turn_index}".encode()).hexdigest()[:16]
             spans.append(
                 {
                     "traceId": trace_id,
-                    "spanId": root_id,
-                    "name": f"{self.agent}: {title}"[:120],
+                    "spanId": turn_id,
+                    "parentSpanId": root_id,
+                    "name": f"turn {turn_index + 1}: {turn.title or f'{self.agent} session'}"[:120],
                     "kind": 1,
-                    "startTimeUnixNano": str(min(e.ts for e in turn.events)),
-                    "endTimeUnixNano": str(max(e.end for e in turn.events)),
+                    # 1µs lead (stored precision): spans sort by (start, span
+                    # id), so the ask must precede its first event, not tie.
+                    "startTimeUnixNano": str(min(e.ts for e in turn.events) - _LEAD),
+                    "endTimeUnixNano": str(max(e.end for e in flatten(turn.events))),
                     "attributes": _attr_list(
                         {
                             "gen_ai.operation.name": "invoke_agent",
                             "gen_ai.agent.name": self.agent,
-                            "session.id": self.session_id,
                             "turn.index": turn_index,
-                            "workspace.cwd": self.cwd,
-                            "converted.synthesized_root": True,
-                            "converted.synthesized_timestamps": synthesized or None,
-                            "gen_ai.usage.input_tokens": turn.usage.get("input_tokens"),
-                            "gen_ai.usage.output_tokens": turn.usage.get("output_tokens"),
-                            "gen_ai.usage.total_tokens": turn.usage.get("total_tokens"),
+                            "turn.user_message": turn.title,
+                            "turn.origin": turn.origin,
+                            "skill.name": turn.skill,
+                            "skill.source": "user" if turn.skill else None,
+                            **_usage_attrs(turn.usage),
                         }
                     ),
                     "status": {"code": 1},
                 }
             )
-            for i, event in enumerate(turn.events):
-                spans.append(
-                    {
-                        "traceId": trace_id,
-                        "spanId": hashlib.sha256(f"{key}:{i}".encode()).hexdigest()[:16],
-                        "parentSpanId": root_id,
-                        "name": event.name,
-                        "kind": 3,
-                        "startTimeUnixNano": str(event.ts),
-                        "endTimeUnixNano": str(event.end),
-                        "attributes": _attr_list(event.attrs),
-                        "status": (
-                            {"code": 2, "message": event.error} if event.error else {"code": 1}
-                        ),
-                    }
-                )
+            spans.extend(_event_spans(trace_id, turn.events, f"{key}:{turn_index}", turn_id))
 
         return {
             "resourceSpans": [
@@ -220,6 +280,27 @@ class SessionBuilder:
                 }
             ]
         }
+
+
+def _event_spans(trace_id: str, events: list[Event], prefix: str, parent_id: str) -> list[dict]:
+    spans: list[dict] = []
+    for i, event in enumerate(events):
+        span_id = hashlib.sha256(f"{prefix}:{i}".encode()).hexdigest()[:16]
+        spans.append(
+            {
+                "traceId": trace_id,
+                "spanId": span_id,
+                "parentSpanId": parent_id,
+                "name": event.name,
+                "kind": 3,
+                "startTimeUnixNano": str(event.ts),
+                "endTimeUnixNano": str(event.end),
+                "attributes": _attr_list(event.attrs),
+                "status": {"code": 2, "message": event.error} if event.error else {"code": 1},
+            }
+        )
+        spans.extend(_event_spans(trace_id, event.children, f"{prefix}:{i}", span_id))
+    return spans
 
 
 def llm_attrs(

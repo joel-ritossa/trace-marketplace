@@ -2,6 +2,8 @@
 
 What was in flight or consciously left open when the trial ended — the concrete punch list, as distinct from the structural limitations in [09](09_limitations-and-future-work.md). Everything here is grounded in the working tree, a buildlog entry, or an audit record an evaluator can open.
 
+> **Snapshot at the trial cutoff.** The judge-specific items below (judge v5/v6, routing noise, the renderer, `JUDGE_VERSION`) predate the 2026-11-10 agent-judge redesign, which replaced the voted judge ([04](04_analysis-pipeline.md), `docs/buildlog/stage-2/agent-judge/`).
+
 ## In Flight at Cutoff
 
 The working tree at cutoff holds one finished-but-uncommitted pass and one slice that is spec'd but not coded (all of it visible in `git status` against the last commit):

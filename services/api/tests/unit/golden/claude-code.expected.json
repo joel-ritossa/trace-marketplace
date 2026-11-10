@@ -1,27 +1,99 @@
 {
   "traces": [
     {
-      "source_trace_id": "bef81ba985ac3c62e6ab188fca31d19b",
+      "source_trace_id": "3318e603650bd47c14c4103c1b858e09",
       "name": "claude: Refactor the auth module to use the new session store",
       "status": "error",
-      "started_at": "2026-01-15T10:00:02+00:00",
-      "ended_at": "2026-01-15T10:01:02+00:00",
-      "duration_ms": 60000,
-      "span_count": 6,
+      "started_at": "2026-01-15T10:00:01.999998+00:00",
+      "ended_at": "2026-01-15T10:01:11+00:00",
+      "duration_ms": 69000,
+      "span_count": 11,
       "error_count": 1,
       "provider": "anthropic",
       "model": "claude-fable-5",
       "service_name": "claude-cli",
       "tool_names": [
+        "Bash",
         "Edit",
         "Read"
       ],
+      "skill_names": [],
       "error_types": [],
-      "total_tokens": 5610,
+      "total_tokens": 9787,
       "spans": [
         {
+          "source_span_id": "ad061be12dea30f2",
+          "source_parent_span_id": null,
+          "name": "claude: Refactor the auth module to use the new session store",
+          "kind": "agent",
+          "started_at": "2026-01-15T10:00:01.999998+00:00",
+          "ended_at": "2026-01-15T10:01:11+00:00",
+          "duration_ms": 69000,
+          "status": "ok",
+          "status_message": null,
+          "error_type": null,
+          "provider": null,
+          "model": null,
+          "tool_name": null,
+          "input_tokens": null,
+          "output_tokens": null,
+          "total_tokens": null,
+          "attributes": {
+            "gen_ai.operation.name": "invoke_agent",
+            "gen_ai.agent.name": "claude",
+            "session.id": "claude-code",
+            "session.turn_count": 2,
+            "converted.synthesized_root": true
+          },
+          "events": [],
+          "raw_attributes": {
+            "gen_ai.operation.name": "invoke_agent",
+            "gen_ai.agent.name": "claude",
+            "session.id": "claude-code",
+            "session.turn_count": 2,
+            "converted.synthesized_root": true
+          },
+          "raw_events": [],
+          "raw_status_message": null
+        },
+        {
+          "source_span_id": "620999f9c66d0755",
+          "source_parent_span_id": "ad061be12dea30f2",
+          "name": "turn 1: Refactor the auth module to use the new session store",
+          "kind": "agent",
+          "started_at": "2026-01-15T10:00:01.999999+00:00",
+          "ended_at": "2026-01-15T10:00:12+00:00",
+          "duration_ms": 10000,
+          "status": "ok",
+          "status_message": null,
+          "error_type": null,
+          "provider": null,
+          "model": null,
+          "tool_name": null,
+          "input_tokens": null,
+          "output_tokens": null,
+          "total_tokens": null,
+          "attributes": {
+            "gen_ai.operation.name": "invoke_agent",
+            "gen_ai.agent.name": "claude",
+            "turn.index": 0,
+            "turn.user_message": "Refactor the auth module to use the new session store",
+            "turn.origin": "human"
+          },
+          "events": [],
+          "raw_attributes": {
+            "gen_ai.operation.name": "invoke_agent",
+            "gen_ai.agent.name": "claude",
+            "turn.index": 0,
+            "turn.user_message": "Refactor the auth module to use the new session store",
+            "turn.origin": "human"
+          },
+          "raw_events": [],
+          "raw_status_message": null
+        },
+        {
           "source_span_id": "27c3269e2d19e6ef",
-          "source_parent_span_id": "3710b27218956846",
+          "source_parent_span_id": "620999f9c66d0755",
           "name": "assistant turn",
           "kind": "llm",
           "started_at": "2026-01-15T10:00:02+00:00",
@@ -61,43 +133,8 @@
           "raw_status_message": null
         },
         {
-          "source_span_id": "3710b27218956846",
-          "source_parent_span_id": null,
-          "name": "claude: Refactor the auth module to use the new session store",
-          "kind": "agent",
-          "started_at": "2026-01-15T10:00:02+00:00",
-          "ended_at": "2026-01-15T10:01:02+00:00",
-          "duration_ms": 60000,
-          "status": "ok",
-          "status_message": null,
-          "error_type": null,
-          "provider": null,
-          "model": null,
-          "tool_name": null,
-          "input_tokens": null,
-          "output_tokens": null,
-          "total_tokens": null,
-          "attributes": {
-            "gen_ai.operation.name": "invoke_agent",
-            "gen_ai.agent.name": "claude",
-            "session.id": "claude-code",
-            "turn.index": 0,
-            "converted.synthesized_root": true
-          },
-          "events": [],
-          "raw_attributes": {
-            "gen_ai.operation.name": "invoke_agent",
-            "gen_ai.agent.name": "claude",
-            "session.id": "claude-code",
-            "turn.index": 0,
-            "converted.synthesized_root": true
-          },
-          "raw_events": [],
-          "raw_status_message": null
-        },
-        {
           "source_span_id": "9b6eadeda3f24ef5",
-          "source_parent_span_id": "3710b27218956846",
+          "source_parent_span_id": "620999f9c66d0755",
           "name": "Read",
           "kind": "tool",
           "started_at": "2026-01-15T10:00:04+00:00",
@@ -130,7 +167,7 @@
         },
         {
           "source_span_id": "13ee668eba4144e0",
-          "source_parent_span_id": "3710b27218956846",
+          "source_parent_span_id": "620999f9c66d0755",
           "name": "Edit",
           "kind": "tool",
           "started_at": "2026-01-15T10:00:07+00:00",
@@ -163,7 +200,7 @@
         },
         {
           "source_span_id": "a68e0b1c40e25f2f",
-          "source_parent_span_id": "3710b27218956846",
+          "source_parent_span_id": "620999f9c66d0755",
           "name": "assistant turn",
           "kind": "llm",
           "started_at": "2026-01-15T10:00:07+00:00",
@@ -198,12 +235,12 @@
         },
         {
           "source_span_id": "7ac1e8da75d3c03f",
-          "source_parent_span_id": "3710b27218956846",
+          "source_parent_span_id": "620999f9c66d0755",
           "name": "assistant turn",
           "kind": "llm",
           "started_at": "2026-01-15T10:00:11+00:00",
-          "ended_at": "2026-01-15T10:01:02+00:00",
-          "duration_ms": 51000,
+          "ended_at": "2026-01-15T10:00:12+00:00",
+          "duration_ms": 1000,
           "status": "ok",
           "status_message": null,
           "error_type": null,
@@ -232,30 +269,45 @@
           },
           "raw_events": [],
           "raw_status_message": null
-        }
-      ]
-    },
-    {
-      "source_trace_id": "5e777ae68d5ea4047d0f3f626ec016eb",
-      "name": "claude: Now run the tests",
-      "status": "ok",
-      "started_at": "2026-01-15T10:01:02+00:00",
-      "ended_at": "2026-01-15T10:01:11+00:00",
-      "duration_ms": 9000,
-      "span_count": 4,
-      "error_count": 0,
-      "provider": "anthropic",
-      "model": "claude-fable-5",
-      "service_name": "claude-cli",
-      "tool_names": [
-        "Bash"
-      ],
-      "error_types": [],
-      "total_tokens": 4177,
-      "spans": [
+        },
+        {
+          "source_span_id": "2f2666433995184c",
+          "source_parent_span_id": "ad061be12dea30f2",
+          "name": "turn 2: Now run the tests",
+          "kind": "agent",
+          "started_at": "2026-01-15T10:01:01.999999+00:00",
+          "ended_at": "2026-01-15T10:01:11+00:00",
+          "duration_ms": 9000,
+          "status": "ok",
+          "status_message": null,
+          "error_type": null,
+          "provider": null,
+          "model": null,
+          "tool_name": null,
+          "input_tokens": null,
+          "output_tokens": null,
+          "total_tokens": null,
+          "attributes": {
+            "gen_ai.operation.name": "invoke_agent",
+            "gen_ai.agent.name": "claude",
+            "turn.index": 1,
+            "turn.user_message": "Now run the tests",
+            "turn.origin": "human"
+          },
+          "events": [],
+          "raw_attributes": {
+            "gen_ai.operation.name": "invoke_agent",
+            "gen_ai.agent.name": "claude",
+            "turn.index": 1,
+            "turn.user_message": "Now run the tests",
+            "turn.origin": "human"
+          },
+          "raw_events": [],
+          "raw_status_message": null
+        },
         {
           "source_span_id": "2e5319e62dfae443",
-          "source_parent_span_id": "4af78529ea9c6fe7",
+          "source_parent_span_id": "2f2666433995184c",
           "name": "assistant turn",
           "kind": "llm",
           "started_at": "2026-01-15T10:01:02+00:00",
@@ -293,43 +345,8 @@
           "raw_status_message": null
         },
         {
-          "source_span_id": "4af78529ea9c6fe7",
-          "source_parent_span_id": null,
-          "name": "claude: Now run the tests",
-          "kind": "agent",
-          "started_at": "2026-01-15T10:01:02+00:00",
-          "ended_at": "2026-01-15T10:01:11+00:00",
-          "duration_ms": 9000,
-          "status": "ok",
-          "status_message": null,
-          "error_type": null,
-          "provider": null,
-          "model": null,
-          "tool_name": null,
-          "input_tokens": null,
-          "output_tokens": null,
-          "total_tokens": null,
-          "attributes": {
-            "gen_ai.operation.name": "invoke_agent",
-            "gen_ai.agent.name": "claude",
-            "session.id": "claude-code",
-            "turn.index": 1,
-            "converted.synthesized_root": true
-          },
-          "events": [],
-          "raw_attributes": {
-            "gen_ai.operation.name": "invoke_agent",
-            "gen_ai.agent.name": "claude",
-            "session.id": "claude-code",
-            "turn.index": 1,
-            "converted.synthesized_root": true
-          },
-          "raw_events": [],
-          "raw_status_message": null
-        },
-        {
           "source_span_id": "838862ffbc68a1ad",
-          "source_parent_span_id": "4af78529ea9c6fe7",
+          "source_parent_span_id": "2f2666433995184c",
           "name": "Bash",
           "kind": "tool",
           "started_at": "2026-01-15T10:01:03+00:00",
@@ -362,7 +379,7 @@
         },
         {
           "source_span_id": "63dd8f975422334f",
-          "source_parent_span_id": "4af78529ea9c6fe7",
+          "source_parent_span_id": "2f2666433995184c",
           "name": "assistant turn",
           "kind": "llm",
           "started_at": "2026-01-15T10:01:10+00:00",

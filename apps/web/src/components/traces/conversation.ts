@@ -12,7 +12,7 @@ import type { SpanDetail, SpanEvent, SpanListItem } from "@/lib/api/traces";
 
 export type MessageRole = "user" | "assistant" | "system" | "other";
 
-export type ConversationItem =
+export type ConversationItem = { spanId?: string } & (
   | { kind: "message"; id: string; role: MessageRole; label: string; text: string }
   | { kind: "reasoning"; id: string; text: string }
   | {
@@ -22,7 +22,8 @@ export type ConversationItem =
       input: string | null;
       output: string | null;
       error: boolean;
-    };
+    }
+);
 
 const TOOL_INPUT_KEYS = ["gen_ai.tool.call.arguments", "traceloop.entity.input", "input.value"];
 const TOOL_OUTPUT_KEYS = ["gen_ai.tool.call.result", "traceloop.entity.output", "output.value"];
@@ -253,7 +254,18 @@ export function buildConversation(
     }
   }
 
+  // Each item remembers the span it came from (turn dividers, turn focus).
+  let tagged = 0;
   for (const { span, detail } of ordered) {
+    emitSpan(builder, span, detail);
+    for (; tagged < builder.items.length; tagged++) builder.items[tagged].spanId = span.span_id;
+  }
+
+  return builder.items;
+}
+
+function emitSpan(builder: Builder, span: SpanListItem, detail: SpanDetail): void {
+  {
     if (span.kind === "tool") {
       builder.items.push({
         kind: "tool",
@@ -263,7 +275,7 @@ export function buildConversation(
         output: firstString(detail.attributes, TOOL_OUTPUT_KEYS),
         error: span.status === "error",
       });
-      continue;
+      return;
     }
 
     const inputs = inputMessages(detail);
@@ -272,7 +284,7 @@ export function buildConversation(
       for (const message of inputs ?? []) emitMessage(builder, message);
       emitReasoning(builder, detail);
       for (const message of outputs ?? []) emitMessage(builder, message);
-      continue;
+      return;
     }
 
     // Generic fallback: opaque input/output blobs, deduped as raw strings.
@@ -300,6 +312,4 @@ export function buildConversation(
       });
     }
   }
-
-  return builder.items;
 }

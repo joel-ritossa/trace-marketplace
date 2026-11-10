@@ -45,9 +45,11 @@ export function TraceHeaderActions({
   return (
     <div className="flex flex-col items-end gap-1">
       <div className="flex flex-wrap items-center justify-end gap-2">
+        {/* Acquire is the consumer's action; owners never see it. */}
         {trace.acquired ? (
           <LibraryBadge />
         ) : (
+          !trace.is_owner &&
           trace.visibility === "listed" && (
             <AcquireButton trace={trace} onChange={onChange} onError={setError} />
           )
@@ -327,12 +329,24 @@ export function TraceMetaEditor({
         placeholder="e.g. customer-support, tool-use, failure"
         className="h-8 text-xs"
       />
+      {parsedTags.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {parsedTags.map((tag) => (
+            <span
+              key={tag}
+              className="rounded-full bg-secondary px-2 py-0.5 text-xs text-foreground/75"
+            >
+              {tag}
+            </span>
+          ))}
+        </div>
+      )}
       <textarea
         value={description}
         onChange={(e) => setDescription(e.target.value)}
         placeholder="What is this trace? What makes it worth acquiring?"
-        rows={2}
-        className="rounded-md border bg-background px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-foreground"
+        rows={4}
+        className="min-h-20 resize-y rounded-md border bg-background px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-foreground"
       />
       {dirty && (
         <div>

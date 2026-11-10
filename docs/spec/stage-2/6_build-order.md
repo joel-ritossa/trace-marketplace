@@ -2,7 +2,9 @@
 
 Two parallel streams plus a final integration pass. Stage-1 slice rules carry over: each slice ends runnable and demoable, later slices extend earlier ones without rework, no decisions beyond this spec.
 
-The seam is the **analyzer contract** ([1_analysis.md](1_analysis.md)): analyzers and routing are pure functions over normalized rows, developed against the offline runner — everything touching a database, queue, or browser is the Platform stream. The streams share only the contract module (result models, `trace_analysis` columns, routing reasons), frozen by this spec. Until a B-slice lands, the matching A-slice wires a stub analyzer behind the same contract; swapping in the real one is a registration, not a rework. Both streams are one codebase: stream B is the analysis package inside `services/api`.
+The seam is the **analyzer contract** ([1_analysis.md](1_analysis.md)): analyzers are pure functions over normalized rows, developed against the offline runner — everything touching a database, queue, or browser is the Platform stream. The streams share only the contract module (result models, `trace_analysis` columns), frozen by this spec. Until a B-slice lands, the matching A-slice wires a stub analyzer behind the same contract; swapping in the real one is a registration, not a rework. Both streams are one codebase: stream B is the analysis package inside `services/api`.
+
+> **Amended 2026-11-10 (agent judge).** B2 (voted judge), B3 (quality metrics), B5 (metrics validation) and the routing/confidence parts of A3/A4 below are superseded by [9_session-analysis.md](9_session-analysis.md), built as one slice: [`docs/buildlog/stage-2/agent-judge/`](../../buildlog/stage-2/agent-judge/000_implementation.md). The slice texts are kept as the original plan; their done-whens no longer apply where they mention votes, confidence, metrics or routing reasons.
 
 **B0 is the one cross-stream ordering constraint** — it creates the contract module everything imports. Stage-1 slice 3 hard-blocks only A4 (and A3's marketplace badges); everything else needs only slices 1–2.
 
@@ -18,7 +20,7 @@ flowchart TD
     end
 
     subgraph SB["Stream B — Analysis Core (offline)"]
-        B0["B0 contract + renderer + runner"]
+        B0["B0 contract + runner"]
         B1["B1 signals"]
         B2["B2 outcome judge"]
         B3["B3 quality metrics"]
@@ -58,22 +60,22 @@ flowchart TD
 
 ## Stream B — Analysis Core
 
-**B0 — Contract and harness.** Analysis package in `services/api`: typed result models, routing-reason model, config models; the trace renderer + trace→sample adapter; the offline runner (load traces from DB/fixtures, run any analyzer, dump JSON).
+**B0 — Contract and harness.** Analysis package in `services/api`: typed result models, config models; the trace renderer; the offline runner (load traces from DB/fixtures, run any analyzer, dump JSON). (The routing-reason model and trace→sample adapter are gone; the renderer no longer feeds the judge.)
 *Done when:* any dev-dataset trace renders deterministically within budget; the runner round-trips a stub analyzer; the contract is frozen.
 
-**B1 — Deterministic signals.** Catalog, loop detection, `failure_suspected`; golden tests; hit-rate measurement on the dev dataset locks the promotion list.
+**B1 — Deterministic signals.** Catalog, loop detection (`failure_suspected` since removed; signals now run per turn); golden tests; hit-rate measurement on the dev dataset locks the promotion list.
 *Done when:* golden tests pass; hit-rate report exists; the runner emits signals for every dev-dataset trace.
 
-**B2 — Outcome judge.** Structured-output client over litellm (the pinned provider layer — one wrapped module, no direct provider SDKs, per-call cost/latency recorded); the three composed calls with versioned seeded prompts; self-consistency voting + confidence formula; the routing function; no-key skip.
+**B2 — Outcome judge** *(superseded by 9_session-analysis.md: per-turn agent over the OpenAI Agents SDK, no voting, no routing function, no litellm).* Structured-output client over litellm (the pinned provider layer — one wrapped module, no direct provider SDKs, per-call cost/latency recorded); the three composed calls with versioned seeded prompts; self-consistency voting + confidence formula; the routing function; no-key skip.
 *Done when:* the runner judges fixtures end to end (votes + reasoning recorded); disagreement/indeterminate/low-confidence fixtures produce the right routing reasons; a keyless run skips cleanly.
 
-**B3 — Quality metrics.** Critics (sourced prompts) + pinned RAGAS collections behind applicability predicates; default-on set; verify RAGAS against our trace shapes.
+**B3 — Quality metrics** *(retired 2026-11-10).* Critics (sourced prompts) + pinned RAGAS collections behind applicability predicates; default-on set; verify RAGAS against our trace shapes.
 *Done when:* applicable fixtures produce metric results, inapplicable produce none; default set locked.
 
-**B4 — Validation** (needs B2 only; parallel with B3). Benchmark→OTLP converter (AgentRewardBench + AgentRx); agreement script.
+**B4 — Validation** (needs B2 only; parallel with B3). Benchmark→OTLP converter (AgentRewardBench + AgentRx); agreement script *(the agreement script was removed with the voted judge; the converters remain)*.
 *Done when:* one command produces the agreement report; converter output ingests cleanly.
 
-**B5 — Metrics validation** (needs B3 + B4's harness). Family-3 counterpart of B4: HaluBench→OTLP converter (single-turn RAG QA with human hallucination labels); `metrics-agreement` runner folding critic agreement (confusion matrix, balanced accuracy) and score agreement (AUC, threshold) vs the labels sidecar; prompt iteration under the per-metric versioning convention.
+**B5 — Metrics validation** *(retired with B3).* (needs B3 + B4's harness). Family-3 counterpart of B4: HaluBench→OTLP converter (single-turn RAG QA with human hallucination labels); `metrics-agreement` runner folding critic agreement (confusion matrix, balanced accuracy) and score agreement (AUC, threshold) vs the labels sidecar; prompt iteration under the per-metric versioning convention.
 *Done when:* one command produces the metric agreement report from a converted slice; reported numbers recorded in the buildlog.
 
 ## Stream A — Platform
@@ -81,16 +83,16 @@ flowchart TD
 **A1 — Machine door.** `api_keys` + dual-auth middleware (the one stage-1 code change) + `uploads.source`; `/settings` (keys, display name, private-trace LLM-analysis toggle — `profiles.allow_private_llm_analysis` migration); the sync CLI ([5_cli.md](5_cli.md)); `/uploads` page; pagination UI on `/traces` and `/uploads`.
 *Done when:* fresh compose up → mint key → CLI-sync the dev dataset → watch picks up a dropped file → re-sync uploads nothing → a bad file shows `failed` with its reason on `/uploads`; display name and the LLM-analysis toggle persist through `PATCH /v1/profile`.
 
-**A2 — Analysis plumbing** (consumes B1). `analyzer_results` + `trace_analysis` migrations with RLS; `analyze_trace` job on the existing retry/DLQ machinery, delete-and-rewrite per run, human fields never machine-overwritten; LLM skip paths recorded with reasons (`not_configured`, `owner_opt_out`); derived analysis state in the API; `traces.total_tokens` + trace-name check; trace-detail Analysis section (signals + the four honest states); `/traces` analysis column. (The listing→re-run hook for `owner_opt_out` lands with A4's visibility-event wiring; until then a listed opt-out trace can remain `skipped` — a known interim state, same class as stub analyzers.)
+**A2 — Analysis plumbing** (consumes B1). `analyzer_results` + `trace_analysis` migrations with RLS; `analyze_trace` job on the existing retry/DLQ machinery, delete-and-rewrite per run (now incremental per turn), human fields never machine-overwritten; LLM skip paths recorded with reasons (`not_configured`, `owner_opt_out`); derived analysis state in the API; `traces.total_tokens` + trace-name check; trace-detail Analysis section (signals + the four honest states); `/traces` analysis column. (The listing→re-run hook for `owner_opt_out` lands with A4's visibility-event wiring; until then a listed opt-out trace can remain `skipped` — a known interim state, same class as stub analyzers.)
 *Done when:* upload → `trace_analysis` row with real signals; keyless and opted-out runs show `skipped` with the right reason, never fake `pending`; re-runs reproduce rows; an injected failure dead-letters and surfaces as `failed`.
 
-**A3 — HIL loop** (consumes B2). `notifications` + `review_items` migrations and endpoints; bell + `/notifications`; `upload_failed` for CLI ingestion failures; routing wiring + per-upload digests + supersede rule; `/review` + `/review/[itemId]` with provenance-writing resolve; owner relabel; label badges on detail and lists.
-*Done when:* uncertain fixtures produce digested notifications + queue items with plain-language reasons; resolving updates labels with human provenance; unresolved items leave traces machine-labeled and filterable.
+**A3 — HIL loop** (consumes B2). `notifications` + `review_items` migrations and endpoints; bell + `/notifications`; `upload_failed` for CLI ingestion failures; routing wiring + per-upload digests + supersede rule; `/review` + `/review/[itemId]` with provenance-writing resolve; owner relabel; label badges on detail and lists. *(Since 9_session-analysis.md: items are raised by uncertain turns, not confidence routing, and the resolve endpoint is the per-turn `PUT …/turns/{turn_index}/labels`.)*
+*Done when:* uncertain fixtures produce digested notifications + queue items with the agent's reasons; relabelling a turn updates labels with human provenance; unresolved items leave traces machine-labeled and filterable.
 
-**A4 — Discovery at scale** (needs stage-1 slice 3; consumes B3). Filter-language extension (analysis fields, min-bound predicates, `metric` param, `trace_analysis` join); subscriptions with event-driven matching + feed pages + "Save as subscription"; listing wires the opt-out re-run hook (visibility → listed re-enqueues `analyze_trace` for `owner_opt_out`-skipped traces before matching); bulk acquire / list-unlist (batched consent) / download (zip + `labels.jsonl`).
+**A4 — Discovery at scale** (needs stage-1 slice 3; consumes B3). Filter-language extension (analysis fields, min-bound predicates, `trace_analysis` join; the `metric` param was removed with the metrics); subscriptions with event-driven matching + feed pages + "Save as subscription"; listing wires the opt-out re-run hook (visibility → listed finalizes non-final or `owner_opt_out`-skipped traces before matching); bulk acquire / list-unlist (batched consent) / download (zip + `labels.jsonl`).
 *Done when:* demo-script steps 6–9 pass end to end.
 
-**A6 — Native session ingestion** ([8_session-ingestion.md](8_session-ingestion.md); needs A1 + A5, parallel with A2–A4). Session-JSONL importers (Codex, Claude Code/Cursor) behind shared format detection; per-turn trace conversion through the existing OTLP normalize path; `unsupported_format` at POST, permanent conversion failures at ingest; CLI `*.jsonl` discovery + `--since-hours`; the client-side converter retires.
+**A6 — Native session ingestion** ([8_session-ingestion.md](8_session-ingestion.md); needs A1 + A5, parallel with A2–A4). Session-JSONL importers (Codex, Claude Code/Cursor) behind shared format detection; one-trace-per-session conversion through the existing OTLP normalize path; `unsupported_format` at POST, permanent conversion failures at ingest; CLI `*.jsonl` discovery + `--since-hours`; the client-side converter retires.
 *Done when:* the done-when list in [8_session-ingestion.md](8_session-ingestion.md) passes against a fresh compose up.
 
 **A5 — Redaction** ([7_redaction.md](7_redaction.md); needs only stage-1 slice 2, parallel with A2–A4). Scrub step in the importer (`detect-secrets` + in-house PII recognizers, deterministic HMAC placeholders); `span_raw` table + `uploads` redaction columns with RLS; scrubbed payload artifact; owner/non-owner read and download boundaries; golden + determinism tests. Sequencing note: if A5 lands after analysis plumbing, already-analyzed traces are backfilled by re-ingest + re-analysis (delete-and-rewrite covers both).
@@ -98,8 +100,8 @@ flowchart TD
 
 ## Integration
 
-Stage 2 is complete when the full demo script in [0_README.md](0_README.md) passes on a fresh `docker compose up` with real analyzers and an LLM key (smoke script extended; LLM-dependent assertions skipped when keyless), and the B4 report produces the agreement number.
+Stage 2 is complete when the full demo script in [0_README.md](0_README.md) passes on a fresh `docker compose up` with real analyzers and an LLM key (smoke script extended; LLM-dependent assertions skipped when keyless). (The B4 agreement number is no longer produced; see [1_analysis.md](1_analysis.md) Validation.)
 
-Integration also delivers the **third-party data-flow documentation**: the README/runbook states that analysis sends trace content to the configured LLM provider, names the per-account private-trace opt-out, and the keyless zero-external-flow mode ([0_README.md](0_README.md) Third-Party Services); an `docs/explainers/` entry documents the shipped behavior.
+Integration also delivers the **third-party data-flow documentation**: the README/runbook states that analysis sends trace content to OpenAI, names the per-account private-trace opt-out, and the keyless zero-external-flow mode ([0_README.md](0_README.md) Third-Party Services); an `docs/explainers/` entry documents the shipped behavior.
 
 Extensions get their own spec passes before any code, per the standing rule.

@@ -9,24 +9,21 @@ the analysis job of every trace in the upload (A2):
 - ``exhaust``     — fail every attempt (dead-letter demo).
 - ``permanent``   — raise the permanent error type (immediate-fail demo).
 
-``analyze:verdict:<outcome>:<conf>[:<category>:<conf>]`` is the keyless
-routing lever (A3 decision 9): the analysis job adopts a canned judge
-verdict instead of calling the LLM, so routing → digest → queue → resolve
-is exercisable on a stack with no provider key.
+``analyze:verdict:<outcome>[:uncertain]`` is the keyless review lever
+(A3 decision 9): the analysis job adopts a canned verdict for every turn it
+judges (and a canned roll-up) instead of calling the LLM, so uncertain turn
+→ review item → digest → relabel is exercisable with no provider key.
 """
 
 import re
 
-from app.analysis import JudgeVerdict, PermanentAnalysisError
+from app.analysis import Outcome, PermanentAnalysisError
 from app.clients import redis
 from app.config import settings
 from app.importers.errors import PermanentIngestError
 
 _SPEC_RE = re.compile(r"^(analyze:)?(permanent|exhaust|transient:\d+)$")
-_CONF = r"(?:0(?:\.\d+)?|1(?:\.0+)?)"
-_VERDICT_RE = re.compile(
-    rf"^analyze:verdict:(success|failure|indeterminate):({_CONF})(?::([a-z_]+):({_CONF}))?$"
-)
+_VERDICT_RE = re.compile(r"^analyze:verdict:(success|partial|failure|indeterminate)(:uncertain)?$")
 _TTL_SECONDS = 3600
 
 
@@ -72,23 +69,14 @@ async def trip_analysis(upload_id: str, attempt: int) -> None:
     _trip(spec.removeprefix("analyze:"), attempt, PermanentAnalysisError)
 
 
-async def canned_verdict(upload_id: str) -> JudgeVerdict | None:
-    """The armed canned verdict for this upload's traces, if any. The worker
-    treats it as the judge's output (marked `fault:canned` on the audit row)
-    and runs the real routing math over it."""
+async def canned_verdict(upload_id: str) -> tuple[Outcome, bool] | None:
+    """The armed canned (outcome, uncertain) for this upload's traces, if
+    any. The worker substitutes it for the agent judge and roll-up (marked
+    `fault:canned` on the audit row) and runs the real persistence over it."""
     spec = await _armed_spec(upload_id)
     if spec is None:
         return None
     m = _VERDICT_RE.match(spec)
     if m is None:
         return None
-    outcome, outcome_conf, category, category_conf = m.groups()
-    return JudgeVerdict(
-        outcome=outcome,  # type: ignore[arg-type]  # the regex enforces the ternary
-        outcome_confidence=float(outcome_conf),
-        failure_mode="inconclusive" if outcome == "failure" else None,
-        failure_mode_confidence=float(outcome_conf) if outcome == "failure" else None,
-        task_category=category,
-        task_category_confidence=float(category_conf) if category_conf is not None else None,
-        reasoning="Fault injection: canned verdict.",
-    )
+    return m.group(1), m.group(2) is not None  # type: ignore[return-value]

@@ -15,6 +15,7 @@
       "tool_names": [
         "web_search"
       ],
+      "skill_names": [],
       "error_types": [
         "TimeoutError"
       ],

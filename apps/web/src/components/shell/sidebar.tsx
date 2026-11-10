@@ -45,7 +45,7 @@ function NavItem({ item, active, badge }: { item: Item; active: boolean; badge?:
   return (
     <Link
       href={item.href}
-      title={item.label}
+      title={badge ? `${item.label} (${badge})` : item.label}
       className={cn(
         "relative flex h-9 items-center gap-2.5 rounded-md px-2.5 text-sm transition-colors",
         active
@@ -56,9 +56,18 @@ function NavItem({ item, active, badge }: { item: Item; active: boolean; badge?:
       {/* ex-app-shell-row active indicator */}
       {active && <span aria-hidden className="absolute -left-2 h-4 w-0.5 rounded-full bg-primary" />}
       <Icon className="size-4 shrink-0" strokeWidth={1.75} />
-      <span className="hidden min-w-0 flex-1 truncate md:inline">{item.label}</span>
+      {/* Icon rail: the count sits on the icon. */}
       {badge !== undefined && badge > 0 && (
-        <span className="hidden rounded-full bg-secondary px-1.5 font-mono text-[10px] leading-4 text-muted-foreground md:inline">
+        <span
+          aria-hidden
+          className="absolute top-0.5 left-5 rounded-full bg-secondary px-1 font-mono text-[10px] leading-4 text-foreground xl:hidden"
+        >
+          {badge > 99 ? "99+" : badge}
+        </span>
+      )}
+      <span className="hidden min-w-0 flex-1 truncate xl:inline">{item.label}</span>
+      {badge !== undefined && badge > 0 && (
+        <span className="hidden rounded-full bg-secondary px-1.5 font-mono text-[10px] leading-4 text-muted-foreground xl:inline">
           {badge > 99 ? "99+" : badge}
         </span>
       )}
@@ -89,13 +98,13 @@ export function Sidebar() {
   const reviewCount = useOpenReviewCount(pathname);
 
   return (
-    <aside className="sticky top-0 flex h-screen w-14 shrink-0 flex-col border-r bg-background md:w-56">
+    <aside className="sticky top-0 flex h-screen w-14 shrink-0 flex-col border-r bg-background xl:w-56">
       <Link
         href="/"
         className="flex h-14 shrink-0 items-center gap-2.5 border-b px-4 transition-colors hover:text-foreground"
       >
         <BrandMark className="size-5 shrink-0" />
-        <span className="hidden truncate text-sm font-semibold tracking-tight md:inline">
+        <span className="hidden truncate text-sm font-semibold tracking-tight xl:inline">
           Trace Marketplace
         </span>
       </Link>
@@ -103,7 +112,7 @@ export function Sidebar() {
       <nav className="flex flex-1 flex-col gap-5 overflow-y-auto px-2 py-4">
         {GROUPS.map((group) => (
           <div key={group.label} className="flex flex-col gap-0.5">
-            <p className="mb-1 hidden px-2.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground md:block">
+            <p className="mb-1 hidden px-2.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground xl:block">
               {group.label}
             </p>
             {group.items.map((item) => (

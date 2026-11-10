@@ -23,7 +23,7 @@ flowchart LR
     sched --> redis --> worker
   end
 
-  llm["LLM provider<br/>(litellm)"]
+  llm["OpenAI<br/>(Agents SDK)"]
 
   subgraph supabase["Supabase"]
     direction TB
@@ -37,7 +37,7 @@ flowchart LR
   cli -->|API key| api
 
   api -->|enqueue| redis
-  worker -->|judge, metrics,<br/>embeddings| llm
+  worker -->|agent judge,<br/>embeddings| llm
 
   api --> supabase
   worker --> supabase
@@ -54,8 +54,8 @@ flowchart LR
   up["POST /v1/uploads"]
   raw["Raw payload stored<br/>verbatim + job enqueued"]
   ing["Ingest<br/>parse + redact<br/>→ traces/spans"]
-  an["Analyze<br/>signals, LLM judge,<br/>metrics, embeddings"]
-  rev["Review queue<br/>(uncertain verdicts)"]
+  an["Analyze<br/>signals, per-turn agent judge,<br/>roll-up, embeddings"]
+  rev["Review queue<br/>(uncertain turns)"]
   match["Match subscriptions<br/>→ notifications"]
 
   up --> raw --> ing --> an

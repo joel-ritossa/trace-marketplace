@@ -5,6 +5,7 @@ import { BulkDownloadAction } from "@/components/traces/bulk-actions";
 import { BulkBar, useSelection } from "@/components/traces/bulk-bar";
 import { ExcludedNote } from "@/components/traces/excluded-note";
 import { TraceFiltersBar, hasActiveFilters } from "@/components/traces/trace-filters";
+import { skillFilterFor } from "@/components/traces/filter-state";
 import { TraceList } from "@/components/traces/trace-list";
 import { useTraceList } from "@/components/traces/use-trace-list";
 import { Button } from "@/components/ui/button";
@@ -28,6 +29,7 @@ export default function LibraryPage() {
 
       <div className="mt-6">
         <TraceFiltersBar
+          scope="acquired"
           filters={filters}
           onChange={setFilters}
           sort={sort}
@@ -66,6 +68,7 @@ export default function LibraryPage() {
             <TraceList
               traces={result.traces}
               view="library"
+              skillFilter={skillFilterFor(filters, setFilters)}
               selection={{ selected, toggle, setAll }}
             />
             <div className="mt-4">

@@ -151,7 +151,7 @@ class RetryDlqMiddleware(TaskiqMiddleware):
                 last_error=str(exception),
                 error_context={"traceback_tail": tb_tail},
             )
-            # No status flip: analysis_state derives `failed` from the row.
+            # No status flip: the open dead letter itself is the failed state.
             return
         await dead_letters.insert(
             pool,

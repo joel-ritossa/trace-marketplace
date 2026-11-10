@@ -4,6 +4,5 @@
   "recovered_from_error": null,
   "truncation_suspected": null,
   "llm_call_count": 2,
-  "tool_call_count": 1,
-  "failure_suspected": false
+  "tool_call_count": 1
 }

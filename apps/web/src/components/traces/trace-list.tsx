@@ -4,15 +4,22 @@ import Link from "next/link";
 import { useState } from "react";
 import { Download, Sparkles } from "lucide-react";
 import {
+  AgentBadge,
   LibraryBadge,
   NeedsReviewLink,
-  TraceOutcome,
   VisibilityBadge,
 } from "@/components/traces/badges";
+import {
+  LabelSummary,
+  TraceOutcomeControl,
+  useLazySource,
+  type SkillFilter,
+} from "@/components/traces/label-popovers";
 import { SelectBox } from "@/components/traces/bulk-bar";
 import { Button } from "@/components/ui/button";
 import { downloadTrace, type TraceListItem } from "@/lib/api/traces";
-import { formatDate, formatDuration } from "@/lib/format";
+import { agentOf, cleanName, traceTitle } from "@/components/traces/names";
+import { formatDate, formatDuration, formatShortDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export type Selection = {
@@ -37,17 +44,65 @@ function detailHref(view: TraceListView, traceId: string): string {
   return from ? `/traces/${traceId}?from=${from}` : `/traces/${traceId}`;
 }
 
+/** The Analysis cell's controls: outcome (or status), then the label pills;
+ *  each opens the shared popovers, fetching the trace on first open. */
+function RowAnalysis({
+  trace,
+  skillFilter,
+}: {
+  trace: TraceListItem;
+  skillFilter?: SkillFilter;
+}) {
+  const source = useLazySource(trace.trace_id);
+  return (
+    <>
+      <TraceOutcomeControl
+        outcome={trace.outcome}
+        status={trace.analysis_status}
+        failed={trace.analysis_failed}
+        source={source}
+      />
+      <LabelSummary
+        traceId={trace.trace_id}
+        taskCategories={trace.task_categories}
+        failureModes={trace.failure_modes}
+        skillNames={trace.skill_names}
+        skillFilter={skillFilter}
+      />
+    </>
+  );
+}
+
+/** Date and time where the table has room; the day alone below xl. */
+function RowDate({ iso }: { iso: string }) {
+  return (
+    <span title={formatDate(iso)}>
+      <span className="hidden xl:inline">{formatDate(iso)}</span>
+      <span className="xl:hidden">{formatShortDate(iso)}</span>
+    </span>
+  );
+}
+
 function Th({ children, className }: { children?: React.ReactNode; className?: string }) {
   return <th className={cn("px-4 py-2.5 font-medium", className)}>{children}</th>;
 }
 
 function MonoTd({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <td className={cn("px-4 py-2.5 font-mono text-xs text-muted-foreground", className)}>
+    <td
+      className={cn(
+        "whitespace-nowrap px-4 py-2.5 font-mono text-xs text-muted-foreground",
+        className,
+      )}
+    >
       {children}
     </td>
   );
 }
+
+// Low-value columns drop as the table narrows, so name and analysis keep room.
+const WIDE_ONLY = "hidden xl:table-cell";
+const WIDEST_ONLY = "hidden 2xl:table-cell";
 
 /** The unified trace list (4_pages.md): one dense row spec for every list
  *  surface — my traces, marketplace, library, subscription feeds — with
@@ -57,11 +112,14 @@ export function TraceList({
   view,
   selection,
   newIds,
+  skillFilter,
 }: {
   traces: TraceListItem[];
   view: TraceListView;
   selection?: Selection;
   newIds?: ReadonlySet<string>;
+  // Lets a row's skills popover add to the list's filters.
+  skillFilter?: SkillFilter;
 }) {
   const [downloadError, setDownloadError] = useState<string | null>(null);
 
@@ -97,12 +155,13 @@ export function TraceList({
                 />
               </Th>
             )}
-            <Th>Name</Th>
-            <Th>Analysis</Th>
-            <Th>Spans</Th>
-            <Th>Errors</Th>
+            <Th className="min-w-40 xl:min-w-64">Name</Th>
+            <Th className="min-w-48">Analysis</Th>
+            <Th className={WIDE_ONLY}>Turns</Th>
+            <Th className={WIDEST_ONLY}>Spans</Th>
+            <Th className={WIDE_ONLY}>Errors</Th>
             <Th>Duration</Th>
-            <Th>Model</Th>
+            <Th className={WIDEST_ONLY}>Model</Th>
             {view === "mine" ? (
               <>
                 <Th>Visibility</Th>
@@ -132,57 +191,67 @@ export function TraceList({
                   />
                 </td>
               )}
-              <td className="max-w-72 px-4 py-2.5">
+              <td className="max-w-60 px-4 py-2.5 xl:max-w-96">
                 <span className="flex items-center gap-2">
                   <span
                     className={cn(
                       "size-2 shrink-0 rounded-full",
                       trace.status === "error" ? "bg-error-deep" : "bg-status-ok",
                     )}
-                    title={trace.status === "error" ? "Trace contains errors" : "Trace OK"}
+                    title={
+                      trace.error_count > 0
+                        ? `${trace.error_count} span error${trace.error_count === 1 ? "" : "s"}`
+                        : "No span errors"
+                    }
                   />
                   <Link
                     href={detailHref(view, trace.trace_id)}
+                    title={[
+                      `First ask: ${cleanName(trace.name)}`,
+                      view !== "mine" && trace.description,
+                    ]
+                      .filter(Boolean)
+                      .join("\n")}
                     className="truncate font-medium hover:underline"
                   >
-                    {trace.name}
+                    {traceTitle(trace.name, trace.goal)}
                   </Link>
+                  {/* One row layout on every list surface: title, then badges. */}
+                  {agentOf(trace.name) && <AgentBadge agent={agentOf(trace.name)!} />}
                   {view !== "mine" && trace.is_owner && (
                     <VisibilityBadge visibility={trace.visibility} />
                   )}
-                  {view !== "library" && view !== "mine" && trace.acquired && <LibraryBadge />}
+                  {view !== "mine" && view !== "library" && trace.acquired && <LibraryBadge />}
                   {newIds?.has(trace.trace_id) && (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-secondary px-2 py-0.5 text-xs font-medium text-link-deep">
+                    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-secondary px-2 py-0.5 text-xs font-medium text-link-deep">
                       <Sparkles className="size-3" /> new
                     </span>
                   )}
                 </span>
-                {view !== "mine" && trace.description && (
-                  <p className="mt-0.5 truncate pl-4 text-xs text-muted-foreground">
-                    {trace.description}
-                  </p>
-                )}
               </td>
               <td className="px-4 py-2.5">
-                <span className="inline-flex items-center gap-2">
-                  <TraceOutcome trace={trace} placeholder={view !== "mine"} />
-                  {view === "mine" && trace.open_review_item_id !== null && (
-                    <NeedsReviewLink itemId={trace.open_review_item_id} />
+                <span className="flex max-w-56 min-w-0 items-center gap-1.5 overflow-hidden xl:max-w-72">
+                  <RowAnalysis trace={trace} skillFilter={skillFilter} />
+                  {view === "mine" && trace.has_open_review_item && (
+                    <NeedsReviewLink traceId={trace.trace_id} />
                   )}
                 </span>
               </td>
-              <MonoTd>{trace.span_count}</MonoTd>
-              <MonoTd className={cn(trace.error_count > 0 && "text-error-deep")}>
+              <MonoTd className={WIDE_ONLY}>{trace.turn_count}</MonoTd>
+              <MonoTd className={WIDEST_ONLY}>{trace.span_count}</MonoTd>
+              <MonoTd className={cn(WIDE_ONLY, trace.error_count > 0 && "text-error-deep")}>
                 {trace.error_count}
               </MonoTd>
               <MonoTd>{formatDuration(trace.duration_ms)}</MonoTd>
-              <MonoTd className="max-w-48 truncate">{trace.model ?? "—"}</MonoTd>
+              <MonoTd className={cn(WIDEST_ONLY, "max-w-48 truncate")}>{trace.model ?? "—"}</MonoTd>
               {view === "mine" ? (
                 <>
                   <td className="px-4 py-2.5">
                     <VisibilityBadge visibility={trace.visibility} />
                   </td>
-                  <MonoTd>{formatDate(trace.created_at)}</MonoTd>
+                  <MonoTd>
+                    <RowDate iso={trace.created_at} />
+                  </MonoTd>
                 </>
               ) : (
                 <>
@@ -190,13 +259,10 @@ export function TraceList({
                     {trace.owner_display_name ?? "unknown contributor"}
                   </td>
                   <MonoTd>
-                    {view === "library"
-                      ? trace.acquired_at
-                        ? formatDate(trace.acquired_at)
-                        : "—"
-                      : trace.listed_at
-                        ? formatDate(trace.listed_at)
-                        : "—"}
+                    {(() => {
+                      const at = view === "library" ? trace.acquired_at : trace.listed_at;
+                      return at ? <RowDate iso={at} /> : "—";
+                    })()}
                   </MonoTd>
                 </>
               )}

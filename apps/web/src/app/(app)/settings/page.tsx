@@ -18,7 +18,7 @@ export default function SettingsPage() {
   }, []);
 
   return (
-    <div className="mx-auto w-full max-w-2xl">
+    <div className="mx-auto w-full max-w-3xl">
       <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
       <p className="mt-1 text-sm text-muted-foreground">
         API keys, profile, analysis privacy, and task scope.

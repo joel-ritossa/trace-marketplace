@@ -20,6 +20,8 @@ export type Upload = {
   parse_warnings: Record<string, unknown> | null;
   redaction_counts: Record<string, number> | null;
   trace_ids: string[];
+  // The same traces named for display; optional until deployed.
+  traces?: { trace_id: string; name: string; goal: string | null }[];
   created_at: string;
   processed_at: string | null;
 };
@@ -33,6 +35,8 @@ export type UploadListItem = {
   error_message: string | null;
   redaction_counts: Record<string, number> | null;
   trace_ids: string[];
+  // The same traces named for display; optional until deployed.
+  traces?: { trace_id: string; name: string; goal: string | null }[];
   created_at: string;
   processed_at: string | null;
 };
@@ -44,7 +48,7 @@ export type UploadList = {
 
 // Mirrors the API's UPLOAD_MAX_BYTES default — keep in sync if that changes.
 // Client-side pre-check only; the server's 413 is authoritative.
-export const UPLOAD_MAX_BYTES = 25 * 1024 * 1024;
+export const UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
 export const UPLOAD_MAX_MB = UPLOAD_MAX_BYTES / (1024 * 1024);
 
 export async function createUpload(file: File): Promise<UploadCreated> {

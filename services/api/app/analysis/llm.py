@@ -1,41 +1,55 @@
-"""LLM provider layer — the only place provider calls happen (1_analysis.md).
+"""LLM provider layer — the only place provider calls happen.
 
-litellm routes every provider through one call shape; provider SDKs are
-never imported. Keys use litellm's conventional env var names; because
-pydantic-settings loads `.env`/`.env.local` only for declared fields, this
-module bootstraps `os.environ` from the same files (provider-credential
-keys only, non-empty values, real-env-wins) so file-kept keys reach
-litellm in the runner and worker alike.
+OpenAI only: agents run through the OpenAI Agents SDK (Responses API),
+embeddings through the OpenAI SDK. Model names are plain OpenAI ids from
+env vars. Because pydantic-settings loads `.env`/`.env.local` only for
+declared fields, this module bootstraps `os.environ` from the same files
+(`OPENAI_*` keys only, non-empty values, real-env-wins) so file-kept keys
+reach the SDK in the runner and worker alike.
 
-Privacy: nothing here logs. Prompts and raw outputs exist only in memory;
-only parsed labels and call metadata (latency/tokens/cost) leave the call
-site.
+Privacy: the only log line is a provider error's class, status, type and
+code (never its message or any content), and the Agents SDK's trace
+export to OpenAI is disabled at import. Prompts and raw outputs exist only in memory; only
+parsed results and call metadata (latency/tokens) leave the call site.
 """
 
+import logging
 import os
 import time
+from dataclasses import dataclass
+from typing import Any
 
+import openai
+from agents import (
+    Agent,
+    MaxTurnsExceeded,
+    ModelBehaviorError,
+    RunContextWrapper,
+    RunHooks,
+    Runner,
+    set_tracing_disabled,
+)
 from dotenv import dotenv_values
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from app.env import env_files
 
-# Spec requires temperature > 0 where self-consistency votes are sampled
-# (judge, critics); not a knob. Models that reject the param (litellm drops
-# it) sample at their default temperature, which is also > 0.
-SAMPLING_TEMPERATURE = 0.7
+set_tracing_disabled(True)
+logger = logging.getLogger(__name__)
 
 _env_loaded = False
 
-# Only provider credentials get exported — the rest of the env files
-# (platform settings) stay out of os.environ and child processes. Covers
-# litellm's conventional names (OPENAI_API_KEY, ANTHROPIC_API_KEY,
-# OPENROUTER_API_BASE, …); exotic provider vars must be real env.
-_EXPORTABLE_SUFFIXES = ("_API_KEY", "_API_BASE")
+_PERMANENT = (
+    openai.AuthenticationError,
+    openai.PermissionDeniedError,
+    openai.NotFoundError,
+    openai.BadRequestError,  # context-window overflows split out in run_agent
+    openai.UnprocessableEntityError,
+)
 
 
 def _load_env_files() -> None:
-    """Export provider keys from the env files into os.environ once,
+    """Export OPENAI_* keys from the env files into os.environ once,
     mirroring settings precedence: real env > .env.local > .env. Empty
     values count as unset."""
     global _env_loaded
@@ -46,144 +60,168 @@ def _load_env_files() -> None:
     # setdefault semantics need the winner first.
     for path in reversed(env_files()):
         for key, value in dotenv_values(path).items():
-            if value and key.endswith(_EXPORTABLE_SUFFIXES):
+            if value and key.startswith("OPENAI_"):
                 os.environ.setdefault(key, value)
 
 
 def llm_configured(model: str) -> bool:
-    """Whether the provider key(s) for `model` are available — the predicate
-    behind `llm_skip_reason = 'not_configured'` (worker) and the runner's
-    keyless skip. litellm owns the provider→key map."""
-    import litellm
-
+    """Whether an OpenAI key is available — the predicate behind
+    `llm_skip_reason = 'not_configured'` (worker) and the runner's keyless
+    skip. `model` is kept for call-site symmetry; every model is OpenAI."""
     _load_env_files()
-    return bool(litellm.validate_environment(model)["keys_in_environment"])
+    return bool(os.environ.get("OPENAI_API_KEY"))
 
 
 class PermanentAnalysisError(Exception):
-    """Provider failure retrying cannot fix (auth, bad request, context
-    window — not bad infra). Mirrors PermanentIngestError: the worker marks
-    analysis failed immediately; anything else is transient and retried."""
+    """Provider failure retrying cannot fix (auth, bad request — not bad
+    infra). Mirrors PermanentIngestError: the worker marks analysis failed
+    immediately; anything else is transient and retried. `code` is the
+    provider's error code (or type/class when it has none), safe to store."""
+
+    def __init__(self, message: str, code: str | None = None):
+        super().__init__(message)
+        self.code = code
 
 
 class MalformedResponse(Exception):
-    """Schema-invalid model output after the one parse-retry. Carries the
-    call metadata so the vote's cost is still auditable; the judge degrades
-    the vote per its fail-open rules rather than failing the run."""
-
-    def __init__(self, meta: "CallMeta"):
-        super().__init__("model response failed schema validation")
-        self.meta = meta
+    """Model output that still violates its schema after the one retry."""
 
 
 class CallMeta(BaseModel):
     latency_ms: int
     input_tokens: int | None = None
+    # The part of input_tokens served from the provider's prompt cache.
+    cached_input_tokens: int | None = None
     output_tokens: int | None = None
-    cost_usd: float | None = None
+    llm_calls: int = 1
 
 
-def _fold_meta(metas: list[CallMeta]) -> CallMeta:
-    """Sum metadata across attempts — a parse-retried vote cost two calls,
-    and the audit artifact carries what the vote actually cost."""
+def fold_meta(metas: list[CallMeta]) -> CallMeta:
+    """Sum metadata across calls; a token count stays null only when every
+    call lacked it."""
 
-    def total(values: list[int | float | None]) -> int | float | None:
+    def total(values: list[int | None]) -> int | None:
         present = [v for v in values if v is not None]
         return sum(present) if present else None
 
     return CallMeta(
         latency_ms=sum(m.latency_ms for m in metas),
         input_tokens=total([m.input_tokens for m in metas]),
+        cached_input_tokens=total([m.cached_input_tokens for m in metas]),
         output_tokens=total([m.output_tokens for m in metas]),
-        cost_usd=total([m.cost_usd for m in metas]),
+        llm_calls=sum(m.llm_calls for m in metas),
     )
 
 
-_PARSE_RETRIES = 1
+@dataclass
+class AgentRun:
+    output: Any  # the agent's parsed output_type instance
+    history: list[Any]  # input items to continue the conversation from
+    meta: CallMeta
 
 
-async def complete(
-    model: str,
-    messages: list[dict[str, str]],
-    schema: type[BaseModel],
-    temperature: float,
-) -> tuple[BaseModel, CallMeta]:
-    """One structured-output completion: json-schema response_format from
-    the vote schema, parsed and validated. One parse-retry (malformed JSON
-    is model noise, not infra), then MalformedResponse. Permanent provider
-    errors raise PermanentAnalysisError; everything else propagates as
-    transient."""
-    import litellm
+class RunCutShort(Exception):
+    """The run stopped before answering; carries the conversation so far
+    (input items to continue from) and what it cost."""
 
+    def __init__(self, history: list[Any], meta: CallMeta):
+        super().__init__(type(self).__name__)
+        self.history = history
+        self.meta = meta
+
+
+class StepLimitExceeded(RunCutShort):
+    """The run used up `max_turns`."""
+
+
+class ContextLimitExceeded(RunCutShort):
+    """A model call's input outgrew the model's context window; `history`
+    is the input that overflowed."""
+
+
+class _LastInput(RunHooks):
+    """Remembers the latest model input and the run's usage: a provider
+    error carries neither."""
+
+    def __init__(self) -> None:
+        self.input: list[Any] = []
+        self.context: RunContextWrapper | None = None
+
+    async def on_llm_start(self, context, agent, system_prompt, input_items) -> None:
+        self.input, self.context = list(input_items), context
+
+
+async def run_agent(agent: Agent, input: str | list[Any], max_turns: int) -> AgentRun:
+    """One Agents SDK run. Permanent provider errors raise
+    PermanentAnalysisError, unparseable output MalformedResponse, the turn
+    bound StepLimitExceeded, a context-window overflow ContextLimitExceeded;
+    everything else propagates as transient."""
     _load_env_files()
-    litellm.suppress_debug_info = True
-    # Some models (OpenAI gpt-5/o-series) reject non-default temperature;
-    # dropping the param there still samples (their default temp is 1 > 0).
-    litellm.drop_params = True
-
-    metas: list[CallMeta] = []
-    for attempt in range(_PARSE_RETRIES + 1):
-        started = time.perf_counter()
-        try:
-            response = await litellm.acompletion(
-                model=model,
-                messages=messages,
-                response_format=schema,
-                temperature=temperature,
-            )
-        except (
-            litellm.AuthenticationError,
-            litellm.PermissionDeniedError,
-            litellm.NotFoundError,
-            litellm.BadRequestError,  # includes ContextWindowExceededError
-            litellm.UnprocessableEntityError,
-        ) as exc:
-            raise PermanentAnalysisError(str(exc)) from exc
-        metas.append(_call_meta(response, started))
-        content = response.choices[0].message.content
-        try:
-            return schema.model_validate_json(content or ""), _fold_meta(metas)
-        except ValidationError:
-            if attempt == _PARSE_RETRIES:
-                raise MalformedResponse(_fold_meta(metas)) from None
-    raise AssertionError("unreachable")
+    started = time.perf_counter()
+    last = _LastInput()
+    try:
+        result = await Runner.run(agent, input, max_turns=max_turns, hooks=last)
+    except MaxTurnsExceeded as exc:
+        data = exc.run_data
+        if data is None:
+            raise
+        history = _as_list(data.input) + [item.to_input_item() for item in data.new_items]
+        raise StepLimitExceeded(history, _meta(data.context_wrapper.usage, started)) from None
+    except ModelBehaviorError as exc:
+        raise MalformedResponse(str(exc)) from exc
+    except _PERMANENT as exc:
+        code = _log_provider_error(exc)
+        if code == "context_length_exceeded":
+            usage = last.context.usage if last.context else None
+            history = last.input or _as_list(input)
+            raise ContextLimitExceeded(history, _meta(usage, started)) from None
+        raise PermanentAnalysisError(str(exc), code) from exc
+    return AgentRun(
+        result.final_output, result.to_input_list(), _meta(result.context_wrapper.usage, started)
+    )
 
 
 async def embed(model: str, text: str) -> tuple[list[float], CallMeta]:
-    """One embedding call (similar-behavior proposal). Same error
-    classification as `complete`: provider errors retrying cannot fix raise
-    PermanentAnalysisError; everything else propagates as transient. No
+    """One embedding call. Same error classification as `run_agent`; no
     parse-retry — an embedding response is never malformed-but-200."""
-    import litellm
-
     _load_env_files()
-    litellm.suppress_debug_info = True
-
     started = time.perf_counter()
     try:
-        response = await litellm.aembedding(model=model, input=[text])
-    except (
-        litellm.AuthenticationError,
-        litellm.PermissionDeniedError,
-        litellm.NotFoundError,
-        litellm.BadRequestError,  # includes over-window inputs
-        litellm.UnprocessableEntityError,
-    ) as exc:
-        raise PermanentAnalysisError(str(exc)) from exc
-    return list(response.data[0]["embedding"]), _call_meta(response, started)
-
-
-def _call_meta(response, started: float) -> CallMeta:
-    import litellm
-
-    usage = getattr(response, "usage", None)
-    try:
-        cost = litellm.completion_cost(response)
-    except Exception:  # model missing from litellm's price map
-        cost = None
-    return CallMeta(
+        response = await openai.AsyncOpenAI().embeddings.create(model=model, input=[text])
+    except _PERMANENT as exc:
+        raise PermanentAnalysisError(str(exc), _log_provider_error(exc)) from exc
+    meta = CallMeta(
         latency_ms=int((time.perf_counter() - started) * 1000),
-        input_tokens=getattr(usage, "prompt_tokens", None),
-        output_tokens=getattr(usage, "completion_tokens", None),
-        cost_usd=cost,
+        input_tokens=response.usage.prompt_tokens,
+    )
+    return list(response.data[0].embedding), meta
+
+
+def _log_provider_error(exc: Exception) -> str:
+    """Log a permanent provider error's metadata only; return its code."""
+    status = getattr(exc, "status_code", None)
+    kind = getattr(exc, "type", None)
+    code = getattr(exc, "code", None)
+    logger.warning(
+        "provider error %s: status=%s type=%s code=%s", type(exc).__name__, status, kind, code
+    )
+    return str(code or kind or type(exc).__name__)
+
+
+def _as_list(input: str | list[Any]) -> list[Any]:
+    return [{"role": "user", "content": input}] if isinstance(input, str) else list(input)
+
+
+def _meta(usage: Any, started: float) -> CallMeta:
+    latency_ms = int((time.perf_counter() - started) * 1000)
+    if usage is None:
+        return CallMeta(latency_ms=latency_ms, llm_calls=0)
+    return CallMeta(
+        latency_ms=latency_ms,
+        input_tokens=usage.input_tokens,
+        cached_input_tokens=getattr(
+            getattr(usage, "input_tokens_details", None), "cached_tokens", None
+        ),
+        output_tokens=usage.output_tokens,
+        llm_calls=usage.requests,
     )

@@ -14,7 +14,7 @@ signed in at http://localhost:3000 (or your `WEB_PORT`):
 # 1. Symlink your local coding-agent session logs (Codex, Claude Code,
 #    Cursor) into git-ignored devdata/sessions-src/ → ~/.codex, ~/.claude,
 #    ~/.cursor. No conversion step: the raw JSONL uploads as-is and the
-#    server turns each session into per-turn traces (8_session-ingestion.md).
+#    server turns each session into one trace (8_session-ingestion.md).
 make link-sessions
 
 # 2. Mint a key: Settings → API keys → Create key. The plaintext is shown
@@ -31,8 +31,13 @@ TRACE_API_KEY=tmk_…  uv run trace-sync sync ../../devdata/sessions-src --since
    `processing → complete` **without a refresh** (Supabase Realtime as an
    invalidation signal). Your sessions land on Traces with scannable
    names ("cursor: run an implementation plan for A1"), models, token
-   counts, and tool spans — one trace per user turn, stamped with a
-   `session.id` for grouping.
+   counts, and tool spans — one trace per session, with a span per
+   user turn under the session root. Re-syncing a session that has grown
+   updates the same trace in place.
+   Analysis follows the session: each turn is judged once the next turn
+   starts; the last turn and the session verdict arrive when the session
+   has been idle (`ANALYSIS_IDLE_SECONDS`, 2 h) or you hit `POST
+   /v1/traces/{id}/analyze`. Without an `OPENAI_API_KEY` analysis skips.
 
 5. Re-run the same sync — every line prints `already synced`, exit 0. The
    CLI keeps no state; the server's per-user sha256 dedupe is the source of
@@ -41,7 +46,7 @@ TRACE_API_KEY=tmk_…  uv run trace-sync sync ../../devdata/sessions-src --since
 6. Leave a watcher running and drop files into the directory:
 
 ```sh
-TRACE_API_KEY=tmk_…  uv run trace-sync watch /tmp/drop
+TRACE_API_KEY=tmk_…  uv run trace-sync watch /tmp/drop --quiet-seconds 2
 cp ../../fixtures/agent-session.json /tmp/drop/        # → uploads within ~2 s
 echo '{"resourceSpans": []}' > /tmp/drop/bad.json       # → failed: Payload contains no valid spans
 ```
@@ -72,8 +77,9 @@ failures surface when no one is looking at a progress bar.
 - **Stateless capture, server-side truth.** The CLI keeps no manifest or
   config (`apps/cli/src/trace_sync/`); dedupe is the server's per-user
   content hash, so syncs are idempotent from any machine, and `watch` is
-  just `sync` without the exit condition (a 2 s size/mtime stability scan,
-  no fs-events dependency).
+  just `sync` without the exit condition (a 2 s scan that uploads a file once its mtime is
+  quiet for 5 minutes by default, no fs-events dependency; the demo's
+  `--quiet-seconds 2` shortens it).
 - **One auth header, two principals.** `Authorization: Bearer` accepts a
   Supabase JWT or a `tmk_` key (`services/api/app/auth.py`) — the only
   stage-1 code change. Keys are sha256-stored, upload-scoped (exactly two
@@ -93,7 +99,12 @@ failures surface when no one is looking at a progress bar.
   socket never becomes a second data path.
 - **The server speaks your agent's native format.** Raw session JSONL is
   detected and converted at ingestion (`app/importers/sessions/`,
-  8_session-ingestion.md) into per-turn GenAI-semconv OTLP through the one
+  8_session-ingestion.md) into one GenAI-semconv OTLP trace per session through the one
   normalize path; unsupported schemas reject with a readable reason at
   upload. The CLI stays a dumb byte mover — your own sessions exercise
   detection, conversion, ingestion, inspection, and analysis end to end.
+- **Client-side bundling and pruning.** `.jsonl.zst` archives are
+  decompressed, a Claude Code session's `subagents/*.jsonl` ride along so
+  subagents nest in the parent trace, and session logs are pruned to the
+  fields the importers read (`apps/cli/src/trace_sync/prune.py`) — same
+  traces, a fraction of the bytes (5_cli.md).

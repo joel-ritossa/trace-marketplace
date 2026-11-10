@@ -86,7 +86,7 @@ async def test_extra_parts_rejected(api: httpx.AsyncClient) -> None:
 
 
 async def test_file_too_large_rejected(api: httpx.AsyncClient) -> None:
-    res = await upload_file(api, b"x" * (25 * 1024 * 1024 + 1))
+    res = await upload_file(api, b"x" * (50 * 1024 * 1024 + 1))
     assert res.status_code == 413
     assert res.json()["error"]["code"] == "file_too_large"
 

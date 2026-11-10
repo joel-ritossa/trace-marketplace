@@ -5,8 +5,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, BellPlus, ExternalLink, Loader2, Sparkles, X } from "lucide-react";
 
 import { AnalysisSection } from "@/components/traces/analysis-section";
-import { TraceOutcome, VisibilityBadge } from "@/components/traces/badges";
-import { TraceEvidence } from "@/components/traces/trace-evidence";
+import { VisibilityBadge } from "@/components/traces/badges";
+import {
+  LabelSummary,
+  TraceOutcomeControl,
+  useLazySource,
+} from "@/components/traces/label-popovers";
+import { TraceEvidence, type SpanFocus } from "@/components/traces/trace-evidence";
+import { useTraceDetail } from "@/components/traces/use-trace-detail";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -29,6 +35,7 @@ import {
   type SimilarTraces,
   type TraceDetail,
 } from "@/lib/api/traces";
+import { cleanName, traceTitle } from "@/components/traces/names";
 import { formatDuration } from "@/lib/format";
 
 /** "Similar behavior" header action (docs/proposals/similar-behavior.md):
@@ -122,16 +129,18 @@ function SimilarList({
             ) : (
               <ul className="flex flex-col divide-y">
                 {state.result.items.map((item) => (
-                  <li key={item.trace_id}>
+                  <li key={item.trace_id} className="flex items-center gap-3 px-1 transition-colors hover:bg-secondary/50">
                     <button
                       type="button"
                       onClick={() => onSelect(item)}
-                      className="flex w-full items-center gap-3 px-1 py-2.5 text-left transition-colors hover:bg-secondary/50"
+                      className="flex min-w-0 flex-1 items-center gap-3 py-2.5 text-left focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
                     >
                       <SimilarityDial value={item.similarity} />
                       <span className="min-w-0 flex-1">
                         <span className="flex items-center gap-2">
-                          <span className="truncate text-sm font-medium">{item.name}</span>
+                          <span className="truncate text-sm font-medium" title={cleanName(item.name)}>
+                            {traceTitle(item.name, item.goal)}
+                          </span>
                           {item.is_owner ? (
                             <VisibilityBadge visibility={item.visibility} />
                           ) : (
@@ -151,8 +160,9 @@ function SimilarList({
                             .join(" · ")}
                         </span>
                       </span>
-                      <TraceOutcome trace={item} />
                     </button>
+                    {/* The verdict and labels are their own controls (shared popovers). */}
+                    <SimilarLabels item={item} />
                   </li>
                 ))}
               </ul>
@@ -184,6 +194,8 @@ function SimilarityDial({ value }: { value: number }) {
 }
 
 function SimilarDetail({ item, onBack }: { item: SimilarTraceItem; onBack: () => void }) {
+  const { state, setTrace } = useTraceDetail(item.trace_id);
+  const [spanFocus, setSpanFocus] = useState<SpanFocus | null>(null);
   return (
     <>
       <DialogHeader>
@@ -191,7 +203,9 @@ function SimilarDetail({ item, onBack }: { item: SimilarTraceItem; onBack: () =>
           <Button size="icon-sm" variant="ghost" aria-label="Back to results" onClick={onBack}>
             <ArrowLeft />
           </Button>
-          <DialogTitle className="min-w-0 flex-1 truncate">{item.name}</DialogTitle>
+          <DialogTitle className="min-w-0 flex-1 truncate">
+            {traceTitle(item.name, item.goal)}
+          </DialogTitle>
           <Button asChild size="sm" variant="outline">
             <Link href={`/traces/${item.trace_id}`}>
               <ExternalLink /> Full page
@@ -222,8 +236,20 @@ function SimilarDetail({ item, onBack }: { item: SimilarTraceItem; onBack: () =>
               </div>
             ))}
           </dl>
-          <AnalysisSection traceId={item.trace_id} isOwner={item.is_owner} />
-          <TraceEvidence traceId={item.trace_id} />
+          {state.phase === "ready" ? (
+            <AnalysisSection
+              trace={state.trace}
+              onChange={setTrace}
+              onShowSpan={(sourceSpanId) =>
+                setSpanFocus((prev) => ({ sourceSpanId, seq: (prev?.seq ?? 0) + 1 }))
+              }
+            />
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              {state.phase === "loading" ? "Loading analysis…" : "Could not load the analysis."}
+            </p>
+          )}
+          <TraceEvidence traceId={item.trace_id} focus={spanFocus} />
         </div>
       </div>
     </>
@@ -403,5 +429,25 @@ function SubscribeToBehavior({ anchor }: { anchor: TraceDetail }) {
       </div>
       {error && <p className="text-xs text-error-deep">{error}</p>}
     </div>
+  );
+}
+
+function SimilarLabels({ item }: { item: SimilarTraceItem }) {
+  const source = useLazySource(item.trace_id);
+  return (
+    <span className="flex max-w-64 shrink-0 items-center gap-1.5 overflow-hidden">
+      <TraceOutcomeControl
+        outcome={item.outcome}
+        status={item.analysis_status}
+        failed={item.analysis_failed}
+        source={source}
+      />
+      <LabelSummary
+        traceId={item.trace_id}
+        taskCategories={item.task_categories}
+        failureModes={item.failure_modes}
+        skillNames={item.skill_names}
+      />
+    </span>
   );
 }

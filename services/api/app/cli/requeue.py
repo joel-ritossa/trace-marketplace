@@ -6,7 +6,7 @@
 Upload mode resets the upload to received, closes its ingestion dead
 letters, and enqueues a fresh ingest job. Trace mode closes the trace's
 analysis dead letters, resets the analysis budget, and enqueues a fresh
-analyze job — the trace honestly returns to analysis `pending`.
+finalizing analyze job.
 """
 
 import asyncio
@@ -35,7 +35,7 @@ async def _requeue_trace(trace_id: str) -> int:
         return 1
     await dead_letters.mark_requeued_for_trace(db.pool(), trace_id)
     await analysis_q.reset_attempts(db.pool(), trace_id)
-    await analyze_trace.kiq(trace_id)
+    await analyze_trace.kiq(trace_id, finalize=True)
     print(f"trace {trace_id} analysis reset and re-enqueued")
     return 0
 

@@ -1,24 +1,28 @@
 # Analysis Pipeline
 
-Every ingested trace is analyzed into labels and filterable derived fields by one worker job (`analyze_trace`, `services/api/app/worker/tasks/analyze.py`) that runs three analyzer families in sequence and persists everything in one delete-and-rewrite transaction — idempotent like ingestion, except that fields a human has touched are never machine-overwritten. Each analyzer is a pure async function `(trace rows, config) → typed result model`; the worker owns all persistence ([spec](../docs/spec/stage-2/1_analysis.md)).
+Every ingested trace is analyzed into labels and filterable derived fields by one worker job (`analyze_trace`, `services/api/app/worker/tasks/analyze.py`). Each analyzer is a pure async function `(trace rows, config) → typed result model`; the worker owns all persistence ([spec](../docs/spec/stage-2/1_analysis.md)).
+
+> **Superseded in part (2026-11-10).** This report narrates the original trial, whose judge was three voted calls over a rendered trace with confidence, quality metrics and confidence-based review routing. All of that has been replaced: **the turn is the unit of judgment** — one OpenAI Agents SDK agent per turn explores the trace through four tools (`list_turns`, `read_turn`, `read_span`, `search`) and returns a verdict (outcome `success | partial | failure | indeterminate`, multi-select task categories, failure modes each citing span ids and a reason, an optional `uncertain` reason); a tool-less roll-up writes the session verdict. No voting, no confidence scores, no quality metrics, no litellm. Turns are judged once, incrementally; the last turn and the roll-up wait for the session to go idle. The one open review item per trace lists its uncertain turns, and owners relabel turns directly. Current behavior: [spec 9](../docs/spec/stage-2/9_session-analysis.md) and [how a session gets judged](../docs/explainers/how-a-session-gets-judged.md). Sections below marked *superseded* are history, kept for the measurements they record.
 
 ## Label Model
 
 The platform's thesis is that trace data is only worth discovering if the labels are trustworthy — so the label model is built around saying *how much* to trust each field, not just what it says:
 
-- **`outcome` is ternary**: `success | failure | indeterminate`. `indeterminate` is a designed answer, valid from both the machine and a human — some traces genuinely can't be judged, and a forced binary would publish false consensus.
-- **`failure_mode`** (on failure only) uses the AgentRx 10-category taxonomy adopted wholesale — which later lets validation compare against AgentRx's expert annotations with no mapping layer.
-- **`task_category`** is a closed enum (50 values in 10 display groups, e.g. `coding`, `web_research`, `customer_ops`, `devops_infra`, `financial_analysis`, …, `other`). Closed vocabularies only, no free-form tags — a filter predicate must mean the same thing on every trace. Owners scope the judge to the categories they work in (`profiles.task_categories`, settings page): a fine-grained taxonomy is precise but invites vote splits on boundary tasks — measured at 23% low-confidence routing unscoped vs ~2% scoped — so the category prompt offers only the owner's selection plus `other`, while the marketplace filters keep the full enum.
-- **Confidence and provenance are per-field and filterable.** Each label carries `machine | human_confirmed | human` provenance and a confidence with defined semantics: vote share from N judge runs, hard-capped at 0.5 when the deterministic signals disagree with the verdict, 1.0 on human resolution. Consumers exclude low-confidence or machine-only labels in their own queries; the system never gates on confidence.
+- **`outcome`** is `success | partial | failure | indeterminate` (originally ternary; `partial` was added with the agent judge). `indeterminate` is a designed answer, valid from both the machine and a human — some turns genuinely can't be judged, and a forced binary would publish false consensus.
+- **`failure_mode`** (multi-select, any outcome, each anchored to cited spans) uses the AgentRx 10-category taxonomy adopted wholesale — which later lets validation compare against AgentRx's expert annotations with no mapping layer.
+- **`task_category`** is a closed enum (50 values in 10 display groups, e.g. `coding`, `web_research`, `customer_ops`, `devops_infra`, `financial_analysis`, …, `other`). Closed vocabularies only, no free-form tags — a filter predicate must mean the same thing on every trace. Owners scope the judge to the categories they work in (`profiles.task_categories`, settings page): a fine-grained taxonomy is precise but invites inconsistent picks on boundary tasks (measured under the old voted judge: 23% low-confidence routing unscoped vs ~2% scoped) — so the judge's category vocabulary is only the owner's selection plus `other`, while the marketplace filters keep the full enum. `task_category` is now multi-select.
+- **Provenance is per turn; there is no confidence score.** Each turn is `machine` or `human` (a human-relabelled turn is never re-judged); where the agent could not judge confidently it says why (`uncertain`) and the trace gets a review item. *(Superseded: the original model carried per-field `machine | human_confirmed | human` provenance and a vote-share confidence capped at 0.5 on signal disagreement.)* The system never gates on uncertainty.
 - **Analyzers fail open.** Instrumentation that doesn't match expected conventions yields null, never a guess — and null never matches any filter predicate, so malformed traces drop out of subscription rules instead of polluting them. There is no `pending` placeholder value.
 
 ## Analyzer Families
 
 ### Deterministic Signals
 
-Pure functions over the normalized spans — no model calls, run on every trace, free. The catalog: `has_retry_loop` (+ `loop_kind`: exact repeat, cycle, or stagnation — three rule-based strategies over `(tool_name, hash(args))` action signatures), `recovered_from_error`, `truncation_suspected`, `llm_call_count`, `tool_call_count`. One internal heuristic, `failure_suspected`, fires on strong structural negatives (unrecovered error ending, loop, truncation); it is never user-facing and never enters the judge prompt — its only job is to catch the judge saying `success` when the structure says otherwise (the disagreement routing trigger below).
+Pure functions over the normalized spans — no model calls, run on every trace, free. The catalog: `has_retry_loop` (+ `loop_kind`: exact repeat, cycle, or stagnation — three rule-based strategies over `(tool_name, hash(args))` action signatures), `recovered_from_error`, `truncation_suspected`, `llm_call_count`, `tool_call_count`. Signals are now computed per turn (a repeat across turns is not a loop) and aggregated to the session. *(The internal `failure_suspected` heuristic and the disagreement routing it fed are removed.)*
 
 ### LLM Outcome Judge
+
+*Superseded 2026-11-10 by the per-turn agent judge (see the banner above); the rest of this subsection describes the original voted judge.*
 
 One analyzer, three composed calls (`services/api/app/analysis/judge.py`):
 
@@ -28,21 +32,23 @@ One analyzer, three composed calls (`services/api/app/analysis/judge.py`):
 
 Each call runs N times at temperature > 0 (env-tunable, default 5 — measured: one defecting vote survives the 0.7 routing threshold at N=5 instead of routing, halving review-queue traffic for flat accuracy) and the votes fold by majority — split or abstention-majority becomes `indeterminate`, confidence = vote share, and the raw votes are stored with the result row as the audit artifact. Provider access goes through one litellm wrapper that records per-call latency, tokens, and cost into the result metadata; the judge model is an env var (default `openai/gpt-5-mini`, `services/api/app/analysis/config.py`).
 
-What the judge sees is itself a deterministic, versioned artifact: the renderer converts spans into a chronological message list under a priority-tiered character budget — first user message, error spans, and the final K steps survive first; every cut is visibly marked; `rendering_truncated` is stored with the verdict. Mechanism and caveats: [trace-rendering explainer](../docs/explainers/trace-rendering.md).
+The original judge saw a deterministic, versioned rendering: spans converted into a chronological message list under a priority-tiered character budget (first user message, error spans and the final K steps kept first, every cut marked, `rendering_truncated` stored). The agent judge no longer uses it: it reads spans on demand through tools ([how a session gets judged](../docs/explainers/how-a-session-gets-judged.md)).
 
 ### Quality Metrics
 
+*Retired 2026-11-10 — the critics, RAGAS collections, `metric_scores` and the `ragas` dependency are removed; this subsection is history.*
+
 Graded 0–1 scores and boolean flags — filterable derived fields, never labels, never human-adjudicated. Two buckets: owned critics (hallucination, helpfulness, harmfulness, coherence, relevancy — one structured-output call each, prompt text versioned in-repo) and RAGAS v0.4 decomposed metrics (faithfulness, goal accuracy), pinned and fed by a trace→sample adapter. Two constraints shape the family: **reference-free only** (marketplace traces have no ground truth, so reference-required metrics like recall or tool-call F1 can't run here), and **applicability predicates** (faithfulness needs retrieval spans; a metric that doesn't apply produces no row, never a garbage score). Applicable metrics for a trace run concurrently; scores promote into a `metric_scores` jsonb map on `trace_analysis`, so adding a metric never needs a migration.
 
-A fourth, smaller analyzer drafts the marketplace listing's owner-editable tags and description (fill-if-empty, never regenerated) — it produces copy, not labels, and is covered with listing in [05](05_marketplace.md).
+Listing copy (owner-editable tags and description, fill-if-empty, never regenerated) now comes from the session roll-up rather than a separate analyzer; it is copy, not labels, and is covered with listing in [05](05_marketplace.md).
 
 ## Degradation Without a Key
 
-With no LLM key configured, the system degrades honestly: signals still run, the judge and metrics skip with `llm_status = 'skipped'` and a recorded reason (`not_configured`), LLM-derived fields stay null, and the UI says so — never a fake "pending". The same gate handles consent: private traces of owners who set `allow_private_llm_analysis = false` skip with `owner_opt_out` (listing the trace re-runs analysis — listing is the consent act; see [06](06_privacy-and-redaction.md)). The whole HIL loop below is exercisable on a keyless stack via a canned-verdict dev fault, which is how `tests/integration/test_hil.py` runs it in CI.
+With no LLM key configured, the system degrades honestly: signals still run, the judge skips with `llm_status = 'skipped'` and a recorded reason (`not_configured`), LLM-derived fields stay null, and the UI says so — never a fake "pending". The same gate handles consent: private traces of owners who set `allow_private_llm_analysis = false` skip with `owner_opt_out` (listing the trace finalizes its analysis — listing is the consent act; see [06](06_privacy-and-redaction.md)). The whole HIL loop below is exercisable on a keyless stack via a canned-verdict dev fault, which is how `tests/integration/test_hil.py` runs it in CI.
 
 ## Behavior Embeddings (Similarity)
 
-The analysis run also embeds each trace's judge rendering into a 1536-dim vector (`openai/text-embedding-3-small` via the same litellm wrapper), stored in a pgvector table with an HNSW cosine index ([proposal](../docs/proposals/similar-behavior.md), `docs/buildlog/stage-2/similar-behavior/`). The representation wasn't guessed: a research pass (`sandbox/behavior-similarity/_FINDINGS.md`) compared whole-transcript embeddings against structural representations and window matching, and the judge rendering won (blind pairwise precision 1.0 in-corpus, 0.6 cross-benchmark vs a 0.13 base rate).
+The finalizing analysis run also embeds each trace's session roll-up text (goal, summary, one line per turn) into a 1536-dim vector (`text-embedding-3-small` via the same OpenAI client module; originally the judge rendering), stored in a pgvector table with an HNSW cosine index ([proposal](../docs/proposals/similar-behavior.md), `docs/buildlog/stage-2/similar-behavior/`). The representation wasn't guessed: a research pass (`sandbox/behavior-similarity/_FINDINGS.md`) compared whole-transcript embeddings against structural representations and window matching, and the judge rendering (the original input) won (blind pairwise precision 1.0 in-corpus, 0.6 cross-benchmark vs a 0.13 base rate).
 
 Three properties keep it inside the pipeline's rules:
 
@@ -53,6 +59,8 @@ Three properties keep it inside the pipeline's rules:
 What the vectors power — the similar-traces lookup on the trace page and behavior-anchored subscriptions (a `similar_to_trace_id` + threshold predicate that ANDs with the filter query) — lives on the marketplace side, in [05](05_marketplace.md).
 
 ## Human-in-the-Loop Review
+
+*Superseded 2026-11-10: items are now raised by uncertain turns, not by the four confidence/disagreement triggers below, and owners relabel per turn (`PUT /v1/traces/{id}/turns/{turn_index}/labels`, which never needs a review item). What survives: one open item per trace (partial unique index, written in the analysis transaction), per-upload digest notifications, nothing gated on review, human labels never overwritten. The rest of this section describes the original routing.*
 
 A label the judge wasn't sure about is a data-quality liability, but human attention is expensive — so only the outcome judge routes, only on recorded reasons, and each question is asked once. The four triggers (a pure function, `(signals, verdict) → reasons`): signals/judge disagreement, an `indeterminate` outcome, outcome confidence below threshold (default 0.7), and task-category confidence below the same threshold (wrong categories silently corrupt subscriptions).
 
@@ -68,7 +76,7 @@ Routing semantics worth knowing ([demo](../docs/demos/hil-loop.md) walks all of 
 
 ### The Base Loop
 
-Human resolutions are stored with provenance and immediately correct the trace's own labels — that is the whole base loop, deliberately. One subtlety makes it compound: on re-analysis, the routing-reason filter drops any reason whose target field already carries human provenance, so humans are never re-asked a question they've answered (`services/api/app/queries/analysis.py`).
+*(Now: a relabel writes a human turn that the machine never re-judges; the routing-reason filter below no longer exists.)* Human resolutions are stored with provenance and immediately correct the trace's own labels — that is the whole base loop, deliberately. One subtlety makes it compound: on re-analysis, the routing-reason filter drops any reason whose target field already carries human provenance, so humans are never re-asked a question they've answered (`services/api/app/queries/analysis.py`).
 
 ### What Feedback Never Does (By Design)
 
@@ -84,9 +92,11 @@ Two written-up designs turn accumulated human labels into judge improvement: [fe
 
 ## Validation
 
+*History: the agreement scripts (`app.cli.analyze agreement` / `metrics-agreement`), the HaluBench converter and their demos were removed with the voted judge and the metrics; the numbers below were measured on that judge and have not been re-measured for the per-turn agent. The AgentRewardBench and AgentRx converters remain.*
+
 The judge produces labels consumers filter and pay on, so its quality is measured, not asserted — and measured through the *shipped* importer, renderer, and prompts, not a lab harness. Benchmark→OTLP converters (`tools/arb_to_otlp.py`, `tools/agentrx_to_otlp.py`, `tools/halubench_to_otlp.py`) turn expert-annotated benchmark trajectories into ordinary traces; offline agreement scripts run the production analyzers over them and fold verdicts against the human labels (the fold is a pure, unit-tested function — the LLM run and the arithmetic can't contaminate each other).
 
-The numbers ([judge demo](../docs/demos/judge-agreement.md), [metrics demo](../docs/demos/metric-agreement.md) — both reproducible with one command per slice):
+The numbers (recorded in the B4/B5 buildlogs; the demos that reproduced them were removed):
 
 | What | Result | Corpus |
 |---|---|---|

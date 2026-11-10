@@ -4,6 +4,7 @@ import asyncpg
 
 from app.importers.otlp import NormalizedTrace
 from app.queries import uploads as uploads_q
+from app.queries.analysis import TURN_COUNT_SQL
 from app.schemas.trace import TraceFilterQuery, csv_values
 
 # Whitelist for the API's sort param; never interpolate user input directly.
@@ -17,12 +18,14 @@ SORT_COLUMNS = {
 # (filter field, ta column) pairs for the CSV equality predicates.
 _CSV_COLUMNS = (
     ("outcome", "ta.outcome"),
-    ("failure_mode", "ta.failure_mode"),
-    ("task_category", "ta.task_category"),
     ("loop_kind", "ta.loop_kind"),
-    ("outcome_provenance", "ta.outcome_provenance"),
-    ("failure_mode_provenance", "ta.failure_mode_provenance"),
-    ("task_category_provenance", "ta.task_category_provenance"),
+)
+
+# (filter field, ta array column): CSV-OR as array overlap — the session
+# array contains any requested value.
+_CSV_ARRAY_COLUMNS = (
+    ("task_category", "ta.task_categories"),
+    ("failure_mode", "ta.failure_modes"),
 )
 
 _BOOL_COLUMNS = (
@@ -32,8 +35,6 @@ _BOOL_COLUMNS = (
 )
 
 _GTE_ANALYSIS_COLUMNS = (
-    ("outcome_confidence_gte", "ta.outcome_confidence"),
-    ("task_category_confidence_gte", "ta.task_category_confidence"),
     ("llm_call_count_gte", "ta.llm_call_count"),
     ("tool_call_count_gte", "ta.tool_call_count"),
 )
@@ -52,6 +53,8 @@ def stage1_clauses(filters: TraceFilterQuery, param: Param) -> list[str]:
         where.append(f"t.model = {param(filters.model)}")
     if filters.tool:
         where.append(f"{param(filters.tool)} = any(t.tool_names)")
+    if filters.skill:
+        where.append(f"t.skill_names && {param(csv_values(filters.skill))}::text[]")
     if filters.has_errors:
         where.append("t.error_count > 0")
     if filters.date_from:
@@ -74,6 +77,10 @@ def analysis_clauses(filters: TraceFilterQuery, param: Param) -> list[str]:
         raw = getattr(filters, field)
         if raw:
             where.append(f"{column} = any({param(csv_values(raw))}::text[])")
+    for field, column in _CSV_ARRAY_COLUMNS:
+        raw = getattr(filters, field)
+        if raw:
+            where.append(f"{column} && {param(csv_values(raw))}::text[]")
     for field, column in _BOOL_COLUMNS:
         value = getattr(filters, field)
         if value is not None:
@@ -82,17 +89,6 @@ def analysis_clauses(filters: TraceFilterQuery, param: Param) -> list[str]:
         value = getattr(filters, field)
         if value is not None:
             where.append(f"{column} >= {param(value)}")
-    for name, bound in filters.parsed_metrics:
-        key = param(name)
-        if bound is True:
-            where.append(f"ta.metric_scores -> {key} = 'true'::jsonb")
-        else:
-            # The typeof guard makes a flag metric queried as a number (or a
-            # number queried as a flag) match nothing instead of erroring.
-            where.append(
-                f"(jsonb_typeof(ta.metric_scores -> {key}) = 'number'"
-                f" and (ta.metric_scores ->> {key})::numeric >= {param(bound)})"
-            )
     return where
 
 
@@ -150,16 +146,19 @@ async def upsert(
     idempotent: existing turns update in place, new turns append
     (8_session-ingestion.md). Owner state (visibility, tags, description,
     listed_at) is untouched; the analysis retry budget resets because
-    rewritten content gets a fresh analysis run.
+    rewritten content gets a fresh analysis run, stamped now because ingest
+    kicks it (the sweep only recovers kicks lost past the timeout).
     """
     return await conn.fetchval(
         """
         insert into traces (
           upload_id, owner_id, source_trace_id, name, status, started_at, ended_at,
           duration_ms, span_count, error_count, provider, model, service_name,
-          tool_names, error_types, total_tokens, source_format, importer_version
+          tool_names, error_types, total_tokens, source_format, importer_version,
+          skill_names
         )
-        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
+                $19)
         on conflict (owner_id, source_trace_id) do update set
           upload_id = excluded.upload_id,
           name = excluded.name,
@@ -177,8 +176,9 @@ async def upsert(
           total_tokens = excluded.total_tokens,
           source_format = excluded.source_format,
           importer_version = excluded.importer_version,
+          skill_names = excluded.skill_names,
           analysis_attempts = 0,
-          analysis_attempted_at = null
+          analysis_attempted_at = now()
         returning id
         """,
         upload_id,
@@ -199,6 +199,7 @@ async def upsert(
         trace.total_tokens,
         source_format,
         importer_version,
+        trace.skill_names,
     )
 
 
@@ -266,11 +267,12 @@ async def list_visible(
         f"""
         select t.id, t.name, t.status, t.started_at, t.duration_ms, t.span_count,
                t.error_count, t.provider, t.model, t.created_at, t.visibility,
-               t.tags, t.description, t.listed_at,
+               t.tags, t.description, t.listed_at, t.skill_names,
                p.display_name as owner_display_name,
                (t.owner_id = $1) as is_owner,
                (a.id is not null) as acquired, a.acquired_at,
-               ta.outcome, ta.outcome_confidence, ta.outcome_provenance, ta.llm_status,
+               t.analysis_attempts, ta.goal, ta.outcome, ta.task_categories, ta.failure_modes,
+               ta.llm_status, ta.analyzed_at,
                exists (
                  select 1 from dead_letters dl
                  where dl.trace_id = t.id and dl.requeued_at is null
@@ -280,6 +282,7 @@ async def list_visible(
                  where ri.trace_id = t.id and ri.status = 'open' and t.owner_id = $1
                  limit 1
                ) as open_review_item_id,
+               {TURN_COUNT_SQL} as turn_count,
                count(*) over () as total
         {base}
         order by {order_by}, t.id
@@ -311,21 +314,21 @@ async def list_visible(
     return rows, total, excluded
 
 
-async def metric_keys(pool: asyncpg.Pool, caller_id: str) -> list[str]:
-    """Observed metric_scores keys over traces visible to the caller (own +
-    listed) — the filter UI enumerates these (A4 decision 5)."""
-    rows = await pool.fetch(
-        """
-        select distinct jsonb_object_keys(ta.metric_scores) as key
-        from trace_analysis ta
-        join traces t on t.id = ta.trace_id
-        where ta.metric_scores is not null
-          and (t.owner_id = $1 or t.visibility = 'listed')
-        order by key
+async def skill_counts(pool: asyncpg.Pool, caller_id: str, scope: str) -> list[asyncpg.Record]:
+    """Distinct skill names with trace counts over one list scope (the same
+    scope rule as list_visible) — the skill filter's values."""
+    return await pool.fetch(
+        f"""
+        select s.name, count(*) as trace_count
+        from traces t
+        left join acquisitions a on a.trace_id = t.id and a.consumer_id = $1
+        cross join lateral unnest(t.skill_names) as s(name)
+        where {_scope_clause(scope)}
+        group by s.name
+        order by trace_count desc, s.name
         """,
         caller_id,
     )
-    return [r["key"] for r in rows]
 
 
 async def get_visible(pool: asyncpg.Pool, trace_id: str, caller_id: str) -> asyncpg.Record | None:
@@ -335,7 +338,10 @@ async def get_visible(pool: asyncpg.Pool, trace_id: str, caller_id: str) -> asyn
         """
         select t.*, (t.owner_id = $2) as is_owner, (a.id is not null) as acquired,
                p.display_name as owner_display_name,
-               ta.outcome, ta.outcome_confidence, ta.outcome_provenance, ta.llm_status,
+               ta.outcome, ta.task_categories, ta.failure_modes, ta.llm_status,
+               ta.analyzed_at, ta.goal, ta.summary, ta.llm_skip_reason,
+               ta.has_retry_loop, ta.loop_kind, ta.recovered_from_error,
+               ta.truncation_suspected, ta.llm_call_count, ta.tool_call_count,
                exists (
                  select 1 from dead_letters dl
                  where dl.trace_id = t.id and dl.requeued_at is null

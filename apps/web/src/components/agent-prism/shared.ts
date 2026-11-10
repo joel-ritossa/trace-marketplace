@@ -69,55 +69,70 @@ export const SPAN_CATEGORY_CONFIG: Record<
     icon: Zap,
   },
   tool_execution: {
-    label: "TOOL",
+    label: "Tool",
     theme: "orange",
     icon: Wrench,
   },
   agent_invocation: {
-    label: "AGENT INVOCATION",
+    label: "Agent",
     theme: "indigo",
     icon: Bot,
   },
   chain_operation: {
-    label: "CHAIN",
+    label: "Chain",
     theme: "teal",
     icon: Link,
   },
   retrieval: {
-    label: "RETRIEVAL",
+    label: "Retrieval",
     theme: "cyan",
     icon: Search,
   },
   embedding: {
-    label: "EMBEDDING",
+    label: "Embedding",
     theme: "emerald",
     icon: BarChart2,
   },
   create_agent: {
-    label: "CREATE AGENT",
+    label: "Create agent",
     theme: "sky",
     icon: Plus,
   },
   span: {
-    label: "SPAN",
+    label: "Span",
     theme: "cyan",
     icon: MoveHorizontal,
   },
   event: {
-    label: "EVENT",
+    label: "Event",
     theme: "emerald",
     icon: CircleDot,
   },
   guardrail: {
-    label: "GUARDRAIL",
+    label: "Guardrail",
     theme: "red",
     icon: ShieldCheck,
   },
   unknown: {
-    label: "UNKNOWN",
+    label: "Unknown",
     theme: "gray",
     icon: HelpCircle,
   },
+};
+
+/** DESIGN.md span-kind palette as a small dot (app tokens, both schemes). */
+export const SPAN_KIND_DOT: Record<TraceSpanCategory, string> = {
+  llm_call: "bg-span-llm",
+  agent_invocation: "bg-span-agent",
+  create_agent: "bg-span-agent",
+  tool_execution: "bg-span-tool",
+  retrieval: "bg-span-retriever",
+  embedding: "bg-span-embedding",
+  chain_operation: "bg-span-other",
+  span: "bg-span-other",
+  event: "bg-span-other",
+  guardrail: "bg-span-other",
+  unknown: "bg-span-other",
 };
 
 // UTILS

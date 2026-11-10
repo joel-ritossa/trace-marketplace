@@ -156,3 +156,31 @@ def test_preflight_accepts_404():
         return httpx.Response(404, json=error_body("not_found", "Upload not found."))
 
     make_client(handler).preflight()  # no raise
+
+
+def test_too_large_session_retries_without_sibling_transcripts(tmp_path):
+    """A 413 on the full bundle retries once with the session's own
+    transcripts only, and the outcome line says what was left out."""
+    old = tmp_path / "old" / "subagents"
+    old.mkdir(parents=True)
+    (tmp_path / "old.jsonl").write_bytes(b'{"o":1}\n')
+    (old / "agent-x.jsonl").write_bytes(b'{"borrowed":1}\n')
+    fork = tmp_path / "fork.jsonl"
+    fork.write_bytes(b'{"toolUseResult":{"agentId":"x"}}\n')
+    posts = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, json={"status": "complete", "trace_ids": ["t1"]})
+        posts.append(request.content)
+        if b"borrowed" in request.content:
+            return httpx.Response(413, json=error_body("file_too_large", "Too big."))
+        return httpx.Response(201, json={"upload_id": "u1", "status": "received"})
+
+    client = make_client(handler)
+    pending = client.enqueue(fork)
+    assert len(posts) == 2
+    assert client.check(pending).detail == (
+        "uploaded (complete, 1 trace; 1 subagent transcript from earlier sessions"
+        " left out — over the size limit)"
+    )

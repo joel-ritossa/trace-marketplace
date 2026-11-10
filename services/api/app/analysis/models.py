@@ -11,11 +11,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
-Outcome = Literal["success", "failure", "indeterminate"]
-# Per-field provenance on trace_analysis columns (2_data-model.md). No result
-# model carries it yet — A2's worker stamps it at persistence; part of the
-# frozen contract vocabulary, not dead code.
-Provenance = Literal["machine", "human_confirmed", "human"]
+Outcome = Literal["success", "partial", "failure", "indeterminate"]
+# Who set a turn's labels (9_session-analysis.md): human turns are never
+# re-judged or overwritten.
+Provenance = Literal["machine", "human"]
 LoopKind = Literal["exact_repeat", "cycle", "stagnation"]
 
 # failure_mode / task_category are text with app-level validation, no Literal:
@@ -36,19 +35,6 @@ FAILURE_MODES = frozenset(
     }
 )
 
-# Family 3 catalog, locked at B3 (buildlog stage-2/B3): the default-on set
-# and the only valid `metric_scores` keys — the B3→A4 contract surface.
-# Critics yield booleans, the RAGAS-backed pair yields 0–1 floats.
-METRICS = (
-    "hallucination",
-    "helpfulness",
-    "harmfulness",
-    "coherence",
-    "relevancy",
-    "faithfulness",
-    "goal_accuracy",
-)
-
 # Expanded at task-scope (buildlog stage-2/task-scope) from the 8 values
 # locked at B2 — a strict superset, so existing labels stay valid. The
 # canonical source for values, display groups, and the one-liners the
@@ -60,8 +46,8 @@ TASK_CATEGORY_GROUPS: dict[str, dict[str, str]] = {
         "debugging": "Diagnosing and fixing defects or unexpected behavior",
         "code_review": "Reviewing code changes for correctness and quality",
         "testing_qa": "Writing or running tests; quality assurance",
-        "devops_infra": "Deploys, infrastructure-as-code, cloud or system operations",
-        "ci_cd": "Build pipelines and release automation",
+        "devops_infra": "Cloud resources, hosts, secrets, networking, infrastructure-as-code",
+        "ci_cd": "CI checks, merge queues, build and release pipelines",
         "database_admin": "Schema, migration, and query administration",
         "security_engineering": "Vulnerability analysis, hardening, secrets handling",
         "ml_engineering": "Training, evaluating, or deploying ML models",
@@ -71,11 +57,11 @@ TASK_CATEGORY_GROUPS: dict[str, dict[str, str]] = {
         "data_engineering": "Data pipelines, ETL, ingestion",
         "data_visualization": "Charts or dashboards as the deliverable",
         "reporting_bi": "Recurring business reporting and BI",
-        "financial_analysis": "Financial modeling or accounting analysis",
+        "financial_analysis": "Financial modeling, accounting, or cloud/LLM spend analysis",
     },
     "Web & research": {
         "web_research": "Finding, gathering, or synthesizing information from the open web",
-        "web_automation": "Performing actions or transactions on web applications",
+        "web_automation": "Driving a browser UI to act on web apps (not gh/CLI actions)",
         "web_scraping": "Programmatic extraction of data from websites",
         "market_research": "Researching markets, products, or pricing",
         "competitive_analysis": "Monitoring or analyzing competitors",
@@ -137,9 +123,9 @@ TASK_CATEGORIES = frozenset(TASK_CATEGORY_DESCRIPTIONS)
 
 
 class SignalsResult(BaseModel):
-    """Family 1 output. All catalog fields nullable — analyzers fail open;
-    null means "no opinion", never a guess. Which fields get promoted into
-    `trace_analysis` columns is B1's hit-rate-gated call."""
+    """Family 1 output, per turn (stored on `turn_analysis.signals`) and
+    combined per session (`trace_analysis` columns). All fields nullable —
+    null means "no opinion", never a guess."""
 
     has_retry_loop: bool | None = None
     loop_kind: LoopKind | None = None
@@ -147,86 +133,6 @@ class SignalsResult(BaseModel):
     truncation_suspected: bool | None = None
     llm_call_count: int | None = None
     tool_call_count: int | None = None
-    # Stored for routing auditability; never promoted, never user-facing,
-    # never in the judge prompt. False means "no opinion", not "success".
-    failure_suspected: bool = False
-
-
-class JudgeVote(BaseModel):
-    """One sampled run of one composed call — the stored audit artifact.
-    Values are labels + reasoning snippets, never trace content.
-
-    Self-report + per-call cost fields added in B2 (additive; each vote is
-    exactly one LLM call, so the audit artifact carries what it cost)."""
-
-    call: Literal["outcome", "failure_mode", "category"]
-    value: str
-    reasoning: str | None = None
-    # Self-reported confidence; the fold uses it only at N=1 (vote share is
-    # meaningless there). Null on malformed votes.
-    confidence: float | None = None
-    latency_ms: int | None = None
-    input_tokens: int | None = None
-    output_tokens: int | None = None
-    cost_usd: float | None = None
-
-
-class JudgeVerdict(BaseModel):
-    """Family 2 output: the three composed calls' labels with per-field
-    confidence (vote share), plus the recorded votes."""
-
-    outcome: Outcome | None = None
-    outcome_confidence: float | None = None
-    failure_mode: str | None = None
-    failure_mode_confidence: float | None = None
-    task_category: str | None = None
-    task_category_confidence: float | None = None
-    reasoning: str | None = None
-    votes: list[JudgeVote] = []
-    rendering_truncated: bool = False
-
-
-class MetricCall(BaseModel):
-    """One LLM call made while computing a metric — the cost audit artifact
-    (JudgeVote's metadata shape without vote semantics; added in B3,
-    additive)."""
-
-    latency_ms: int | None = None
-    input_tokens: int | None = None
-    output_tokens: int | None = None
-    cost_usd: float | None = None
-
-
-class MetricResult(BaseModel):
-    """Family 3 output, one per applicable metric. Inapplicable metrics
-    produce no result at all — never a garbage score."""
-
-    metric: str
-    value: float | bool
-    reason: str | None = None
-    calls: list[MetricCall] = []
-
-
-class ListingResult(BaseModel):
-    """Listing-copy generator output (additive, post-B0): free-form
-    marketplace copy — tags + description — never labels. No closed
-    vocabulary, no confidence, no routing; the worker fill-if-empty
-    writes it into the owner-editable `traces` columns."""
-
-    description: str | None = None
-    tags: list[str] = []
-    calls: list[MetricCall] = []
-
-
-class SummaryResult(BaseModel):
-    """Behavior-summary output (additive, post-B0): a gist + step
-    walkthrough of what the agent did — descriptive prose, never a label.
-    No confidence, no routing, no promoted columns; it lives in its
-    `analyzer_results` row and the analysis endpoint reads it from there."""
-
-    gist: str | None = None
-    steps: list[str] = []
-    calls: list[MetricCall] = []
 
 
 class RenderedMessage(BaseModel):
@@ -250,12 +156,10 @@ class RenderedTrace(BaseModel):
 
 
 class AnalyzerRun(BaseModel):
-    """Envelope mirroring `analyzer_results` columns 1:1. The runner dumps
-    these; A2's worker persists them verbatim. `output` is the result
-    model's dump (jsonb-shaped); the registry's result model re-validates."""
+    """Envelope mirroring `analyzer_results` columns 1:1: one audit row per
+    analysis run (model, usage, tool-call counts)."""
 
     analyzer: str
     analyzer_version: str
     model_id: str | None = None
-    confidence: float | None = None
     output: dict[str, Any]
