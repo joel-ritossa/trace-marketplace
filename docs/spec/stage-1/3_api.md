@@ -26,7 +26,7 @@ No other fields. There is no upload-time name/tags/description (trace-level, set
 { "upload_id": "…", "status": "received", "sha256": "…" }
 ```
 
-Failure cases: `411 length_required` (no `Content-Length`; required so the size check runs before the body is consumed), `413 file_too_large` (limit 25 MB, env-configurable), `422 invalid_request` (missing/extra parts), `422 unsupported_format` (A6 amendment: subsumes the former `invalid_json` — bytes that are neither OTLP JSON nor a supported session-JSONL schema), `409 duplicate_upload` (details include the existing `upload_id`), `429 rate_limited`.
+Failure cases: `411 length_required` (no `Content-Length`; required so the size check runs before the body is consumed), `413 file_too_large` (limit 50 MB, env-configurable), `422 invalid_request` (missing/extra parts), `422 unsupported_format` (A6 amendment: subsumes the former `invalid_json` — bytes that are neither OTLP JSON nor a supported session-JSONL schema), `409 duplicate_upload` (details include the existing `upload_id`), `429 rate_limited`.
 
 ### GET /v1/uploads
 
@@ -51,7 +51,7 @@ Owner only. Upload status for polling from the upload page.
 
 Owner only. Returns the raw uploaded payload byte-identical
 (`Content-Disposition` attachment, original filename; buffered — fine under
-the 25 MB upload cap). This is the
+the 50 MB upload cap). This is the
 contributor's own-file download; consumer download is trace-level
 (`GET /v1/traces/{trace_id}/download`).
 
@@ -95,7 +95,7 @@ Failure cases: `404` (trace not visible to caller), `409 not_listed` (trace is p
 
 ### GET /v1/traces/{trace_id}/download
 
-Owner or acquirer only. Returns the original raw uploaded payload (`Content-Disposition` attachment, original filename; buffered — fine under the 25 MB upload cap, same as the uploads download). A listed-but-not-acquired trace returns `403 acquisition_required` with a readable message pointing at the acquire action.
+Owner or acquirer only. Returns the original raw uploaded payload (`Content-Disposition` attachment, original filename; buffered — fine under the 50 MB upload cap, same as the uploads download). A listed-but-not-acquired trace returns `403 acquisition_required` with a readable message pointing at the acquire action.
 
 ### PATCH /v1/traces/{trace_id}
 

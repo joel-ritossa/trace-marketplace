@@ -12,7 +12,7 @@ Raw coding-agent session logs are also accepted directly: Codex, Claude Code, an
 
 ### Web Upload
 
-Drag a file onto `/uploads`. Validation happens at POST (`services/api/app/routers/uploads.py`): 25 MB size limit (env-tunable), format sniff, and per-user sha256 dedupe (`409 duplicate_upload`, linking the existing upload). Accepted uploads return 201 with status `received` and proceed `received → processing → complete | failed`; the `/uploads` page updates live (Supabase Realtime as an invalidation signal — events trigger an API refetch, the socket is never a second data path). Failures show the ingestion error verbatim; partially malformed payloads complete with skipped-span counts in `parse_warnings`.
+Drag a file onto `/uploads`. Validation happens at POST (`services/api/app/routers/uploads.py`): 50 MB size limit (env-tunable), format sniff, and per-user sha256 dedupe (`409 duplicate_upload`, linking the existing upload). Accepted uploads return 201 with status `received` and proceed `received → processing → complete | failed`; the `/uploads` page updates live (Supabase Realtime as an invalidation signal — events trigger an API refetch, the socket is never a second data path). Failures show the ingestion error verbatim; partially malformed payloads complete with skipped-span counts in `parse_warnings`.
 
 ### Sync CLI
 

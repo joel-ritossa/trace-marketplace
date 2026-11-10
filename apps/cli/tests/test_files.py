@@ -1,3 +1,4 @@
+import json
 import os
 
 from trace_sync.files import StabilityScanner, discover, upload_bytes
@@ -90,3 +91,34 @@ def test_stat_reflects_subagent_growth(tmp_path):
     (subs / "agent-a.jsonl").write_bytes(b'{"a":1}\n{"a":2}\n')
     assert scanner.scan() == []  # changed: pending
     assert scanner.scan() == [tmp_path / "s.jsonl"]  # stable
+
+
+def test_upload_bytes_prunes_session_bookkeeping(tmp_path):
+    lines = [
+        {"type": "attachment", "attachment": {"type": "skill_listing"}},
+        {
+            "type": "assistant",
+            "timestamp": "t",
+            "cwd": "/x",
+            "message": {"content": [{"type": "thinking", "thinking": "hm", "signature": "s"}]},
+        },
+        {
+            "type": "user",
+            "message": {"content": "hi"},
+            "toolUseResult": {"agentId": "a", "out": "big"},
+        },
+        {"type": "event_msg", "payload": {"type": "item_completed", "item": {}}},
+    ]
+    path = tmp_path / "s.jsonl"
+    path.write_text("\n".join(json.dumps(line) for line in lines))
+    assert [json.loads(line) for line in upload_bytes(path).splitlines()] == [
+        {
+            "type": "assistant",
+            "timestamp": "t",
+            "message": {"content": [{"type": "thinking", "thinking": "hm"}]},
+        },
+        {"type": "user", "message": {"content": "hi"}, "toolUseResult": {"agentId": "a"}},
+    ]
+    other = tmp_path / "other.jsonl"
+    other.write_bytes(b'{"kind": "metric"}\n')
+    assert upload_bytes(other) == b'{"kind": "metric"}\n'

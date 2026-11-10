@@ -79,7 +79,7 @@ turns are spans inside the session trace, not traces.
   transcripts carry none: synthesized at one second per event anchored to
   the upload's `created_at`, marked `converted.synthesized_timestamps`.
   Anchoring to the upload row keeps re-ingest deterministic.
-- No content caps: span attributes carry full prompt/tool text (the 25 MB
+- No content caps: span attributes carry full prompt/tool text (the 50 MB
   upload limit bounds size; redaction (7_redaction.md) applies unchanged).
 
 ## Boundaries

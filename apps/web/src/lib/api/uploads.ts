@@ -44,7 +44,7 @@ export type UploadList = {
 
 // Mirrors the API's UPLOAD_MAX_BYTES default — keep in sync if that changes.
 // Client-side pre-check only; the server's 413 is authoritative.
-export const UPLOAD_MAX_BYTES = 25 * 1024 * 1024;
+export const UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
 export const UPLOAD_MAX_MB = UPLOAD_MAX_BYTES / (1024 * 1024);
 
 export async function createUpload(file: File): Promise<UploadCreated> {

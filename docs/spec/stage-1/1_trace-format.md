@@ -28,7 +28,7 @@ resourceSpans[]
 
 An upload is rejected (status `failed`, no trace records created) when:
 
-- File exceeds 25 MB.
+- File exceeds 50 MB.
 - Body is not parseable JSON (A6: nor JSONL matching a supported session schema).
 - JSON does not contain a `resourceSpans` array with at least one span.
 - SHA-256 of the body matches an existing upload by the same user (duplicate; the response links to the existing upload).

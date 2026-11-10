@@ -3,6 +3,8 @@
 import time
 from pathlib import Path
 
+from trace_sync.prune import prune_jsonl
+
 SUFFIXES = (".json", ".jsonl")
 SUBAGENTS = "subagents"
 
@@ -38,14 +40,15 @@ def _subagent_files(path: Path) -> list[Path]:
 
 
 def upload_bytes(path: Path) -> bytes:
-    """Raw file bytes, plus the session's subagent transcripts appended as
-    newline-separated JSONL."""
+    """File bytes plus the session's subagent transcripts appended as
+    newline-separated JSONL; session logs are pruned to what the importers
+    read (prune.py)."""
     data = path.read_bytes()
     for sub in _subagent_files(path):
         if not data.endswith(b"\n"):
             data += b"\n"
         data += sub.read_bytes()
-    return data
+    return prune_jsonl(data) if path.suffix.lower() == ".jsonl" else data
 
 
 def _stat(path: Path) -> tuple[int, float] | None:

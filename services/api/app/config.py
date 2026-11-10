@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     # gets the safe outcome; local .env opts in.
     dev_routes: bool = False
 
-    upload_max_bytes: int = 25 * 1024 * 1024
+    upload_max_bytes: int = 50 * 1024 * 1024
 
     # Logging (app/obs.py): JSON lines on stdout plus an in-process ring
     # buffer of recent records; log_file adds a JSON-lines file sink (the
