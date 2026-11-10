@@ -4,31 +4,52 @@ import time
 from pathlib import Path
 
 SUFFIXES = (".json", ".jsonl")
+SUBAGENTS = "subagents"
 
 
 def discover(paths: list[Path], since_hours: float | None = None) -> list[Path]:
     """`*.json` / `*.jsonl` files (any case) under the given paths, recursive,
     sorted, deduped. `since_hours` keeps only files modified in the last N
-    hours — file selection only, never content interpretation."""
+    hours — file selection only, never content interpretation. Files under a
+    `subagents` directory are skipped: they upload with their parent session."""
     found: set[Path] = set()
     for path in paths:
         if path.is_file() and path.suffix.lower() in SUFFIXES:
             found.add(path)
         elif path.is_dir():
-            found.update(
-                p for p in path.rglob("*") if p.is_file() and p.suffix.lower() in SUFFIXES
-            )
+            found.update(p for p in path.rglob("*") if p.is_file() and p.suffix.lower() in SUFFIXES)
+    found = {p for p in found if SUBAGENTS not in p.parts}
     if since_hours is not None:
         cutoff = time.time() - since_hours * 3600
-        found = {p for p in found if _mtime(p) >= cutoff}
+        found = {p for p in found if (_stat(p) or (0, -1.0))[1] >= cutoff}
     return sorted(found)
 
 
-def _mtime(path: Path) -> float:
+def _subagent_files(path: Path) -> list[Path]:
+    """A Claude Code session `X.jsonl` bundles `X/subagents/*.jsonl`."""
+    if path.suffix.lower() != ".jsonl":
+        return []
+    return sorted((path.with_suffix("") / SUBAGENTS).glob("*.jsonl"))
+
+
+def upload_bytes(path: Path) -> bytes:
+    """Raw file bytes, plus the session's subagent transcripts appended as
+    newline-separated JSONL."""
+    data = path.read_bytes()
+    for sub in _subagent_files(path):
+        if not data.endswith(b"\n"):
+            data += b"\n"
+        data += sub.read_bytes()
+    return data
+
+
+def _stat(path: Path) -> tuple[int, float] | None:
+    """(total size, max mtime) across the file and its subagent files."""
     try:
-        return path.stat().st_mtime
+        stats = [p.stat() for p in [path, *_subagent_files(path)]]
     except OSError:  # vanished between listing and stat
-        return -1.0
+        return None
+    return (sum(st.st_size for st in stats), max(st.st_mtime for st in stats))
 
 
 class StabilityScanner:
@@ -46,7 +67,7 @@ class StabilityScanner:
     def mark_synced(self, path: Path) -> None:
         """Record the just-uploaded state so the file isn't re-offered until
         it changes again."""
-        stat = self._stat(path)
+        stat = _stat(path)
         if stat is not None:
             self._synced[path] = stat
             self._pending.pop(path, None)
@@ -57,7 +78,7 @@ class StabilityScanner:
         ready: list[Path] = []
         present = set(discover(self._paths, self._since_hours))
         for path in present:
-            stat = self._stat(path)
+            stat = _stat(path)
             if stat is None or self._synced.get(path) == stat:
                 continue
             if self._pending.get(path) == stat:
@@ -68,11 +89,3 @@ class StabilityScanner:
         self._pending = {p: s for p, s in self._pending.items() if p in present}
         self._synced = {p: s for p, s in self._synced.items() if p in present}
         return sorted(ready)
-
-    @staticmethod
-    def _stat(path: Path) -> tuple[int, float] | None:
-        try:
-            st = path.stat()
-        except OSError:  # vanished between listing and stat
-            return None
-        return (st.st_size, st.st_mtime)

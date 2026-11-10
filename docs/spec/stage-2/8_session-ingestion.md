@@ -26,8 +26,11 @@ pointed at the directories the tools already write.
   golden corpus in `fixtures/golden/` pins them):
   - Claude Code splits one assistant API response across records sharing
     `message.id`; responses group by id into exactly one llm span each —
-    including tool-only responses, whose usage is real spend. Sidechain
-    (sub-agent) and meta records (`isSidechain`, `isMeta`,
+    including tool-only responses, whose usage is real spend. Sub-agent
+    records (`isSidechain` with an `agentId`, bundled by the CLI from
+    `<session>/subagents/`) parse as their own stream and nest under the
+    tool span whose result carries `toolUseResult.agentId` (recursively for
+    nested subagents); unlinked sidechains and meta records (`isMeta`,
     `isCompactSummary`, `isVisibleInTranscriptOnly`) are skipped. User
     records with `origin.kind` other than `human` (task notifications, peer
     messages) remain llm input but never open a turn; `<pasted_content>`
@@ -49,7 +52,7 @@ pointed at the directories the tools already write.
   at ingest (e.g. a detected schema yielding zero turns) are
   `PermanentIngestError`s — verbatim on `/uploads`, never retried.
 - `uploads.source_format` and `traces.source_format` record the detected
-  format; session-converted traces carry the sessions importer version (`2.0.0`: one trace per session; `2.1.0`: harness-injected user records no longer open turns).
+  format; session-converted traces carry the sessions importer version (`2.0.0`: one trace per session; `2.1.0`: harness-injected user records no longer open turns; `2.2.0`: subagents nest under their spawning call).
 
 ## Per-Session Granularity
 
@@ -99,6 +102,8 @@ turns are spans inside the session trace, not traces.
 - New optional flag `--since-hours N` (env-free, both commands): only
   consider files modified in the last N hours. Absent = all files. This is
   file *selection*, not content interpretation — the raw-bytes rule holds.
+- A Claude Code session uploads with its `X/subagents/*.jsonl` concatenated
+  after it; `subagents/` files are never uploaded alone (5_cli.md).
 
 ## Done When
 

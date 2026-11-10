@@ -72,6 +72,15 @@ class Event:
     ts: int | None = None  # unix nanos
     end: int | None = None
     error: str | None = None
+    # A spawned subagent's own events nest under the tool call that spawned
+    # it; `agent_id` is the parser's link key until they are attached.
+    agent_id: str | None = None
+    children: list[Event] = field(default_factory=list)
+
+
+def flatten(events: list[Event]) -> list[Event]:
+    """Events depth-first, each followed by its nested subagent events."""
+    return [x for e in events for x in (e, *flatten(e.children))]
 
 
 @dataclass
@@ -115,10 +124,17 @@ class SessionBuilder:
         ts: int | None = None,
         end: int | None = None,
         error: str | None = None,
-    ) -> None:
+    ) -> Event:
         if self._current is None:
             self._current = Turn(title=None)  # leading activity before any ask
-        self._current.events.append(Event(kind, name, attrs, ts, end, error))
+        event = Event(kind, name, attrs, ts, end, error)
+        self._current.events.append(event)
+        return event
+
+    def events(self) -> list[Event]:
+        """Top-level events of every turn, in order (flushes the open turn)."""
+        self._flush()
+        return [e for turn in self.turns for e in turn.events]
 
     def add_turn_usage(self, input_tokens: Any, output_tokens: Any, total_tokens: Any) -> None:
         """Accumulate one model request's usage onto the current turn."""
@@ -155,7 +171,7 @@ class SessionBuilder:
 
         # Fill missing timestamps across the whole session at one second per
         # event, so ordering survives without real timestamps.
-        events = [e for turn in self.turns for e in turn.events]
+        events = flatten([e for turn in self.turns for e in turn.events])
         synthesized = any(e.ts is None for e in events)
         first = next((i for i, e in enumerate(events) if e.ts is not None), None)
         if first is None:
@@ -217,7 +233,7 @@ class SessionBuilder:
                     # 1µs lead (stored precision): spans sort by (start, span
                     # id), so the ask must precede its first event, not tie.
                     "startTimeUnixNano": str(min(e.ts for e in turn.events) - _LEAD),
-                    "endTimeUnixNano": str(max(e.end for e in turn.events)),
+                    "endTimeUnixNano": str(max(e.end for e in flatten(turn.events))),
                     "attributes": _attr_list(
                         {
                             "gen_ai.operation.name": "invoke_agent",
@@ -230,24 +246,7 @@ class SessionBuilder:
                     "status": {"code": 1},
                 }
             )
-            for i, event in enumerate(turn.events):
-                spans.append(
-                    {
-                        "traceId": trace_id,
-                        "spanId": hashlib.sha256(f"{key}:{turn_index}:{i}".encode()).hexdigest()[
-                            :16
-                        ],
-                        "parentSpanId": turn_id,
-                        "name": event.name,
-                        "kind": 3,
-                        "startTimeUnixNano": str(event.ts),
-                        "endTimeUnixNano": str(event.end),
-                        "attributes": _attr_list(event.attrs),
-                        "status": (
-                            {"code": 2, "message": event.error} if event.error else {"code": 1}
-                        ),
-                    }
-                )
+            spans.extend(_event_spans(trace_id, turn.events, f"{key}:{turn_index}", turn_id))
 
         return {
             "resourceSpans": [
@@ -257,6 +256,27 @@ class SessionBuilder:
                 }
             ]
         }
+
+
+def _event_spans(trace_id: str, events: list[Event], prefix: str, parent_id: str) -> list[dict]:
+    spans: list[dict] = []
+    for i, event in enumerate(events):
+        span_id = hashlib.sha256(f"{prefix}:{i}".encode()).hexdigest()[:16]
+        spans.append(
+            {
+                "traceId": trace_id,
+                "spanId": span_id,
+                "parentSpanId": parent_id,
+                "name": event.name,
+                "kind": 3,
+                "startTimeUnixNano": str(event.ts),
+                "endTimeUnixNano": str(event.end),
+                "attributes": _attr_list(event.attrs),
+                "status": {"code": 2, "message": event.error} if event.error else {"code": 1},
+            }
+        )
+        spans.extend(_event_spans(trace_id, event.children, f"{prefix}:{i}", span_id))
+    return spans
 
 
 def llm_attrs(

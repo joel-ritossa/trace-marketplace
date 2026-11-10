@@ -10,9 +10,12 @@ the parser absorbs (shapes verified against real logs):
   id so each API call becomes exactly one llm event — including tool-only
   responses, which still carry usage. Cursor records have no message ids
   (or timestamps, usage, model ids) and group per record.
-- Claude Code interleaves sub-agent ("sidechain") transcripts and meta
-  records (`isMeta`, compaction summaries) into the session file; both are
-  skipped — they are not part of the main conversation. User records whose
+- Sub-agent ("sidechain") records that carry an `agentId` (Claude Code
+  writes them to `<session>/subagents/`; the CLI uploads them bundled with
+  the session) parse as their own event stream and nest under the tool call
+  that spawned them, linked by the tool result's `toolUseResult.agentId`.
+  Unlinked sidechains (older logs interleave them without an `agentId`) and
+  meta records (`isMeta`, compaction summaries) are skipped. User records whose
   `origin.kind` is not `human` (task notifications, peer messages) stay
   model input but never open a turn.
 - Anthropic usage splits input across `input_tokens` +
@@ -30,11 +33,19 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.importers.sessions.turns import SessionBuilder, llm_attrs, to_nanos, tool_attrs
+from app.importers.sessions.turns import (
+    Event,
+    SessionBuilder,
+    flatten,
+    llm_attrs,
+    to_nanos,
+    tool_attrs,
+)
 
 # Records that are not main-line conversation: sub-agent transcripts and
 # meta/compaction records Claude Code writes into the same session file.
 _SKIP_FLAGS = ("isSidechain", "isMeta", "isCompactSummary", "isVisibleInTranscriptOnly")
+_SUBAGENT_SKIP = tuple(f for f in _SKIP_FLAGS if f != "isSidechain")
 
 
 def matches(records: list[dict]) -> bool:
@@ -78,8 +89,34 @@ def _usage(usage: Any) -> dict | None:
 
 def parse(records: list[dict], session_id: str) -> SessionBuilder:
     agent = "claude" if any(r.get("timestamp") for r in records) else "cursor"
-    builder = SessionBuilder(agent, session_id)
-    if agent == "claude":
+    groups: dict[str, list[dict]] = {}
+    main: list[dict] = []
+    for record in records:
+        agent_id = record.get("agentId") if record.get("isSidechain") else None
+        (groups.setdefault(agent_id, []) if agent_id else main).append(record)
+
+    builder = _parse_stream(main, SessionBuilder(agent, session_id), _SKIP_FLAGS)
+    subagents = {
+        agent_id: _parse_stream(recs, SessionBuilder(agent, agent_id), _SUBAGENT_SKIP).events()
+        for agent_id, recs in groups.items()
+    }
+    _nest(builder.events(), subagents)
+    return builder
+
+
+def _nest(events: list[Event], subagents: dict[str, list[Event]]) -> None:
+    """Attach each subagent's events under its spawning tool call (subagents
+    can spawn subagents, so linked streams nest in turn)."""
+    for event in flatten(events):
+        if event.agent_id in subagents:
+            event.children = subagents.pop(event.agent_id)
+            _nest(event.children, subagents)
+
+
+def _parse_stream(
+    records: list[dict], builder: SessionBuilder, skip_flags: tuple[str, ...]
+) -> SessionBuilder:
+    if builder.agent == "claude":
         builder.provider = "anthropic"
     last_user: str | None = None
     open_tools: dict[str, dict] = {}
@@ -102,7 +139,7 @@ def parse(records: list[dict], session_id: str) -> SessionBuilder:
         response = None
 
     for record in records:
-        if any(record.get(flag) for flag in _SKIP_FLAGS):
+        if any(record.get(flag) for flag in skip_flags):
             continue
         role = record.get("type") or record.get("role")
         message = record.get("message") or {}
@@ -120,7 +157,7 @@ def parse(records: list[dict], session_id: str) -> SessionBuilder:
                     call = open_tools.pop(block.get("tool_use_id", ""), None)
                     if call is None:
                         continue
-                    builder.add(
+                    event = builder.add(
                         "tool",
                         call["name"],
                         tool_attrs(call["name"], call["args"], _block_text(block.get("content"))),
@@ -128,6 +165,9 @@ def parse(records: list[dict], session_id: str) -> SessionBuilder:
                         end=ts,
                         error="tool error" if block.get("is_error") else None,
                     )
+                    spawned = record.get("toolUseResult")
+                    if isinstance(spawned, dict) and isinstance(spawned.get("agentId"), str):
+                        event.agent_id = spawned["agentId"]
         elif role == "assistant":
             builder.model = message.get("model") or builder.model
             message_id = message.get("id")

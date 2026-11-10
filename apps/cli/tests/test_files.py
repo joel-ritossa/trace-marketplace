@@ -1,6 +1,6 @@
 import os
 
-from trace_sync.files import StabilityScanner, discover
+from trace_sync.files import StabilityScanner, discover, upload_bytes
 
 
 def test_discover_recursive_json_and_jsonl(tmp_path):
@@ -56,3 +56,36 @@ def test_scanner_skips_synced_until_changed(tmp_path):
     os.utime(f, (2, 2))
     scanner.scan()  # pending tick
     assert scanner.scan() == [f]  # changed file re-offers once stable
+
+
+def _session_with_subagents(tmp_path):
+    (tmp_path / "s.jsonl").write_bytes(b'{"p":1}')
+    subs = tmp_path / "s" / "subagents"
+    subs.mkdir(parents=True)
+    (subs / "agent-b.jsonl").write_bytes(b'{"b":1}\n')
+    (subs / "agent-a.jsonl").write_bytes(b'{"a":1}')
+    (subs / "agent-a.meta.json").write_text("{}")
+    return subs
+
+
+def test_discover_skips_subagents_dir(tmp_path):
+    _session_with_subagents(tmp_path)
+    assert discover([tmp_path]) == [tmp_path / "s.jsonl"]
+
+
+def test_upload_bytes_bundles_sorted_subagents(tmp_path):
+    _session_with_subagents(tmp_path)
+    assert upload_bytes(tmp_path / "s.jsonl") == b'{"p":1}\n{"a":1}\n{"b":1}\n'
+    plain = tmp_path / "plain.jsonl"
+    plain.write_bytes(b"x")
+    assert upload_bytes(plain) == b"x"
+
+
+def test_stat_reflects_subagent_growth(tmp_path):
+    subs = _session_with_subagents(tmp_path)
+    scanner = StabilityScanner([tmp_path])
+    scanner.mark_synced(tmp_path / "s.jsonl")
+    assert scanner.scan() == []
+    (subs / "agent-a.jsonl").write_bytes(b'{"a":1}\n{"a":2}\n')
+    assert scanner.scan() == []  # changed: pending
+    assert scanner.scan() == [tmp_path / "s.jsonl"]  # stable

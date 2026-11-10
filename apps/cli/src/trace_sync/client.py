@@ -11,6 +11,8 @@ from pathlib import Path
 
 import httpx
 
+from trace_sync.files import upload_bytes
+
 POLL_TIMEOUT_SECONDS = 120.0
 RETRY_AFTER_CAP_SECONDS = 60.0
 _PREFLIGHT_PROBE_ID = "00000000-0000-0000-0000-000000000000"
@@ -68,7 +70,7 @@ class SyncClient:
         """POST the file; ingestion runs server-side off the queue, so this
         returns as soon as the upload is accepted (5_cli.md: pipelined)."""
         try:
-            data = path.read_bytes()
+            data = upload_bytes(path)
         except OSError as exc:
             return FileOutcome("failed", f"failed: {exc}", retryable=True)
         try:

@@ -154,6 +154,41 @@ def test_claude_harness_messages_do_not_open_turns():
     assert "build done" in llms[1].attributes["input.value"]
 
 
+def test_claude_subagent_nests_under_its_spawning_call():
+    """Bundled `subagents/*.jsonl` records (isSidechain + agentId) nest under
+    the Agent call whose result names that agentId; unlinked ones drop."""
+
+    def rec(kind, ts, content, **extra):
+        message = {"role": kind, "content": content}
+        return {
+            "type": kind,
+            "timestamp": f"2026-01-01T00:00:{ts:02d}Z",
+            "message": message,
+            **extra,
+        }
+
+    spawn = {"type": "tool_use", "id": "t1", "name": "Agent", "input": {"prompt": "dig"}}
+    result = {"type": "tool_result", "tool_use_id": "t1", "content": "launched"}
+    records = [
+        rec("user", 1, "investigate"),
+        rec("assistant", 2, [spawn]),
+        rec("user", 3, [result], toolUseResult={"agentId": "a1"}),
+        rec("assistant", 9, [{"type": "text", "text": "summary"}]),
+        rec("user", 4, "dig", isSidechain=True, agentId="a1"),
+        rec("assistant", 5, [{"type": "text", "text": "found it"}], isSidechain=True, agentId="a1"),
+        rec("user", 6, "orphan", isSidechain=True, agentId="zz"),
+        rec("assistant", 7, [{"type": "text", "text": "lost"}], isSidechain=True, agentId="zz"),
+    ]
+    payload = sessions.convert("anthropic_jsonl", records, session_id="s", anchor=ANCHOR)
+    (trace,) = otlp.import_payload(payload, redaction_salt=OFFLINE_SALT).traces
+    by_id = {s.source_span_id: s for s in trace.spans}
+    found = next(s for s in trace.spans if s.attributes.get("output.value") == "found it")
+    assert by_id[found.source_parent_span_id].tool_name == "Agent"
+    assert found.attributes["input.value"] == "dig"
+    assert not any(s.attributes.get("output.value") == "lost" for s in trace.spans)
+    assert len([s for s in trace.spans if "turn.index" in s.attributes]) == 1
+
+
 # --- golden-corpus semantics (fixtures/golden/, real-log shapes) ----------------
 
 
