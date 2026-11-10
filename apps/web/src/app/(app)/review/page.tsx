@@ -3,58 +3,49 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { CheckCircle2, ChevronRight, X } from "lucide-react";
-import { OutcomeBadge } from "@/components/traces/badges";
+import { CheckCircle2, CircleHelp, X } from "lucide-react";
 import { Pager, usePageParam } from "@/components/shell/pager";
 import { listReviewItems, type ReviewItem, type ReviewItemList } from "@/lib/api/review";
 import { formatDate } from "@/lib/format";
 import { useRealtimeRefetch } from "@/lib/realtime";
-import { humanize } from "@/components/review/taxonomy";
 
-function Row({ item, uploadFilter }: { item: ReviewItem; uploadFilter: string | null }) {
-  const verdict = item.context.verdict;
-  const href = uploadFilter
-    ? `/review/${item.review_item_id}?upload_id=${uploadFilter}`
-    : `/review/${item.review_item_id}`;
+/** One open item: its trace's uncertain turns, each linking to that turn on
+ *  the trace page, where the owner relabels it. */
+function Row({ item }: { item: ReviewItem }) {
+  const { turns } = item.context;
   return (
-    <Link href={href} className="block px-4 py-3 transition-colors hover:bg-accent/50">
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <span className="truncate text-sm font-medium">{item.trace.name}</span>
-          {verdict.outcome ? (
-            <OutcomeBadge
-              outcome={verdict.outcome}
-              confidence={verdict.outcome_confidence}
-              provenance="machine"
-            />
-          ) : (
-            <span className="text-xs text-muted-foreground">no machine verdict</span>
-          )}
-          {verdict.task_category && (
-            <span className="hidden text-xs text-muted-foreground sm:inline">
-              {humanize(verdict.task_category)}
-              {verdict.task_category_confidence !== null && (
-                <span className="ml-1 font-mono">
-                  {verdict.task_category_confidence.toFixed(2)}
-                </span>
-              )}
-            </span>
-          )}
-        </div>
-        <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-          <time>{formatDate(item.created_at)}</time>
-          <ChevronRight className="size-3.5" />
-        </div>
-      </div>
-      {item.context.reasons.length > 0 && (
-        <p className="mt-1 text-xs text-muted-foreground">
-          {item.context.reasons.map((r) => r.message).join(" ")}
+    <div className="px-4 py-3">
+      <div className="flex items-baseline justify-between gap-4">
+        <p className="min-w-0 truncate text-sm">
+          {turns.length} uncertain turn{turns.length === 1 ? "" : "s"} in{" "}
+          <Link href={`/traces/${item.trace_id}`} className="font-medium hover:underline">
+            {item.trace.name}
+          </Link>
         </p>
-      )}
-      {item.context.reasons.length === 0 && (
-        <p className="mt-1 text-xs text-muted-foreground">Relabel requested by you.</p>
-      )}
-    </Link>
+        <time className="shrink-0 text-xs text-muted-foreground">
+          {formatDate(item.created_at)}
+        </time>
+      </div>
+      <ul className="mt-2 flex flex-col gap-1">
+        {turns.map((turn) => (
+          <li key={turn.turn_index}>
+            <Link
+              href={`/traces/${item.trace_id}?turn=${turn.turn_index}`}
+              className="-mx-2 flex flex-col gap-0.5 rounded-md px-2 py-1.5 transition-colors hover:bg-accent/50"
+            >
+              <span className="flex items-start gap-1.5 text-xs">
+                <span className="shrink-0 font-mono text-muted-foreground">
+                  Turn {turn.turn_index + 1}
+                </span>
+                <CircleHelp className="mt-px size-3 shrink-0 text-warning-deep" />
+                <span className="text-warning-deep">{turn.reason}</span>
+              </span>
+              {turn.summary && <span className="text-sm">{turn.summary}</span>}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -72,7 +63,7 @@ function Groups({ items, uploadFilter }: { items: ReviewItem[]; uploadFilter: st
       {groups.map((group) =>
         group.items.length === 1 || uploadFilter ? (
           group.items.map((item) => (
-            <Row key={item.review_item_id} item={item} uploadFilter={uploadFilter} />
+            <Row key={item.review_item_id} item={item} />
           ))
         ) : (
           <details key={`${group.uploadId}-${group.items[0].review_item_id}`} open>
@@ -82,7 +73,7 @@ function Groups({ items, uploadFilter }: { items: ReviewItem[]; uploadFilter: st
             </summary>
             <div className="divide-y border-t pl-4">
               {group.items.map((item) => (
-                <Row key={item.review_item_id} item={item} uploadFilter={uploadFilter} />
+                <Row key={item.review_item_id} item={item} />
               ))}
             </div>
           </details>
@@ -128,7 +119,7 @@ export default function ReviewQueuePage() {
     <div className="mx-auto w-full max-w-6xl">
       <h1 className="text-2xl font-semibold tracking-tight">Review</h1>
       <p className="mt-1 text-sm text-muted-foreground">
-        Traces the analyzers were uncertain about. Reviewing improves labels — it gates nothing.
+        Turns the judge was uncertain about. Relabeling them improves labels — it gates nothing.
       </p>
 
       {uploadFilter && (
@@ -153,7 +144,7 @@ export default function ReviewQueuePage() {
             <CheckCircle2 className="size-8 text-status-ok" strokeWidth={1.5} />
             <p className="mt-4 text-sm font-medium">Nothing needs review</p>
             <p className="mt-1 text-sm text-muted-foreground">
-              When the judge is uncertain about a trace, it lands here.
+              When the judge is uncertain about a turn, its trace lands here.
             </p>
           </div>
         ) : (

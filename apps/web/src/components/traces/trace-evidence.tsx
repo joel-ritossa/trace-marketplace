@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { TraceSpan } from "@evilmartians/agent-prism-types";
 import { ListTree, MessageSquare } from "lucide-react";
 
@@ -8,7 +8,7 @@ import { DetailsView } from "@/components/agent-prism/DetailsView/DetailsView";
 import { TreeView } from "@/components/agent-prism/TreeView";
 import { buildConversation, isContentSpan } from "@/components/traces/conversation";
 import { ConversationView } from "@/components/traces/conversation-view";
-import { buildSpanTree, withDetail } from "@/components/traces/span-tree";
+import { ancestorIds, buildSpanTree, withDetail } from "@/components/traces/span-tree";
 import { ApiError } from "@/lib/api/client";
 import { getSpan, listAllSpans, type SpanDetail, type SpanListItem } from "@/lib/api/traces";
 import { cn } from "@/lib/utils";
@@ -19,6 +19,10 @@ type LoadState =
   | { phase: "ready"; spans: SpanListItem[]; roots: TraceSpan[] };
 
 type EvidenceView = "conversation" | "spans";
+
+/** A request to reveal one span (a label's evidence), by source span id;
+ *  `seq` makes repeat clicks on the same span re-reveal it. */
+export type SpanFocus = { sourceSpanId: string; seq: number };
 
 // Conversation reconstruction needs full attributes, one request per
 // llm/tool span — capped so a pathological trace can't issue thousands.
@@ -67,12 +71,21 @@ function ViewToggle({
   );
 }
 
-/** The trace inspection core, shared by the trace detail page and the review
- *  resolve view (4_pages.md: the reviewer sees the same inspection
- *  components, on one screen). Defaults to a reconstructed chat-style
+/** The trace inspection core, shared by the trace detail page and the
+ *  similar-trace preview. Defaults to a reconstructed chat-style
  *  conversation; the span tree + details panel sits behind a toggle. Owns
- *  span loading and attribute fetching; the host page owns trace metadata. */
-export function TraceEvidence({ traceId, className }: { traceId: string; className?: string }) {
+ *  span loading and attribute fetching; the host page owns trace metadata.
+ *  `focus` reveals a span: switches to the tree, expands its ancestors (the
+ *  tree starts collapsed), selects it and scrolls it into view. */
+export function TraceEvidence({
+  traceId,
+  className,
+  focus,
+}: {
+  traceId: string;
+  className?: string;
+  focus?: SpanFocus | null;
+}) {
   const [state, setState] = useState<LoadState>({
     phase: "loading",
     spansLoaded: 0,
@@ -87,6 +100,9 @@ export function TraceEvidence({ traceId, className }: { traceId: string; classNa
     total: 0,
     done: false,
   });
+  const treeRef = useRef<HTMLDivElement>(null);
+  const [scrollSeq, setScrollSeq] = useState(0);
+  const handledFocus = useRef(0);
 
   // Hosts remount per trace (keyed), so state never carries across traces.
   useEffect(() => {
@@ -156,16 +172,41 @@ export function TraceEvidence({ traceId, className }: { traceId: string; classNa
   }, [state, traceId]);
 
   // Fetch full attributes/events lazily, when a span is first selected.
-  async function onSpanSelect(span: TraceSpan) {
-    setSelectedId(span.id);
-    if (details.has(span.id)) return;
+  async function selectSpan(id: string) {
+    setSelectedId(id);
+    if (details.has(id)) return;
     try {
-      const detail = await getSpan(traceId, span.id);
-      setDetails((prev) => new Map(prev).set(span.id, detail));
+      const detail = await getSpan(traceId, id);
+      setDetails((prev) => new Map(prev).set(id, detail));
     } catch {
       // Panel falls back to the light fields; reselecting retries.
     }
   }
+
+  // Reveal a focused span once the tree exists (a focus requested while
+  // spans load applies when they land).
+  useEffect(() => {
+    if (!focus || focus.seq === handledFocus.current || state.phase !== "ready") return;
+    handledFocus.current = focus.seq;
+    const span = state.spans.find((s) => s.source_span_id === focus.sourceSpanId);
+    const path = span ? ancestorIds(state.roots, span.span_id) : null;
+    if (!span || path === null) return;
+    setView("spans");
+    setExpandedIds((prev) => [...new Set([...prev, ...path])]);
+    void selectSpan(span.span_id);
+    setScrollSeq((n) => n + 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focus, state]);
+
+  useEffect(() => {
+    if (scrollSeq === 0) return;
+    const frame = requestAnimationFrame(() => {
+      treeRef.current
+        ?.querySelector('li[aria-selected="true"] > div')
+        ?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [scrollSeq]);
 
   const nodeById = useMemo(
     () => (state.phase === "ready" ? flatten(state.roots) : new Map<string, TraceSpan>()),
@@ -238,11 +279,14 @@ export function TraceEvidence({ traceId, className }: { traceId: string; classNa
         </div>
       ) : (
         <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-5">
-          <div className="overflow-y-auto rounded-lg border bg-background py-2 lg:col-span-3">
+          <div
+            ref={treeRef}
+            className="overflow-y-auto rounded-lg border bg-background py-2 lg:col-span-3"
+          >
             <TreeView
               spans={state.roots}
               selectedSpan={panelSpan}
-              onSpanSelect={onSpanSelect}
+              onSpanSelect={(span) => selectSpan(span.id)}
               expandedSpansIds={expandedIds}
               onExpandSpansIdsChange={setExpandedIds}
               spanCardViewOptions={{ expandButton: "inside" }}

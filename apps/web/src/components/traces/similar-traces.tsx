@@ -6,7 +6,8 @@ import { ArrowLeft, BellPlus, ExternalLink, Loader2, Sparkles, X } from "lucide-
 
 import { AnalysisSection } from "@/components/traces/analysis-section";
 import { TraceOutcome, VisibilityBadge } from "@/components/traces/badges";
-import { TraceEvidence } from "@/components/traces/trace-evidence";
+import { TraceEvidence, type SpanFocus } from "@/components/traces/trace-evidence";
+import { useTraceDetail } from "@/components/traces/use-trace-detail";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -151,7 +152,11 @@ function SimilarList({
                             .join(" · ")}
                         </span>
                       </span>
-                      <TraceOutcome trace={item} />
+                      <TraceOutcome
+                        outcome={item.outcome}
+                        status={item.analysis_status}
+                        failed={item.analysis_failed}
+                      />
                     </button>
                   </li>
                 ))}
@@ -184,6 +189,8 @@ function SimilarityDial({ value }: { value: number }) {
 }
 
 function SimilarDetail({ item, onBack }: { item: SimilarTraceItem; onBack: () => void }) {
+  const { state, setTrace } = useTraceDetail(item.trace_id);
+  const [spanFocus, setSpanFocus] = useState<SpanFocus | null>(null);
   return (
     <>
       <DialogHeader>
@@ -222,8 +229,20 @@ function SimilarDetail({ item, onBack }: { item: SimilarTraceItem; onBack: () =>
               </div>
             ))}
           </dl>
-          <AnalysisSection traceId={item.trace_id} isOwner={item.is_owner} />
-          <TraceEvidence traceId={item.trace_id} />
+          {state.phase === "ready" ? (
+            <AnalysisSection
+              trace={state.trace}
+              onChange={setTrace}
+              onShowSpan={(sourceSpanId) =>
+                setSpanFocus((prev) => ({ sourceSpanId, seq: (prev?.seq ?? 0) + 1 }))
+              }
+            />
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              {state.phase === "loading" ? "Loading analysis…" : "Could not load the analysis."}
+            </p>
+          )}
+          <TraceEvidence traceId={item.trace_id} focus={spanFocus} />
         </div>
       </div>
     </>

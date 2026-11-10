@@ -18,6 +18,20 @@ export class ApiError extends Error {
   }
 }
 
+/** A readable message for a failed call. Request-validation 422s carry the
+ *  useful text in `details.errors[].msg`, so those are shown verbatim. */
+export function errorText(err: unknown, fallback: string): string {
+  if (!(err instanceof ApiError)) return fallback;
+  const errors = err.details.errors;
+  if (Array.isArray(errors)) {
+    const messages = errors
+      .map((e) => (typeof e === "object" && e !== null && "msg" in e ? String(e.msg) : null))
+      .filter((m): m is string => m !== null);
+    if (messages.length > 0) return messages.join(" ");
+  }
+  return err.message;
+}
+
 async function authedRequest(path: string, init?: RequestInit): Promise<Response> {
   const supabase = createClient();
   const {

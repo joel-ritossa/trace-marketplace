@@ -112,3 +112,14 @@ export function withDetail(node: TraceSpan, detail: SpanDetail): TraceSpan {
     output: findString(detail.attributes, tool ? TOOL_OUTPUT_KEYS : OUTPUT_KEYS),
   };
 }
+
+/** Node ids from the root down to (excluding) `id`, or null when absent —
+ *  what must be expanded for that node to show. */
+export function ancestorIds(roots: TraceSpan[], id: string): string[] | null {
+  for (const root of roots) {
+    if (root.id === id) return [];
+    const below = ancestorIds(root.children ?? [], id);
+    if (below !== null) return [root.id, ...below];
+  }
+  return null;
+}

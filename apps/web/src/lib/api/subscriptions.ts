@@ -99,7 +99,6 @@ export function cleanQuery(filters: TraceFilters): TraceFilters {
   for (const [key, value] of Object.entries(filters)) {
     if (value === undefined || value === "") continue;
     if (key === "has_errors" && value === false) continue;
-    if (Array.isArray(value) && value.length === 0) continue;
     query[key] = value;
   }
   return query as TraceFilters;

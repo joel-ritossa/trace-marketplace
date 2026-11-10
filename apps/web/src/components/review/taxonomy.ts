@@ -1,15 +1,19 @@
-// The closed label vocabularies (1_analysis.md), mirrored from
-// services/api/app/analysis/models.py — keep in sync. Descriptions are the
-// spec's one-liners, shown in the resolve form.
+// The closed label vocabularies (9_session-analysis.md), mirrored from
+// services/api/app/analysis/models.py and agent/models.py — keep in sync
+// (they are plain strings in the OpenAPI schema). Descriptions are the
+// spec's one-liners, shown in the relabel form.
 
 import type { Outcome } from "@/lib/api/traces";
 
 export const OUTCOMES: { value: Outcome; description: string }[] = [
   { value: "success", description: "The agent accomplished what was asked." },
+  { value: "partial", description: "The agent accomplished some of what was asked." },
   { value: "failure", description: "The agent did not accomplish what was asked." },
-  { value: "indeterminate", description: "This trace genuinely can’t be judged." },
+  { value: "indeterminate", description: "This genuinely can’t be judged." },
 ];
 
+// The agent's failure modes: models.py FAILURE_MODES minus "inconclusive"
+// (agent/models.py AGENT_FAILURE_MODES) — an empty set says "none identified".
 export const FAILURE_MODES: { value: string; description: string }[] = [
   { value: "plan_adherence_failure", description: "Skips steps or adds unnecessary actions (incl. loops/repetition)" },
   { value: "invention_of_information", description: "Fabricates or omits ungrounded facts" },
@@ -20,12 +24,11 @@ export const FAILURE_MODES: { value: string; description: string }[] = [
   { value: "intent_not_supported", description: "Action can’t be performed with available tools" },
   { value: "guardrails_triggered", description: "Blocked by safety/access policies" },
   { value: "system_failure", description: "Infra errors (timeouts, unreachable endpoints)" },
-  { value: "inconclusive", description: "Failed, cause unattributable" },
 ];
 
 // Display groups mirror models.py TASK_CATEGORY_GROUPS (1_analysis.md
 // Taxonomies). "other" is the judge's permanent escape hatch — listed for
-// filters/resolve, never offered in the task-scope picker.
+// filters/relabel, never offered in the task-scope picker.
 export const TASK_CATEGORY_GROUPS: { label: string; values: string[] }[] = [
   {
     label: "Software engineering",
@@ -104,9 +107,11 @@ export const TASK_CATEGORY_GROUPS: { label: string; values: string[] }[] = [
   { label: "Specialized", values: ["education_tutoring", "design_assets", "game_playing"] },
 ];
 
-export const TASK_CATEGORIES: string[] = [
-  ...TASK_CATEGORY_GROUPS.flatMap((group) => group.values),
-  "other",
+// Groups as the filter and relabel pickers show them: the scope groups plus
+// the escape hatch.
+export const TASK_CATEGORY_PICKER_GROUPS: { label: string; values: string[] }[] = [
+  ...TASK_CATEGORY_GROUPS,
+  { label: "Other", values: ["other"] },
 ];
 
 export function humanize(value: string): string {

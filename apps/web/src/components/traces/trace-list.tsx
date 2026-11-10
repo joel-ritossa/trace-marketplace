@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { Download, Sparkles } from "lucide-react";
 import {
+  LabelChips,
   LibraryBadge,
   NeedsReviewLink,
   TraceOutcome,
@@ -163,13 +164,23 @@ export function TraceList({
                   </p>
                 )}
               </td>
-              <td className="px-4 py-2.5">
+              <td className="max-w-72 px-4 py-2.5">
                 <span className="inline-flex items-center gap-2">
-                  <TraceOutcome trace={trace} placeholder={view !== "mine"} />
-                  {view === "mine" && trace.open_review_item_id !== null && (
-                    <NeedsReviewLink itemId={trace.open_review_item_id} />
+                  <TraceOutcome
+                    outcome={trace.outcome}
+                    status={trace.analysis_status}
+                    failed={trace.analysis_failed}
+                    placeholder={view !== "mine"}
+                  />
+                  {view === "mine" && trace.has_open_review_item && (
+                    <NeedsReviewLink traceId={trace.trace_id} />
                   )}
                 </span>
+                <LabelChips
+                  taskCategories={trace.task_categories}
+                  failureModes={trace.failure_modes}
+                  className="mt-1"
+                />
               </td>
               <MonoTd>{trace.span_count}</MonoTd>
               <MonoTd className={cn(trace.error_count > 0 && "text-error-deep")}>

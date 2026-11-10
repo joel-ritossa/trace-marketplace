@@ -9,7 +9,7 @@ import {
 import type { TraceFilters } from "@/lib/api/traces";
 import { cn } from "@/lib/utils";
 
-/** Active predicates rendered verbatim (`faithfulness ≥ 0.8 ×`) — the same
+/** Active predicates rendered verbatim (`tool calls ≥ 5 ×`) — the same
  *  artifact on search pages, subscription rows, and feed headers
  *  (4_pages.md). Read-only when onChange is omitted. */
 export function FilterChips({
@@ -27,7 +27,7 @@ export function FilterChips({
     <div className={cn("flex flex-wrap items-center gap-1.5", className)}>
       {chips.map((chip) => (
         <Chip
-          key={`${chip.key}:${chip.value ?? ""}:${chip.label}`}
+          key={chip.key}
           chip={chip}
           onRemove={onChange ? () => onChange(removeChip(filters, chip)) : undefined}
         />

@@ -1,62 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { ArrowLeft, ChevronDown } from "lucide-react";
 
 import { AnalysisSection } from "@/components/traces/analysis-section";
 import { TraceOutcome, VisibilityBadge } from "@/components/traces/badges";
 import { TraceHeaderActions, TraceMetaEditor } from "@/components/traces/trace-actions";
-import { TraceEvidence } from "@/components/traces/trace-evidence";
+import { TraceEvidence, type SpanFocus } from "@/components/traces/trace-evidence";
+import { useTraceDetail } from "@/components/traces/use-trace-detail";
 import { Button } from "@/components/ui/button";
-import { ApiError } from "@/lib/api/client";
-import { getTrace, type TraceDetail } from "@/lib/api/traces";
 import { formatDuration } from "@/lib/format";
-import { useRealtimeRefetch } from "@/lib/realtime";
 import { cn } from "@/lib/utils";
 
-type LoadState =
-  | { phase: "loading" }
-  | { phase: "not-found" }
-  | { phase: "error"; message: string }
-  | { phase: "ready"; trace: TraceDetail };
-
-export function TraceInspector({ traceId }: { traceId: string }) {
-  const [state, setState] = useState<LoadState>({ phase: "loading" });
+export function TraceInspector({ traceId, focusTurn }: { traceId: string; focusTurn?: number }) {
+  const { state, setTrace } = useTraceDetail(traceId);
   const [overviewOpen, setOverviewOpen] = useState(true);
-  const loadTicket = useRef(0);
-
-  const load = useCallback(async () => {
-    const ticket = ++loadTicket.current;
-    try {
-      const trace = await getTrace(traceId);
-      if (ticket === loadTicket.current) setState({ phase: "ready", trace });
-    } catch (err) {
-      if (ticket !== loadTicket.current) return;
-      if (err instanceof ApiError && err.status === 404) {
-        setState({ phase: "not-found" });
-      } else {
-        // A failed background refetch must not blank a rendered trace.
-        setState((prev) =>
-          prev.phase === "ready"
-            ? prev
-            : {
-                phase: "error",
-                message: err instanceof ApiError ? err.message : "Could not load the trace.",
-              },
-        );
-      }
-    }
-  }, [traceId]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  // Live invalidation: metadata/visibility edits land via "traces", an
-  // analysis verdict (header outcome badge) via "trace_analysis".
-  useRealtimeRefetch("traces", load);
-  useRealtimeRefetch("trace_analysis", load);
+  const [spanFocus, setSpanFocus] = useState<SpanFocus | null>(null);
 
   if (state.phase === "loading") {
     return (
@@ -89,10 +49,6 @@ export function TraceInspector({ traceId }: { traceId: string }) {
 
   const { trace } = state;
 
-  function onTraceChange(updated: TraceDetail) {
-    setState((prev) => (prev.phase === "ready" ? { ...prev, trace: updated } : prev));
-  }
-
   const meta: [string, string][] = [
     ["Duration", formatDuration(trace.duration_ms)],
     ["Spans", String(trace.span_count)],
@@ -122,9 +78,13 @@ export function TraceInspector({ traceId }: { traceId: string }) {
             />
             <span className="truncate">{trace.name}</span>
             <VisibilityBadge visibility={trace.visibility} />
-            <TraceOutcome trace={trace} />
+            <TraceOutcome
+              outcome={trace.analysis.session.outcome}
+              status={trace.analysis.session.status}
+              failed={trace.analysis.failed_reason !== null}
+            />
           </h1>
-          <TraceHeaderActions trace={trace} onChange={onTraceChange} />
+          <TraceHeaderActions trace={trace} onChange={setTrace} />
         </div>
       </div>
 
@@ -161,7 +121,7 @@ export function TraceInspector({ traceId }: { traceId: string }) {
                 </p>
               )}
               {trace.is_owner ? (
-                <TraceMetaEditor trace={trace} onChange={onTraceChange} />
+                <TraceMetaEditor trace={trace} onChange={setTrace} />
               ) : (
                 <>
                   {trace.description && (
@@ -182,12 +142,19 @@ export function TraceInspector({ traceId }: { traceId: string }) {
                 </>
               )}
             </div>
-            <AnalysisSection traceId={trace.trace_id} isOwner={trace.is_owner} />
+            <AnalysisSection
+              trace={trace}
+              onChange={setTrace}
+              onShowSpan={(sourceSpanId) =>
+                setSpanFocus((prev) => ({ sourceSpanId, seq: (prev?.seq ?? 0) + 1 }))
+              }
+              focusTurn={focusTurn}
+            />
           </div>
         )}
       </section>
 
-      <TraceEvidence key={trace.trace_id} traceId={trace.trace_id} />
+      <TraceEvidence key={trace.trace_id} traceId={trace.trace_id} focus={spanFocus} />
     </div>
   );
 }

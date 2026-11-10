@@ -1,18 +1,24 @@
 "use client";
 
-import { ChevronDown, Plus, Search, SlidersHorizontal } from "lucide-react";
+import { ChevronDown, Search, SlidersHorizontal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { FilterChips } from "@/components/traces/filter-chips";
 import {
   LOOP_KIND_VALUES,
   OUTCOME_VALUES,
-  PROVENANCE_VALUES,
+  csvValues,
   filterChips,
+  toCsv,
 } from "@/components/traces/filter-state";
-import { FAILURE_MODES, TASK_CATEGORIES, humanize } from "@/components/review/taxonomy";
+import { MultiSelect, type MultiSelectGroup } from "@/components/traces/multi-select";
+import {
+  FAILURE_MODES,
+  TASK_CATEGORY_PICKER_GROUPS,
+  humanize,
+} from "@/components/review/taxonomy";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { listMetricKeys, type TraceFilters, type TraceSort } from "@/lib/api/traces";
+import type { TraceFilters, TraceSort } from "@/lib/api/traces";
 import { cn } from "@/lib/utils";
 
 const SORT_OPTIONS: { value: TraceSort; label: string }[] = [
@@ -22,8 +28,8 @@ const SORT_OPTIONS: { value: TraceSort; label: string }[] = [
 ];
 
 const OUTCOME_OPTIONS = [...OUTCOME_VALUES];
-const PROVENANCE_OPTIONS = [...PROVENANCE_VALUES];
 const LOOP_KIND_OPTIONS = [...LOOP_KIND_VALUES];
+const FAILURE_MODE_GROUPS: MultiSelectGroup[] = [{ values: FAILURE_MODES.map((m) => m.value) }];
 
 const inputClass =
   "h-8 w-full rounded-md border bg-background px-2 text-xs text-foreground placeholder:text-muted-foreground";
@@ -110,22 +116,17 @@ function GteField({
   label,
   value,
   onChange,
-  step,
-  max,
 }: {
   label: string;
   value: number | undefined;
   onChange: (value: number | undefined) => void;
-  step?: string;
-  max?: number;
 }) {
   return (
     <Field label={`${label} ≥`}>
       <input
         type="number"
         min={0}
-        max={max}
-        step={step ?? "any"}
+        step={1}
         value={value ?? ""}
         onChange={(e) => {
           const parsed = Number(e.target.value);
@@ -379,34 +380,22 @@ export function FilterFields({
         onChange={(v) => set({ outcome: v || undefined })}
         options={OUTCOME_OPTIONS}
       />
-      <SelectField
-        label="Failure mode"
-        value={filters.failure_mode ?? ""}
-        onChange={(v) => set({ failure_mode: v || undefined })}
-        options={FAILURE_MODES.map((m) => m.value)}
-      />
-      <SelectField
-        label="Task category"
-        value={filters.task_category ?? ""}
-        onChange={(v) => set({ task_category: v || undefined })}
-        options={TASK_CATEGORIES}
-      />
-      <SelectField
-        label="Outcome provenance"
-        value={filters.outcome_provenance ?? ""}
-        onChange={(v) => set({ outcome_provenance: v || undefined })}
-        options={PROVENANCE_OPTIONS}
-      />
-      <GteField
-        label="Outcome confidence"
-        value={filters.outcome_confidence_gte}
-        onChange={(v) => set({ outcome_confidence_gte: v })}
-        step="0.05"
-        max={1}
-      />
-
-      <GroupLabel>Quality metrics</GroupLabel>
-      <MetricBuilder filters={filters} set={set} />
+      <Field label="Task category">
+        <MultiSelect
+          groups={TASK_CATEGORY_PICKER_GROUPS}
+          value={csvValues(filters.task_category)}
+          onChange={(v) => set({ task_category: toCsv(v) })}
+          placeholder="Any"
+        />
+      </Field>
+      <Field label="Failure mode">
+        <MultiSelect
+          groups={FAILURE_MODE_GROUPS}
+          value={csvValues(filters.failure_mode)}
+          onChange={(v) => set({ failure_mode: toCsv(v) })}
+          placeholder="Any"
+        />
+      </Field>
 
       <GroupLabel>Signals &amp; counts</GroupLabel>
       <Field label="Errors">
@@ -442,13 +431,6 @@ export function FilterFields({
         onChange={(v) => set({ truncation_suspected: v })}
       />
       <GteField
-        label="Category confidence"
-        value={filters.task_category_confidence_gte}
-        onChange={(v) => set({ task_category_confidence_gte: v })}
-        step="0.05"
-        max={1}
-      />
-      <GteField
         label="Duration (ms)"
         value={filters.duration_ms_gte}
         onChange={(v) => set({ duration_ms_gte: v })}
@@ -472,73 +454,7 @@ export function FilterFields({
   );
 }
 
-/** metric ≥ bound builder: keys enumerated from observed data, not
- *  hardcoded (4_pages.md); each entry becomes its own removable chip. */
-function MetricBuilder({
-  filters,
-  set,
-}: {
-  filters: TraceFilters;
-  set: (patch: Partial<TraceFilters>) => void;
-}) {
-  const [metricKeys, setMetricKeys] = useState<string[]>([]);
-  const [draft, setDraft] = useState({ name: "", bound: "" });
-
-  useEffect(() => {
-    listMetricKeys()
-      .then(setMetricKeys)
-      .catch(() => setMetricKeys([]));
-  }, []);
-
-  const add = () => {
-    if (!draft.name || !draft.bound) return;
-    const entry = `${draft.name}:${draft.bound}`;
-    const metric = filters.metric ?? [];
-    if (!metric.includes(entry)) set({ metric: [...metric, entry] });
-    setDraft({ name: "", bound: "" });
-  };
-
-  return (
-    <div className="col-span-2 flex items-end gap-1.5 sm:col-span-3">
-      <Field label="Metric">
-        <select
-          value={draft.name}
-          onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-          className={cn(inputClass, draft.name === "" && "text-muted-foreground")}
-        >
-          <option value="">Choose a metric</option>
-          {metricKeys.map((key) => (
-            <option key={key} value={key}>
-              {humanize(key)}
-            </option>
-          ))}
-        </select>
-      </Field>
-      <Field label="≥ bound">
-        <input
-          value={draft.bound}
-          onChange={(e) => setDraft({ ...draft, bound: e.target.value.trim() })}
-          onKeyDown={(e) => e.key === "Enter" && add()}
-          placeholder="0.8 or true"
-          className={inputClass}
-        />
-      </Field>
-      <button
-        type="button"
-        aria-label="Add metric filter"
-        onClick={add}
-        disabled={!draft.name || !draft.bound}
-        className="flex h-8 shrink-0 items-center rounded-md border bg-background px-2 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
-      >
-        <Plus className="size-3.5" />
-      </button>
-    </div>
-  );
-}
-
 /** True when any filter is active — drives the no-results-for-query state. */
 export function hasActiveFilters(filters: TraceFilters): boolean {
-  return Object.values(filters).some(
-    (v) => v !== undefined && v !== false && (!Array.isArray(v) || v.length > 0),
-  );
+  return Object.values(filters).some((v) => v !== undefined && v !== false);
 }

@@ -1,28 +1,29 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { CircleHelp, Tags } from "lucide-react";
-import { BehaviorSummary } from "@/components/traces/behavior-summary";
-import { OutcomeBadge, SKIP_REASON_COPY } from "@/components/traces/badges";
-import { Button } from "@/components/ui/button";
-import { ApiError } from "@/lib/api/client";
-import { createReviewItem } from "@/lib/api/review";
-import { useRealtimeRefetch } from "@/lib/realtime";
+import { useEffect, useState } from "react";
+import { CircleHelp, Play, UserCheck } from "lucide-react";
 import {
-  getTraceAnalysis,
-  type LabelValue,
+  LabelChip,
+  LabelChips,
+  OutcomeBadge,
+  SKIP_REASON_COPY,
+} from "@/components/traces/badges";
+import { BusyLabel } from "@/components/traces/bulk-bar";
+import { RelabelTurn } from "@/components/traces/relabel-turn";
+import { Button } from "@/components/ui/button";
+import { errorText } from "@/lib/api/client";
+import {
+  analyzeTrace,
+  type AnalysisSignals,
   type TraceAnalysis,
-  type Outcome,
+  type TraceDetail,
+  type TurnAnalysis,
 } from "@/lib/api/traces";
+import { formatDate } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
-type LoadState =
-  | { phase: "loading" }
-  | { phase: "error"; message: string }
-  | { phase: "ready"; analysis: TraceAnalysis };
-
-const SIGNAL_LABELS: [keyof NonNullable<TraceAnalysis["signals"]>, string][] = [
+const SIGNAL_LABELS: [keyof AnalysisSignals, string][] = [
   ["has_retry_loop", "Retry loop"],
   ["loop_kind", "Loop kind"],
   ["recovered_from_error", "Recovered from error"],
@@ -37,169 +38,99 @@ function formatSignal(value: boolean | number | string | null): string {
   return String(value);
 }
 
-function LabelRow({ name, label }: { name: string; label: LabelValue | null }) {
-  return (
-    <div>
-      <dt className="text-xs text-muted-foreground">{name}</dt>
-      <dd className="mt-0.5 text-sm">
-        {label ? (
-          name === "Outcome" ? (
-            <OutcomeBadge
-              outcome={label.value as Outcome}
-              confidence={label.confidence}
-              provenance={label.provenance}
-            />
-          ) : (
-            <span className="inline-flex items-center gap-1.5">
-              <span className="font-medium">{label.value.replaceAll("_", " ")}</span>
-              {label.confidence !== null && (
-                <span className="font-mono text-xs text-muted-foreground">
-                  {label.confidence.toFixed(2)}
-                </span>
-              )}
-            </span>
-          )
-        ) : (
-          <span className="text-muted-foreground">—</span>
-        )}
-        {label && (
-          <span className="ml-1.5 text-xs text-muted-foreground">{label.provenance}</span>
-        )}
-      </dd>
-    </div>
-  );
+function plural(n: number, word: string): string {
+  return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
 
-/** The trace-detail Analysis section (4_pages.md): labels → behavior
- *  summary → reasoning → signals → metric scores, audit behind a
- *  disclosure. Always renders, with the four honest states — never a lie. */
-export function AnalysisSection({ traceId, isOwner }: { traceId: string; isOwner: boolean }) {
-  const [state, setState] = useState<LoadState>({ phase: "loading" });
-  const loadTicket = useRef(0);
+/** The trace-detail Analysis section (9_session-analysis.md): the session
+ *  verdict card over one row per judged turn. Labels link to their evidence
+ *  spans (`onShowSpan`, by source span id); owners relabel per turn. Always
+ *  renders, with honest states — never a lie. */
+export function AnalysisSection({
+  trace,
+  onChange,
+  onShowSpan,
+  focusTurn,
+}: {
+  trace: TraceDetail;
+  onChange: (trace: TraceDetail) => void;
+  onShowSpan: (sourceSpanId: string) => void;
+  focusTurn?: number;
+}) {
+  const { analysis } = trace;
+  const onAnalysisChange = (next: TraceAnalysis) => onChange({ ...trace, analysis: next });
 
-  const load = useCallback(async () => {
-    const ticket = ++loadTicket.current;
-    try {
-      const analysis = await getTraceAnalysis(traceId);
-      if (ticket === loadTicket.current) setState({ phase: "ready", analysis });
-    } catch (err) {
-      if (ticket !== loadTicket.current) return;
-      // A failed background refetch must not blank a rendered analysis.
-      setState((prev) =>
-        prev.phase === "ready"
-          ? prev
-          : {
-              phase: "error",
-              message: err instanceof ApiError ? err.message : "Could not load the analysis.",
-            },
-      );
-    }
-  }, [traceId]);
-
+  // Review links land on one turn: bring its row into view once it exists.
+  const focusPresent = analysis.turns.some((t) => t.turn_index === focusTurn);
   useEffect(() => {
-    void load();
-  }, [load]);
-
-  // Live invalidation: the verdict row lands via "trace_analysis"; "traces"
-  // catches state flips the row itself can't signal (attempts, re-ingest).
-  useRealtimeRefetch("trace_analysis", load);
-  useRealtimeRefetch("traces", load);
+    if (focusPresent) {
+      document.getElementById(`turn-${focusTurn}`)?.scrollIntoView({ block: "center" });
+    }
+  }, [focusPresent, focusTurn]);
 
   return (
-    <section className="rounded-lg border bg-background px-4 py-3">
-      <div className="flex items-center justify-between gap-4">
-        <h2 className="text-sm font-semibold">Analysis</h2>
-        {state.phase === "ready" && isOwner && (
-          <RelabelEntry traceId={traceId} analysis={state.analysis} />
-        )}
-      </div>
-      <div className="mt-3">
-        {state.phase === "loading" && (
-          <p className="text-sm text-muted-foreground">Loading analysis…</p>
-        )}
-        {state.phase === "error" && <p className="text-sm text-error-deep">{state.message}</p>}
-        {state.phase === "ready" && <Body analysis={state.analysis} isOwner={isOwner} />}
-      </div>
+    <section className="flex flex-col gap-4 rounded-lg border bg-background px-4 py-3">
+      <SessionCard trace={trace} />
+      {analysis.turns.length > 0 && (
+        <div>
+          <h3 className="text-xs text-muted-foreground">Turns</h3>
+          <ol className="mt-1 max-h-[32rem] divide-y overflow-y-auto">
+            {analysis.turns.map((turn) => (
+              <TurnRow
+                key={turn.turn_index}
+                traceId={trace.trace_id}
+                turn={turn}
+                isOwner={trace.is_owner}
+                focused={turn.turn_index === focusTurn}
+                onShowSpan={onShowSpan}
+                onAnalysisChange={onAnalysisChange}
+              />
+            ))}
+          </ol>
+        </div>
+      )}
     </section>
   );
 }
 
-/** Owner-initiated relabel entry (4_pages.md): routes to the resolve view —
- *  an open item links straight there, otherwise one is self-created. Only
- *  offered once analysis exists (the resolve path writes into its row). */
-function RelabelEntry({ traceId, analysis }: { traceId: string; analysis: TraceAnalysis }) {
-  const router = useRouter();
-  const [creating, setCreating] = useState(false);
-  const [failed, setFailed] = useState(false);
+function SessionCard({ trace }: { trace: TraceDetail }) {
+  const { session, turns, failed_reason } = trace.analysis;
+  const judged = turns.filter((t) => t.outcome !== null).length;
+  const uncertain = turns.filter((t) => t.uncertain !== null).length;
 
-  if (analysis.open_review_item_id !== null) {
-    return (
-      <Link
-        href={`/review/${analysis.open_review_item_id}`}
-        className="inline-flex items-center gap-1 text-xs text-link-deep hover:underline"
-      >
-        <CircleHelp className="size-3" /> open review item
-      </Link>
-    );
-  }
-  if (analysis.analysis_state !== "complete" && analysis.analysis_state !== "skipped") {
-    return null;
-  }
   return (
-    <span className="inline-flex items-center gap-2">
-      {failed && <span className="text-xs text-error-deep">could not start — try again</span>}
-      <Button
-        size="sm"
-        variant="ghost"
-        disabled={creating}
-        className="h-7 px-2 text-xs text-muted-foreground"
-        onClick={async () => {
-          setCreating(true);
-          setFailed(false);
-          try {
-            const item = await createReviewItem(traceId);
-            router.push(`/review/${item.review_item_id}`);
-          } catch {
-            setFailed(true);
-            setCreating(false);
-          }
-        }}
-      >
-        <Tags data-slot="icon" /> Relabel
-      </Button>
-    </span>
-  );
-}
-
-function Body({ analysis, isOwner }: { analysis: TraceAnalysis; isOwner: boolean }) {
-  if (analysis.analysis_state === "pending") {
-    return <p className="text-sm text-muted-foreground">Analysis pending.</p>;
-  }
-  if (analysis.analysis_state === "failed") {
-    return (
-      <div>
-        <p className="text-sm font-medium text-error-deep">Analysis failed</p>
-        {analysis.failed_reason && (
-          <p className="mt-1 font-mono text-xs text-muted-foreground">{analysis.failed_reason}</p>
-        )}
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center justify-between gap-4">
+        <h2 className="flex items-center gap-2 text-sm font-semibold">
+          Analysis
+          {session.outcome && <OutcomeBadge outcome={session.outcome} />}
+        </h2>
+        {trace.is_owner && <AnalyzeNow trace={trace} />}
       </div>
-    );
-  }
 
-  const skipped = analysis.analysis_state === "skipped";
-  // Human-provenance labels survive a machine rewrite even when the LLM
-  // skipped (relabel → re-ingest on a keyless stack), so the grid renders
-  // whenever any label exists — matching the list badge.
-  const hasLabels =
-    analysis.labels.outcome !== null ||
-    analysis.labels.failure_mode !== null ||
-    analysis.labels.task_category !== null;
-  return (
-    <div className="flex flex-col gap-4">
-      {skipped && analysis.skip_reason && (
+      {failed_reason !== null && (
+        <div>
+          <p className="text-sm font-medium text-error-deep">The last analysis run failed</p>
+          <p className="mt-1 font-mono text-xs text-muted-foreground">{failed_reason}</p>
+        </div>
+      )}
+
+      {session.status === "pending" && (
         <p className="text-sm text-muted-foreground">
-          {SKIP_REASON_COPY[analysis.skip_reason]}
-          {analysis.skip_reason === "owner_opt_out" && isOwner && (
+          No turns judged yet. Each turn is judged once the next one starts; the last turn and the
+          session verdict wait until the session has gone idle.
+        </p>
+      )}
+      {session.status === "in_progress" && (
+        <p className="text-sm text-muted-foreground">
+          {judged} of {plural(session.turn_count, "turn")} judged — the session verdict is written
+          once the session goes idle.
+        </p>
+      )}
+      {session.status === "skipped" && session.skip_reason && (
+        <p className="text-sm text-muted-foreground">
+          {SKIP_REASON_COPY[session.skip_reason]}
+          {session.skip_reason === "owner_opt_out" && trace.is_owner && (
             <>
               {" — "}
               <Link href="/settings" className="underline hover:text-foreground">
@@ -210,83 +141,189 @@ function Body({ analysis, isOwner }: { analysis: TraceAnalysis; isOwner: boolean
           . Deterministic signals are still computed.
         </p>
       )}
-
-      {(!skipped || hasLabels) && (
-        <dl className="grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-3">
-          <LabelRow name="Outcome" label={analysis.labels.outcome} />
-          <LabelRow name="Failure mode" label={analysis.labels.failure_mode} />
-          <LabelRow name="Task category" label={analysis.labels.task_category} />
-        </dl>
+      {trace.is_owner && trace.analysis.open_review_item_id !== null && uncertain > 0 && (
+        <p className="flex items-center gap-1.5 text-sm text-warning-deep">
+          <CircleHelp className="size-3.5 shrink-0" />
+          The judge was uncertain about {plural(uncertain, "turn")} — relabeling them improves this
+          trace’s labels.
+        </p>
       )}
 
-      <BehaviorSummary summary={analysis.summary} />
-
-      {analysis.reasoning && (
+      {session.goal && (
         <div>
-          <h3 className="text-xs text-muted-foreground">Judge reasoning</h3>
-          <p className="mt-1 text-sm">{analysis.reasoning}</p>
+          <h3 className="text-xs text-muted-foreground">Goal</h3>
+          <p className="mt-0.5 text-sm">{session.goal}</p>
         </div>
       )}
+      {session.summary && (
+        <div>
+          <h3 className="text-xs text-muted-foreground">What happened</h3>
+          <p className="mt-0.5 text-sm">{session.summary}</p>
+        </div>
+      )}
+      <LabelChips taskCategories={session.task_categories} failureModes={session.failure_modes} />
 
-      {analysis.signals && (
+      {session.signals && (
         <div>
           <h3 className="text-xs text-muted-foreground">Signals</h3>
           <dl className="mt-1 grid grid-cols-2 gap-x-6 gap-y-1.5 sm:grid-cols-3">
             {SIGNAL_LABELS.map(([key, label]) => (
               <div key={key} className="flex items-baseline justify-between gap-2 sm:block">
                 <dt className="text-xs text-muted-foreground">{label}</dt>
-                <dd className="font-mono text-xs">{formatSignal(analysis.signals![key])}</dd>
+                <dd className="font-mono text-xs">{formatSignal(session.signals![key])}</dd>
               </div>
             ))}
           </dl>
         </div>
       )}
 
-      {analysis.metric_scores && Object.keys(analysis.metric_scores).length > 0 && (
-        <div>
-          <h3 className="text-xs text-muted-foreground">Metric scores</h3>
-          <dl className="mt-1 grid grid-cols-2 gap-x-6 gap-y-1.5 sm:grid-cols-3">
-            {Object.entries(analysis.metric_scores).map(([name, value]) => (
-              <div key={name} className="flex items-baseline justify-between gap-2 sm:block">
-                <dt className="text-xs text-muted-foreground">{name}</dt>
-                <dd className="font-mono text-xs">
-                  {typeof value === "boolean" ? (value ? "yes" : "no") : value.toFixed(2)}
-                </dd>
-              </div>
-            ))}
-          </dl>
-        </div>
-      )}
-
-      {analysis.audit.analyzers.length > 0 && (
-        <details className="text-sm">
-          <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground">
-            Audit details
-          </summary>
-          <div className="mt-2 flex flex-col gap-2">
-            {analysis.audit.analyzers.map((a) => (
-              <div key={a.analyzer} className="rounded-md border px-3 py-2">
-                <p className="font-mono text-xs">
-                  {a.analyzer} · v{a.analyzer_version}
-                  {a.model_id && ` · ${a.model_id}`}
-                  {a.confidence !== null && ` · confidence ${a.confidence.toFixed(2)}`}
-                  {a.rendering_truncated && " · rendering truncated"}
-                </p>
-                {a.votes && a.votes.length > 0 && (
-                  <ul className="mt-1.5 flex flex-col gap-1">
-                    {a.votes.map((vote, i) => (
-                      <li key={i} className="font-mono text-xs text-muted-foreground">
-                        {String(vote.call)} → {String(vote.value)}
-                        {vote.reasoning ? ` — ${String(vote.reasoning)}` : ""}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            ))}
-          </div>
-        </details>
+      {session.analyzed_at && (
+        <p className="text-xs text-muted-foreground">
+          Session verdict written {formatDate(session.analyzed_at)}
+        </p>
       )}
     </div>
+  );
+}
+
+/** Owner: finalize now (POST /analyze, 202). Shown while there is something
+ *  to finalize or the last run failed; stays busy until the realtime refetch
+ *  shows a new roll-up, a skip, or a new failure. */
+function AnalyzeNow({ trace }: { trace: TraceDetail }) {
+  const { session, failed_reason } = trace.analysis;
+  const [requested, setRequested] = useState<{
+    analyzedAt: string | null;
+    failedReason: string | null;
+  } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const settled =
+    requested !== null &&
+    (session.status === "skipped" ||
+      (session.status === "final" && session.analyzed_at !== requested.analyzedAt) ||
+      (failed_reason !== null && failed_reason !== requested.failedReason));
+  useEffect(() => {
+    if (settled) setRequested(null);
+  }, [settled]);
+
+  const offered =
+    session.status === "pending" || session.status === "in_progress" || failed_reason !== null;
+  if (!offered && requested === null) return null;
+
+  async function onAnalyze() {
+    setError(null);
+    setRequested({ analyzedAt: session.analyzed_at, failedReason: failed_reason });
+    try {
+      await analyzeTrace(trace.trace_id);
+    } catch (err) {
+      setRequested(null);
+      setError(errorText(err, "Could not start the analysis — try again."));
+    }
+  }
+
+  const running = requested !== null && !settled;
+  return (
+    <span className="inline-flex items-center gap-2">
+      {error && <span className="text-xs text-error-deep">{error}</span>}
+      <Button size="sm" variant="outline" disabled={running} onClick={onAnalyze}>
+        <BusyLabel busy={running}>
+          {!running && <Play data-slot="icon" />}
+          {running ? "Analyzing…" : "Analyze now"}
+        </BusyLabel>
+      </Button>
+    </span>
+  );
+}
+
+function TurnRow({
+  traceId,
+  turn,
+  isOwner,
+  focused,
+  onShowSpan,
+  onAnalysisChange,
+}: {
+  traceId: string;
+  turn: TurnAnalysis;
+  isOwner: boolean;
+  focused: boolean;
+  onShowSpan: (sourceSpanId: string) => void;
+  onAnalysisChange: (analysis: TraceAnalysis) => void;
+}) {
+  const categories = turn.labels.filter((l) => l.field === "task_category");
+  const failures = turn.labels.filter((l) => l.field === "failure_mode");
+
+  return (
+    <li
+      id={`turn-${turn.turn_index}`}
+      className={cn("flex flex-col gap-1.5 py-2.5", focused && "-mx-2 rounded-md bg-secondary px-2")}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-mono text-xs text-muted-foreground">Turn {turn.turn_index + 1}</span>
+        {turn.outcome ? (
+          <OutcomeBadge outcome={turn.outcome} />
+        ) : (
+          <span className="text-xs text-muted-foreground">not judged</span>
+        )}
+        {turn.provenance === "human" && (
+          <span
+            className="inline-flex items-center gap-1 text-xs text-muted-foreground"
+            title="Labeled by the owner; never re-judged"
+          >
+            <UserCheck className="size-3" /> human
+          </span>
+        )}
+        {isOwner && (
+          <span className="ml-auto">
+            <RelabelTurn traceId={traceId} turn={turn} onSaved={onAnalysisChange} />
+          </span>
+        )}
+      </div>
+      {turn.uncertain && (
+        <p className="flex items-start gap-1.5 text-xs text-warning-deep">
+          <CircleHelp className="mt-px size-3 shrink-0" />
+          <span>Uncertain: {turn.uncertain}</span>
+        </p>
+      )}
+      {turn.summary && <p className="text-sm">{turn.summary}</p>}
+      {categories.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {categories.map((label) => (
+            <LabelChip key={label.value} field="task_category" value={label.value} />
+          ))}
+        </div>
+      )}
+      {failures.length > 0 && (
+        <ul className="flex flex-col gap-1">
+          {failures.map((label) => (
+            <li key={label.value} className="flex flex-wrap items-baseline gap-x-1.5 gap-y-1">
+              <LabelChip
+                field="failure_mode"
+                value={label.value}
+                title={label.span_ids.length > 0 ? "Show the evidence span" : undefined}
+                onClick={
+                  label.span_ids.length > 0 ? () => onShowSpan(label.span_ids[0]) : undefined
+                }
+              />
+              {label.reason && (
+                <span className="text-xs text-muted-foreground">{label.reason}</span>
+              )}
+              {label.span_ids.length > 1 &&
+                label.span_ids.map((id, i) => (
+                  <button
+                    key={id}
+                    type="button"
+                    title={id}
+                    onClick={() => onShowSpan(id)}
+                    className="font-mono text-xs text-link-deep hover:underline"
+                  >
+                    span {i + 1}
+                  </button>
+                ))}
+            </li>
+          ))}
+        </ul>
+      )}
+    </li>
   );
 }

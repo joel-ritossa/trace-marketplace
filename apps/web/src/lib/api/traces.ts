@@ -1,6 +1,7 @@
 import { ApiError, apiDownload, apiFetch, apiSend } from "@/lib/api/client";
 
-// Types mirror services/api/app/schemas/trace.py and span.py — keep in sync.
+// Types mirror services/api/app/schemas/{trace,span,analysis}.py — keep in sync
+// (checked against the FastAPI OpenAPI schema; there is no generator).
 
 export type TraceStatus = "ok" | "error";
 export type SpanKind = "llm" | "agent" | "tool" | "chain" | "retriever" | "embedding" | "other";
@@ -9,17 +10,20 @@ export type TraceSort = "created_at" | "duration_ms" | "span_count";
 export type TraceScope = "mine" | "marketplace" | "acquired";
 export type TraceVisibility = "private" | "listed";
 
-// Analysis vocabulary (schemas/analysis.py).
-export type Outcome = "success" | "failure" | "indeterminate";
-export type Provenance = "machine" | "human_confirmed" | "human";
-export type AnalysisState = "pending" | "complete" | "skipped" | "failed";
+// Analysis vocabulary (schemas/analysis.py, app/analysis/models.py).
+export type Outcome = "success" | "partial" | "failure" | "indeterminate";
+export type Provenance = "machine" | "human";
+export type AnalysisStatus = "pending" | "in_progress" | "final" | "skipped";
 export type SkipReason = "not_configured" | "owner_opt_out";
 
 type AnalysisFields = {
+  // Session roll-up labels (9_session-analysis.md).
   outcome: Outcome | null;
-  outcome_confidence: number | null;
-  outcome_provenance: Provenance | null;
-  analysis_state: AnalysisState;
+  task_categories: string[];
+  failure_modes: string[];
+  analysis_status: AnalysisStatus;
+  // An open analyze dead letter: the last run failed and will not retry.
+  analysis_failed: boolean;
   // Owner-only (A3): always false/null on a non-owner's card.
   has_open_review_item: boolean;
   open_review_item_id: string | null;
@@ -82,50 +86,71 @@ export type TraceDetail = {
   acquired: boolean;
   can_download: boolean;
   total_tokens: number | null;
-} & AnalysisFields;
+  analysis: TraceAnalysis;
+};
 
-export type LabelValue = {
+export type AnalysisSignals = {
+  has_retry_loop: boolean | null;
+  loop_kind: string | null;
+  recovered_from_error: boolean | null;
+  truncation_suspected: boolean | null;
+  llm_call_count: number | null;
+  tool_call_count: number | null;
+};
+
+export type TurnLabel = {
+  field: "task_category" | "failure_mode";
   value: string;
-  confidence: number | null;
+  // source_span_id of the spans that show it (failure modes).
+  span_ids: string[];
+  reason: string | null;
+};
+
+export type TurnAnalysis = {
+  turn_index: number;
+  // Null = not judged (LLM analysis skipped).
+  outcome: Outcome | null;
+  summary: string | null;
+  // Why the agent could not judge confidently; null when it could.
+  uncertain: string | null;
   provenance: Provenance;
+  signals: AnalysisSignals;
+  labels: TurnLabel[];
+};
+
+export type SessionAnalysis = {
+  status: AnalysisStatus;
+  // Every turn in the trace, judged or not.
+  turn_count: number;
+  skip_reason: SkipReason | null;
+  goal: string | null;
+  outcome: Outcome | null;
+  summary: string | null;
+  task_categories: string[];
+  failure_modes: string[];
+  analyzed_at: string | null;
+  signals: AnalysisSignals | null;
 };
 
 export type TraceAnalysis = {
-  analysis_state: AnalysisState;
-  skip_reason: SkipReason | null;
+  session: SessionAnalysis;
+  turns: TurnAnalysis[];
   failed_reason: string | null;
-  labels: {
-    outcome: LabelValue | null;
-    failure_mode: LabelValue | null;
-    task_category: LabelValue | null;
-  };
-  summary: { gist: string | null; steps: string[] } | null;
-  reasoning: string | null;
-  signals: {
-    has_retry_loop: boolean | null;
-    loop_kind: string | null;
-    recovered_from_error: boolean | null;
-    truncation_suspected: boolean | null;
-    llm_call_count: number | null;
-    tool_call_count: number | null;
-  } | null;
-  metric_scores: Record<string, number | boolean> | null;
+  // Owner-only: null for non-owners and when nothing is open.
   open_review_item_id: string | null;
-  audit: {
-    analyzers: {
-      analyzer: string;
-      analyzer_version: string;
-      model_id: string | null;
-      confidence: number | null;
-      votes: Record<string, unknown>[] | null;
-      rendering_truncated: boolean | null;
-    }[];
-  };
+};
+
+// PUT /v1/traces/{id}/turns/{turn_index}/labels: the turn's full label set.
+export type TurnLabelsRequest = {
+  outcome: Outcome;
+  task_categories: string[];
+  failure_modes: { value: string; span_ids?: string[]; reason?: string | null }[];
 };
 
 // The full filter vocabulary (schemas/trace.py TraceFilterQuery) — also the
 // subscription query language. Equality fields take comma-separated values
-// (OR within a field); metric entries are "<name>:<min>" or "<name>:true".
+// (OR within a field; task_category / failure_mode match when the session
+// set contains any).
 export type TraceFilters = {
   q?: string;
   provider?: string;
@@ -138,19 +163,13 @@ export type TraceFilters = {
   failure_mode?: string;
   task_category?: string;
   loop_kind?: string;
-  outcome_provenance?: string;
-  failure_mode_provenance?: string;
-  task_category_provenance?: string;
   has_retry_loop?: boolean;
   recovered_from_error?: boolean;
   truncation_suspected?: boolean;
-  outcome_confidence_gte?: number;
-  task_category_confidence_gte?: number;
   duration_ms_gte?: number;
   total_tokens_gte?: number;
   llm_call_count_gte?: number;
   tool_call_count_gte?: number;
-  metric?: string[];
 };
 
 /** Filter params for a request or URL. Booleans: has_errors only filters
@@ -160,11 +179,7 @@ export function filterParams(filters: TraceFilters): URLSearchParams {
   for (const [key, value] of Object.entries(filters)) {
     if (value === undefined || value === "") continue;
     if (key === "has_errors" && value === false) continue;
-    if (Array.isArray(value)) {
-      for (const item of value) params.append(key, item);
-    } else {
-      params.set(key, String(value));
-    }
+    params.set(key, String(value));
   }
   return params;
 }
@@ -231,11 +246,6 @@ export async function listTraces(
   params.set("limit", String(limit));
   params.set("offset", String(offset));
   return apiFetch<TraceList>(`/v1/traces?${params}`);
-}
-
-export async function listMetricKeys(): Promise<string[]> {
-  const { keys } = await apiFetch<{ keys: string[] }>("/v1/traces/metric-keys");
-  return keys;
 }
 
 // Bulk operations (3_api.md): ≤100 ids, itemized results — partial success
@@ -311,8 +321,21 @@ export async function getSimilarTraces(
   return apiFetch<SimilarTraces>(`/v1/traces/${traceId}/similar${qs}`);
 }
 
-export async function getTraceAnalysis(traceId: string): Promise<TraceAnalysis> {
-  return apiFetch<TraceAnalysis>(`/v1/traces/${traceId}/analysis`);
+/** Owner: judge what's left and roll up now, whatever the idle state (202). */
+export async function analyzeTrace(traceId: string): Promise<void> {
+  await apiSend(`/v1/traces/${traceId}/analyze`, { method: "POST" });
+}
+
+/** Owner relabel of one turn; returns the refreshed analysis block. */
+export async function relabelTurn(
+  traceId: string,
+  turnIndex: number,
+  body: TurnLabelsRequest,
+): Promise<TraceAnalysis> {
+  return apiFetch<TraceAnalysis>(`/v1/traces/${traceId}/turns/${turnIndex}/labels`, {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
 }
 
 export async function updateTrace(traceId: string, update: TraceUpdate): Promise<TraceDetail> {
