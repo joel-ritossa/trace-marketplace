@@ -15,9 +15,12 @@ the parser absorbs (shapes verified against real logs):
   the session) parse as their own event stream and nest under the tool call
   that spawned them, linked by the tool result's `toolUseResult.agentId`.
   Unlinked sidechains (older logs interleave them without an `agentId`) and
-  meta records (`isMeta`, compaction summaries) are skipped. User records whose
-  `origin.kind` is not `human` (task notifications, peer messages) stay
-  model input but never open a turn.
+  meta records (`isMeta`, compaction summaries) are skipped, except meta
+  peer messages and scheduled triggers, which still prompt the model.
+- A turn opens when something asks the agent to act: a human ask
+  (`turn.origin` `human`) or an outside event (`automated`; see
+  `_prompt_origin`). Background work reporting back, interrupt markers and
+  local slash commands stay model input but never open or title a turn.
 - Anthropic usage splits input across `input_tokens` +
   `cache_read_input_tokens` + `cache_creation_input_tokens`; all three count
   toward the call's input.
@@ -31,11 +34,13 @@ Agent name is `claude` when any record carries a timestamp, else `cursor`.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from app.importers.sessions.turns import (
     Event,
     SessionBuilder,
+    clean_user_text,
     flatten,
     llm_attrs,
     to_nanos,
@@ -46,6 +51,23 @@ from app.importers.sessions.turns import (
 # meta/compaction records Claude Code writes into the same session file.
 _SKIP_FLAGS = ("isSidechain", "isMeta", "isCompactSummary", "isVisibleInTranscriptOnly")
 _SUBAGENT_SKIP = tuple(f for f in _SKIP_FLAGS if f != "isSidechain")
+# Meta records that still prompt the model and can start a work cycle.
+_META_PROMPTS = ("peer", "scheduled")
+# Transcript markers and subagent hand-backs: never an ask (side-session
+# reports are matched by their event tag, which follows the reminders). Local slash
+# commands lead with <command-name>; skill commands (real asks) lead with
+# <command-message>.
+_PEER_PREFIX = "Another Claude session sent a message:"
+_NOT_A_PROMPT = re.compile(
+    r"\s*(?:\[Request interrupted by user|<local-command-|<command-name>"
+    rf"|{_PEER_PREFIX}\s*<agent-message\b)"
+)
+_SIDE_REPORT = "<side-sessions-event>"
+_EVENT_LABELS = {
+    "ci-monitor-event": "CI event",
+    "cross-session-message": "Session message",
+}
+_EVENT_TAG = re.compile(rf"</?({'|'.join(_EVENT_LABELS)})\b[^>]*>")
 
 
 def matches(records: list[dict]) -> bool:
@@ -56,12 +78,39 @@ def matches(records: list[dict]) -> bool:
     )
 
 
-def _is_injected(record: dict) -> bool:
-    """Harness-produced user record (task notifications, peer messages):
-    model input, but not a human ask, so it never opens a turn. Logs without
-    `origin` count every user record as human."""
+def _kind(record: dict) -> str | None:
+    """Who produced a user record, as Claude Code tags it (`origin.kind`, or
+    `turnOrigin` for scheduled triggers); None when untagged."""
     origin = record.get("origin")
-    return isinstance(origin, dict) and origin.get("kind", "human") != "human"
+    if isinstance(origin, dict):
+        return origin.get("kind", "human")
+    return "scheduled" if record.get("turnOrigin") == "scheduled" else None
+
+
+def _prompt_origin(record: dict, text: str, origin_tagged: bool) -> str | None:
+    """`human`, `automated` (an outside event asking the agent to act: CI
+    monitor, cross-session messages, scheduled triggers, a
+    prompt from the session that started this one), or None for model input
+    that asks nothing new: the agent's own background work reporting back
+    (task notifications, subagent hand-backs, side-session reports),
+    interrupt markers, local slash commands. Logs that carry `origin` tag
+    every human ask, so an untagged record there is harness-produced; logs
+    without it count every user record as human."""
+    kind = _kind(record)
+    if kind == "task-notification" or _NOT_A_PROMPT.match(text) or _SIDE_REPORT in text:
+        return None
+    if kind == "human" or (kind is None and not origin_tagged):
+        return "human"
+    return "automated"
+
+
+def _event_ask(text: str) -> str:
+    """An outside event read as an ask: its own text, labelled by its tag."""
+    text = clean_user_text(text).removeprefix(_PEER_PREFIX).strip()
+    tag = _EVENT_TAG.search(text)
+    if tag is None:
+        return text
+    return f"{_EVENT_LABELS[tag.group(1)]}: {_EVENT_TAG.sub(' ', text).strip()}"
 
 
 def _block_text(content: Any) -> str:
@@ -118,6 +167,7 @@ def _parse_stream(
 ) -> SessionBuilder:
     if builder.agent == "claude":
         builder.provider = "anthropic"
+    origin_tagged = any(isinstance(r.get("origin"), dict) for r in records)
     last_user: str | None = None
     open_tools: dict[str, dict] = {}
     response: dict | None = None  # assistant API response being accumulated
@@ -139,7 +189,7 @@ def _parse_stream(
         response = None
 
     for record in records:
-        if any(record.get(flag) for flag in skip_flags):
+        if any(record.get(flag) for flag in skip_flags) and _kind(record) not in _META_PROMPTS:
             continue
         role = record.get("type") or record.get("role")
         message = record.get("message") or {}
@@ -150,8 +200,11 @@ def _parse_stream(
             text = _block_text(content)
             if text:
                 last_user = text
-                if not _is_injected(record):
+                origin = _prompt_origin(record, text, origin_tagged)
+                if origin == "human":
                     builder.user_message(text)
+                elif origin == "automated":
+                    builder.user_message(_event_ask(text), origin)
             for block in content if isinstance(content, list) else []:
                 if isinstance(block, dict) and block.get("type") == "tool_result":
                     call = open_tools.pop(block.get("tool_use_id", ""), None)

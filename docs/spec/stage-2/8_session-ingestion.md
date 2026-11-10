@@ -31,10 +31,20 @@ pointed at the directories the tools already write.
     `<session>/subagents/`) parse as their own stream and nest under the
     tool span whose result carries `toolUseResult.agentId` (recursively for
     nested subagents); unlinked sidechains and meta records (`isMeta`,
-    `isCompactSummary`, `isVisibleInTranscriptOnly`) are skipped. User
-    records with `origin.kind` other than `human` (task notifications, peer
-    messages) remain llm input but never open a turn; `<pasted_content>`
-    wrapper tags are stripped from asks (content kept).
+    `isCompactSummary`, `isVisibleInTranscriptOnly`) are skipped, except
+    meta peer messages and scheduled triggers (`turnOrigin`), which prompt
+    the model. Who asks is read from `origin.kind`: `human` opens a human
+    turn; in a log that carries `origin`, an untagged record is
+    harness-produced — CI monitor events, cross-session messages from other
+    sessions, scheduled triggers and a prompt from the starting session open
+    an automated turn (titled by the event's own text, e.g. `CI event: …`),
+    while the agent's own delegated work reporting back (task notifications,
+    subagent hand-backs, side-session reports), `[Request interrupted
+    by user]` markers and local slash commands (`/model`, their
+    `<local-command-*>` output) stay llm input and never open or title a
+    turn. A skill slash command reads as `/name args`; `<pasted_content>`
+    tags are unwrapped and `<system-reminder>`/`<artifact-view-context>`
+    blocks dropped from asks (both stay llm input).
   - Token accounting: Anthropic input = `input_tokens` +
     `cache_read_input_tokens` + `cache_creation_input_tokens`. Codex usage
     arrives as `token_count` events (per model request, not per message);
@@ -42,6 +52,9 @@ pointed at the directories the tools already write.
   - Reasoning is preserved as `gen_ai.reasoning` on the llm span: Claude
     `thinking` blocks, Codex `reasoning` summary text (the encrypted body
     is dropped).
+  - Codex asks are `user_message` events or, in rollouts without them,
+    `item_completed` `UserMessage` items; an `agent_message` from a parent
+    agent opens an automated turn, one from a child is llm input only.
   - Codex tool calls parse generically: any `*_call` payload with a
     `call_id` pairs with its `*_output`; `web_search_call` (no call_id, no
     output record) emits in place; calls whose outputs never arrive emit
@@ -52,7 +65,7 @@ pointed at the directories the tools already write.
   at ingest (e.g. a detected schema yielding zero turns) are
   `PermanentIngestError`s — verbatim on `/uploads`, never retried.
 - `uploads.source_format` and `traces.source_format` record the detected
-  format; session-converted traces carry the sessions importer version (`2.0.0`: one trace per session; `2.1.0`: harness-injected user records no longer open turns; `2.2.0`: subagents nest under their spawning call; `2.3.0`: synthesized span ends never cross a turn).
+  format; session-converted traces carry the sessions importer version (`2.0.0`: one trace per session; `2.1.0`: harness-injected user records no longer open turns; `2.2.0`: subagents nest under their spawning call; `2.3.0`: synthesized span ends never cross a turn; `2.4.0`: automated turns marked `turn.origin`, non-asks never open turns, slash-command/reminder wrappers cleaned, a resumed log's leading activity takes the first prompt, Codex `UserMessage` items and parent `agent_message` tasks open turns).
 
 ## Per-Session Granularity
 
@@ -67,11 +80,16 @@ turns are spans inside the session trace, not traces.
   `<agent>: <first ask>` (attrs `session.id`, `session.turn_count`,
   `workspace.cwd`; no `gen_ai.usage.*`, which would double-count in trace totals) → one turn
   `invoke_agent` span per turn named `turn N: <ask>` (attrs `turn.index`,
-  0-based; `turn.user_message`, the full ask; per-turn `gen_ai.usage.*`, or on the llm spans for formats reporting
+  0-based; `turn.user_message`, the full ask; `turn.origin`, `human` or
+  `automated`; per-turn `gen_ai.usage.*`, or on the llm spans for formats reporting
   per-message usage) → that turn's llm and tool spans.
-- Turn splitting is unchanged: events before any user message (or sessions
-  with none) form one leading turn; a trailing unanswered ask is dropped;
-  consecutive asks merge into one turn.
+- A turn starts when something new asks the agent to act: a human ask
+  (`turn.origin = human`) or an outside event (`automated`). The agent's own
+  background work reporting back and non-asks never start one. Events
+  before any prompt form one leading turn that takes the first prompt that
+  follows (a log resumed after compaction; the summary is never the ask)
+  and has no title or origin when none follows; a trailing unanswered ask
+  is dropped; consecutive prompts merge into one turn, titled by the first.
 - Native OTLP uploads are not grouped: instrumented agents that emit
   per-request traces still land one trace per OTLP `trace_id`. Cross-trace
   stitching stays the future extension (docs/extensions/session-stitching.md).

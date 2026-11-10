@@ -76,14 +76,16 @@
             "gen_ai.operation.name": "invoke_agent",
             "gen_ai.agent.name": "claude",
             "turn.index": 0,
-            "turn.user_message": "Refactor the auth module to use the new session store"
+            "turn.user_message": "Refactor the auth module to use the new session store",
+            "turn.origin": "human"
           },
           "events": [],
           "raw_attributes": {
             "gen_ai.operation.name": "invoke_agent",
             "gen_ai.agent.name": "claude",
             "turn.index": 0,
-            "turn.user_message": "Refactor the auth module to use the new session store"
+            "turn.user_message": "Refactor the auth module to use the new session store",
+            "turn.origin": "human"
           },
           "raw_events": [],
           "raw_status_message": null
@@ -288,14 +290,16 @@
             "gen_ai.operation.name": "invoke_agent",
             "gen_ai.agent.name": "claude",
             "turn.index": 1,
-            "turn.user_message": "Now run the tests"
+            "turn.user_message": "Now run the tests",
+            "turn.origin": "human"
           },
           "events": [],
           "raw_attributes": {
             "gen_ai.operation.name": "invoke_agent",
             "gen_ai.agent.name": "claude",
             "turn.index": 1,
-            "turn.user_message": "Now run the tests"
+            "turn.user_message": "Now run the tests",
+            "turn.origin": "human"
           },
           "raw_events": [],
           "raw_status_message": null

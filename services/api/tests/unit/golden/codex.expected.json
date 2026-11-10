@@ -79,6 +79,7 @@
             "gen_ai.agent.name": "codex",
             "turn.index": 0,
             "turn.user_message": "Add retry logic to the fetch client",
+            "turn.origin": "human",
             "gen_ai.usage.input_tokens": 2300,
             "gen_ai.usage.output_tokens": 220,
             "gen_ai.usage.total_tokens": 2520
@@ -89,6 +90,7 @@
             "gen_ai.agent.name": "codex",
             "turn.index": 0,
             "turn.user_message": "Add retry logic to the fetch client",
+            "turn.origin": "human",
             "gen_ai.usage.input_tokens": 2300,
             "gen_ai.usage.output_tokens": 220,
             "gen_ai.usage.total_tokens": 2520
@@ -221,6 +223,7 @@
             "gen_ai.agent.name": "codex",
             "turn.index": 1,
             "turn.user_message": "Now run the tests",
+            "turn.origin": "human",
             "gen_ai.usage.input_tokens": 500,
             "gen_ai.usage.output_tokens": 50,
             "gen_ai.usage.total_tokens": 550
@@ -231,6 +234,7 @@
             "gen_ai.agent.name": "codex",
             "turn.index": 1,
             "turn.user_message": "Now run the tests",
+            "turn.origin": "human",
             "gen_ai.usage.input_tokens": 500,
             "gen_ai.usage.output_tokens": 50,
             "gen_ai.usage.total_tokens": 550

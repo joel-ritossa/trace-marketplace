@@ -106,8 +106,20 @@ def test_upload_bytes_prunes_session_bookkeeping(tmp_path):
             "type": "user",
             "message": {"content": "hi"},
             "toolUseResult": {"agentId": "a", "out": "big"},
+            "turnOrigin": "scheduled",
         },
         {"type": "event_msg", "payload": {"type": "item_completed", "item": {}}},
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "item_completed",
+                "item": {
+                    "type": "UserMessage",
+                    "id": "u",
+                    "content": [{"type": "text", "text": "go"}],
+                },
+            },
+        },
     ]
     path = tmp_path / "s.jsonl"
     path.write_text("\n".join(json.dumps(line) for line in lines))
@@ -117,7 +129,19 @@ def test_upload_bytes_prunes_session_bookkeeping(tmp_path):
             "timestamp": "t",
             "message": {"content": [{"type": "thinking", "thinking": "hm"}]},
         },
-        {"type": "user", "message": {"content": "hi"}, "toolUseResult": {"agentId": "a"}},
+        {
+            "type": "user",
+            "message": {"content": "hi"},
+            "turnOrigin": "scheduled",
+            "toolUseResult": {"agentId": "a"},
+        },
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "item_completed",
+                "item": {"type": "UserMessage", "content": [{"type": "text", "text": "go"}]},
+            },
+        },
     ]
     other = tmp_path / "other.jsonl"
     other.write_bytes(b'{"kind": "metric"}\n')

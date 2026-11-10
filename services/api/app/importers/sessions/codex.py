@@ -4,7 +4,9 @@ Record shapes (one JSON object per line, verified against real rollouts):
 `session_meta` (cwd, session id), `turn_context` (model), `event_msg` (typed
 UI events) and `response_item` (the model-facing items). Parsing notes:
 
-- `event_msg`/`user_message` is the real typed ask. `response_item` user
+- `event_msg`/`user_message` (or, in newer rollouts that emit no
+  `user_message`, an `item_completed` event whose item is a `UserMessage`)
+  is the real typed ask. `response_item` user
   messages also carry injected AGENTS.md/environment preambles, so they only
   seed the llm prompt when no typed ask exists.
 - Usage arrives as `event_msg`/`token_count` (one per model request,
@@ -16,6 +18,9 @@ UI events) and `response_item` (the model-facing items). Parsing notes:
   parsing. `web_search_call` carries no call_id and no output record; it
   emits in place. Calls whose outputs never arrive (truncated logs) emit
   unpaired at the end.
+- `agent_message` items pass messages between agents of one thread tree
+  (`author`/`recipient` paths): one from a parent agent is a new task
+  (an `automated` turn), one from a child is model input only.
 - `reasoning` items carry human-readable `summary` blocks (the content
   itself is encrypted); summaries attach to the next assistant message as
   `gen_ai.reasoning`.
@@ -34,6 +39,21 @@ def matches(records: list[dict]) -> bool:
     return any(r.get("type") in RECORD_TYPES for r in records)
 
 
+def _typed_ask(payload: dict) -> str | None:
+    """The ask of a `user_message` event or a `UserMessage` item_completed
+    event (newer rollouts report only the latter); None for other events."""
+    if payload.get("type") == "user_message":
+        return payload.get("message") or ""
+    item = payload.get("item") or {}
+    if payload.get("type") == "item_completed" and item.get("type") == "UserMessage":
+        return _text(item.get("content"))
+    return None
+
+
+def _text(content: list | None) -> str:
+    return "\n".join(c.get("text", "") for c in content or [] if isinstance(c, dict)).strip()
+
+
 def parse(records: list[dict], session_id: str) -> SessionBuilder:
     builder = SessionBuilder("codex", session_id)
     builder.provider = "openai"
@@ -50,9 +70,10 @@ def parse(records: list[dict], session_id: str) -> SessionBuilder:
             builder.model = payload.get("model") or builder.model
         elif rtype == "event_msg":
             etype = payload.get("type")
-            if etype == "user_message":
-                builder.user_message(payload.get("message") or "")
-                last_user = payload.get("message") or last_user
+            ask = _typed_ask(payload)
+            if ask is not None:
+                builder.user_message(ask)
+                last_user = ask or last_user
                 reasoning = []  # never carry reasoning across turns
             elif etype == "token_count":
                 usage = (payload.get("info") or {}).get("last_token_usage") or {}
@@ -64,9 +85,7 @@ def parse(records: list[dict], session_id: str) -> SessionBuilder:
         elif rtype == "response_item":
             ptype = payload.get("type") or ""
             if ptype == "message":
-                text = "\n".join(
-                    c.get("text", "") for c in payload.get("content") or [] if isinstance(c, dict)
-                ).strip()
+                text = _text(payload.get("content"))
                 if payload.get("role") == "user":
                     # Preamble-laden echo of the ask; the typed ask wins.
                     last_user = last_user or text
@@ -77,6 +96,15 @@ def parse(records: list[dict], session_id: str) -> SessionBuilder:
                         reasoning = []
                     builder.add("llm", "assistant turn", attrs, ts)
                     last_user = None
+            elif ptype == "agent_message":
+                # Inter-agent message: a task from a parent agent opens an
+                # automated turn; a report from a child is model input only.
+                text = _text(payload.get("content"))
+                if text:
+                    author = payload.get("author") or ""
+                    if (payload.get("recipient") or "").startswith(f"{author}/"):
+                        builder.user_message(text, "automated")
+                    last_user = text
             elif ptype == "reasoning":
                 reasoning.extend(
                     s["text"]

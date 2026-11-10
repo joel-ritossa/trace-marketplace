@@ -79,14 +79,16 @@
             "gen_ai.operation.name": "invoke_agent",
             "gen_ai.agent.name": "cursor",
             "turn.index": 0,
-            "turn.user_message": "Fix the failing CI build"
+            "turn.user_message": "Fix the failing CI build",
+            "turn.origin": "human"
           },
           "events": [],
           "raw_attributes": {
             "gen_ai.operation.name": "invoke_agent",
             "gen_ai.agent.name": "cursor",
             "turn.index": 0,
-            "turn.user_message": "Fix the failing CI build"
+            "turn.user_message": "Fix the failing CI build",
+            "turn.origin": "human"
           },
           "raw_events": [],
           "raw_status_message": null
@@ -265,14 +267,16 @@
             "gen_ai.operation.name": "invoke_agent",
             "gen_ai.agent.name": "cursor",
             "turn.index": 1,
-            "turn.user_message": "Also update the README badge"
+            "turn.user_message": "Also update the README badge",
+            "turn.origin": "human"
           },
           "events": [],
           "raw_attributes": {
             "gen_ai.operation.name": "invoke_agent",
             "gen_ai.agent.name": "cursor",
             "turn.index": 1,
-            "turn.user_message": "Also update the README badge"
+            "turn.user_message": "Also update the README badge",
+            "turn.origin": "human"
           },
           "raw_events": [],
           "raw_status_message": null

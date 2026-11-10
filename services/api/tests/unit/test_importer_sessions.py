@@ -189,6 +189,144 @@ def test_claude_subagent_nests_under_its_spawning_call():
     assert len([s for s in trace.spans if "turn.index" in s.attributes]) == 1
 
 
+def user(content, **extra) -> dict:
+    return {"type": "user", "message": {"role": "user", "content": content}, **extra}
+
+
+def reply(text: str) -> dict:
+    return {"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}}
+
+
+HUMAN = {"origin": {"kind": "human"}}
+
+
+def turn_asks(records: list[dict], source_format: str = "anthropic_jsonl") -> list[tuple]:
+    payload = sessions.convert(source_format, records, session_id="s", anchor=ANCHOR)
+    (trace,) = otlp.import_payload(payload, redaction_salt=OFFLINE_SALT).traces
+    turns = sorted(
+        (s for s in trace.spans if "turn.index" in s.attributes),
+        key=lambda s: s.attributes["turn.index"],
+    )
+    return [(t.attributes.get("turn.user_message"), t.attributes.get("turn.origin")) for t in turns]
+
+
+def test_wrappers_read_as_typed():
+    """Skill slash commands read as `/name args`; harness context blocks
+    prepended to a human ask are dropped."""
+    command = (
+        "<command-message>search</command-message>\n<command-name>/search</command-name>\n"
+        "<command-args>find calls</command-args>"
+    )
+    reminder = "<system-reminder>Linked sessions now: a</system-reminder>\n\nship it"
+    records = [user(command, **HUMAN), reply("a"), user(reminder, **HUMAN), reply("b")]
+    assert turn_asks(records) == [("/search find calls", "human"), ("ship it", "human")]
+
+
+def test_outside_events_open_automated_turns():
+    """Untagged records in an origin-tagged log and peer messages from other
+    sessions open `automated` turns; subagent hand-backs and side-session
+    reports (the agent's own delegated work) only feed the model."""
+    records = [
+        user("fix the build", **HUMAN),
+        reply("on it"),
+        user("<ci-monitor-event>PR #1 failed lint</ci-monitor-event>"),
+        reply("fixed lint"),
+        user(
+            "Another Claude session sent a message:\n<agent-message>report</agent-message>",
+            isMeta=True,
+            origin={"kind": "peer"},
+        ),
+        reply("noted"),
+        user(
+            "<system-reminder>The session you started finished.</system-reminder>\n"
+            "<side-sessions-event>Sessions idle.</side-sessions-event>"
+        ),
+        reply("reported"),
+        user(
+            '<cross-session-message from="x">merge it</cross-session-message>',
+            isMeta=True,
+            origin={"kind": "peer"},
+        ),
+        reply("merged"),
+    ]
+    assert turn_asks(records) == [
+        ("fix the build", "human"),
+        ("CI event: PR #1 failed lint", "automated"),
+        ("Session message: merge it", "automated"),
+    ]
+
+
+def test_non_asks_never_open_turns():
+    """Interrupt markers and local slash commands never open or title a turn."""
+    records = [
+        user("first", **HUMAN),
+        reply("working"),
+        user("[Request interrupted by user]"),
+        user("<command-name>/model</command-name>\n<command-args>m</command-args>"),
+        user("<local-command-stdout>Set model to m</local-command-stdout>"),
+        user("please", **HUMAN),
+        reply("done"),
+    ]
+    assert turn_asks(records) == [("first", "human"), ("please", "human")]
+
+
+def test_resumed_log_takes_the_first_prompt():
+    """A log that resumes after compaction starts with activity; the summary
+    is not an ask, so the first prompt that follows titles that turn."""
+    records = [
+        user("Summary of the earlier conversation", isCompactSummary=True),
+        reply("earlier answer"),
+        user("continue", **HUMAN),
+        reply("continuing"),
+    ]
+    assert turn_asks(records) == [("continue", "human")]
+
+
+def test_codex_item_asks_and_agent_tasks():
+    """Newer rollouts carry the ask only as a UserMessage item; a task from a
+    parent agent opens an automated turn, a child's report does not."""
+
+    def item(text):
+        content = [{"type": "text", "text": text}]
+        return {
+            "type": "event_msg",
+            "payload": {
+                "type": "item_completed",
+                "item": {"type": "UserMessage", "content": content},
+            },
+        }
+
+    def agent(author, recipient, text):
+        content = [{"type": "input_text", "text": text}]
+        payload = {
+            "type": "agent_message",
+            "author": author,
+            "recipient": recipient,
+            "content": content,
+        }
+        return {"type": "response_item", "payload": payload}
+
+    def answer(text):
+        content = [{"type": "output_text", "text": text}]
+        return {
+            "type": "response_item",
+            "payload": {"type": "message", "role": "assistant", "content": content},
+        }
+
+    records = [
+        agent("/root", "/root/worker", "review the diff"),
+        answer("reviewing"),
+        agent("/root/worker/helper", "/root/worker", "helper done"),
+        answer("reviewed"),
+        item("thanks, now merge"),
+        answer("merged"),
+    ]
+    assert turn_asks(records, "codex_jsonl") == [
+        ("review the diff", "automated"),
+        ("thanks, now merge", "human"),
+    ]
+
+
 def test_missing_end_stays_inside_its_turn():
     """A response's synthesized end runs to the next event of its own turn,
     never across an idle gap to the next ask."""

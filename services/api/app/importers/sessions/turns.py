@@ -42,7 +42,12 @@ def _any_value(value: Any) -> dict:
 
 
 _LEAD = NANO // 1_000_000
-_PASTE_TAG = re.compile(r"</?pasted_content\b[^>]*>")
+# Harness context blocks prepended to an ask are dropped whole; wrapper tags
+# around the user's own words are unwrapped.
+_HARNESS_BLOCK = re.compile(
+    r"<(system-reminder|artifact-view-context|command-message)\b[^>]*>.*?</\1>", re.S
+)
+_WRAPPER_TAG = re.compile(r"</?(?:pasted_content|command-name|command-args)\b[^>]*>")
 
 
 def _attr_list(attributes: dict) -> list[dict]:
@@ -56,11 +61,14 @@ def _usage_attrs(usage: dict[str, int]) -> dict[str, int | None]:
 
 
 def clean_user_text(text: str) -> str:
-    """Harnesses wrap the real ask in <user_query> tags and pastes in
-    <pasted_content> tags (content kept); titles want one line."""
+    """Harnesses wrap the real ask in <user_query> tags, pastes in
+    <pasted_content> tags and slash commands in <command-*> tags (read as
+    `/name args`), and prepend <system-reminder>/<artifact-view-context>
+    context (dropped); titles want one line."""
     if "<user_query>" in text:
         text = text.split("<user_query>", 1)[1].split("</user_query>", 1)[0]
-    text = _PASTE_TAG.sub(" ", text)
+    text = _HARNESS_BLOCK.sub(" ", text)
+    text = _WRAPPER_TAG.sub(" ", text)
     return " ".join(text.split())
 
 
@@ -86,6 +94,7 @@ def flatten(events: list[Event]) -> list[Event]:
 @dataclass
 class Turn:
     title: str | None
+    origin: str | None = None  # human | automated; None for a promptless lead
     events: list[Event] = field(default_factory=list)
     # Turn-level usage sums (Codex token_count events); rendered on the turn
     # span — formats with per-message usage (Claude) put it on llm events.
@@ -104,17 +113,20 @@ class SessionBuilder:
         self.turns: list[Turn] = []
         self._current: Turn | None = None
 
-    def user_message(self, text: str) -> None:
+    def user_message(self, text: str, origin: str = "human") -> None:
+        """A prompt asking the agent to act: `human`, or `automated` (an
+        outside event). Consecutive prompts with no activity between them
+        stay one turn, titled by the first."""
         title = clean_user_text(text)
         if not title:
             return
-        if self._current is None or self._current.events:
+        if self._current is not None and not self._current.title:
+            # Leading activity with no prompt before it (a log resumed after
+            # compaction) takes the first prompt that follows.
+            self._current.title, self._current.origin = title, origin
+        elif self._current is None or self._current.events:
             self._flush()
-            self._current = Turn(title=title)
-        elif not self._current.title:
-            self._current.title = title
-        # Consecutive user messages with no assistant activity between them
-        # stay one turn, titled by the first ask.
+            self._current = Turn(title=title, origin=origin)
 
     def add(
         self,
@@ -244,6 +256,7 @@ class SessionBuilder:
                             "gen_ai.agent.name": self.agent,
                             "turn.index": turn_index,
                             "turn.user_message": turn.title,
+                            "turn.origin": turn.origin,
                             **_usage_attrs(turn.usage),
                         }
                     ),

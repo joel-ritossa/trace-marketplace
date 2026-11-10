@@ -23,8 +23,8 @@ _CLAUDE_KEYS = (
     "isVisibleInTranscriptOnly",
     "agentId",
     "origin",
+    "turnOrigin",
 )
-_CODEX_EVENTS = ("user_message", "token_count")
 
 
 def prune_jsonl(data: bytes) -> bytes:
@@ -77,13 +77,17 @@ def _prune_codex(rtype: str, payload: dict, timestamp: Any) -> dict:
     elif rtype == "turn_context":
         payload = {k: payload[k] for k in ("model",) if k in payload}
     elif rtype == "event_msg":
-        if payload.get("type") not in _CODEX_EVENTS:
-            return {}
-        if payload["type"] == "token_count":
+        etype, item = payload.get("type"), payload.get("item") or {}
+        if etype == "token_count":
             usage = (payload.get("info") or {}).get("last_token_usage")
             payload = {"type": "token_count", "info": {"last_token_usage": usage}}
-        else:
+        elif etype == "user_message":
             payload = {"type": "user_message", "message": payload.get("message")}
+        elif etype == "item_completed" and item.get("type") == "UserMessage":
+            content = [c for c in item.get("content") or [] if _is(c, "text")]
+            payload = {"type": etype, "item": {"type": "UserMessage", "content": content}}
+        else:
+            return {}
     else:
         payload = _drop(payload, "encrypted_content")
     kept: dict = {"type": rtype, "payload": payload}
