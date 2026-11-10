@@ -12,7 +12,7 @@ from pathlib import Path
 import httpx
 import zstandard
 
-from trace_sync.files import upload_bytes, upload_name
+from trace_sync.files import sibling_transcripts, upload_bytes, upload_name
 
 POLL_TIMEOUT_SECONDS = 120.0
 RETRY_AFTER_CAP_SECONDS = 60.0
@@ -41,6 +41,7 @@ class PendingUpload:
     path: Path
     upload_id: str
     deadline: float  # time.monotonic() cutoff for status polling
+    note: str = ""  # appended to the outcome line
 
 
 class SyncClient:
@@ -69,29 +70,37 @@ class SyncClient:
 
     def enqueue(self, path: Path) -> FileOutcome | PendingUpload:
         """POST the file; ingestion runs server-side off the queue, so this
-        returns as soon as the upload is accepted (5_cli.md: pipelined)."""
+        returns as soon as the upload is accepted (5_cli.md: pipelined).
+        A session the server rejects as too large retries once without the
+        subagent transcripts borrowed from sibling sessions."""
         try:
-            data = upload_bytes(path)
+            res = self._post(path, siblings=True)
+            note = ""
+            if res.status_code == 413 and (borrowed := sibling_transcripts(path)):
+                res = self._post(path, siblings=False)
+                plural = "" if borrowed == 1 else "s"
+                note = (
+                    f"; {borrowed} subagent transcript{plural} from earlier sessions"
+                    " left out — over the size limit"
+                )
         except OSError as exc:
             return FileOutcome("failed", f"failed: {exc}", retryable=True)
         except zstandard.ZstdError as exc:
             return FileOutcome("failed", f"failed: cannot decompress {path.name}: {exc}")
-        try:
-            res = self._request(
-                "POST",
-                "/v1/uploads",
-                files={"file": (upload_name(path), data, "application/json")},
-            )
         except httpx.HTTPError as exc:
             return FileOutcome("failed", f"failed: {exc}", retryable=True)
 
         if res.status_code == 201:
-            return PendingUpload(
-                path, res.json()["upload_id"], time.monotonic() + POLL_TIMEOUT_SECONDS
-            )
+            deadline = time.monotonic() + POLL_TIMEOUT_SECONDS
+            return PendingUpload(path, res.json()["upload_id"], deadline, note)
         if res.status_code == 409 and _error_code(res) == "duplicate_upload":
-            return FileOutcome("skipped", "already synced")
+            return FileOutcome("skipped", f"already synced{note}")
         return FileOutcome("failed", f"failed: {_error_message(res)}")
+
+    def _post(self, path: Path, siblings: bool) -> httpx.Response:
+        data = upload_bytes(path, siblings)
+        file = (upload_name(path), data, "application/json")
+        return self._request("POST", "/v1/uploads", files={"file": file})
 
     def check(self, pending: PendingUpload) -> FileOutcome | None:
         """One status poll: a terminal outcome, or None while still ingesting."""
@@ -113,7 +122,9 @@ class SyncClient:
         if body["status"] == "complete":
             count = len(body["trace_ids"])
             plural = "" if count == 1 else "s"
-            return FileOutcome("uploaded", f"uploaded (complete, {count} trace{plural})")
+            return FileOutcome(
+                "uploaded", f"uploaded (complete, {count} trace{plural}{pending.note})"
+            )
         if body["status"] == "failed":
             return FileOutcome("failed", f"failed: {body['error_message']}")
         return None

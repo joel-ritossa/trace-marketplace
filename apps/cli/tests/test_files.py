@@ -84,6 +84,29 @@ def test_upload_bytes_bundles_sorted_subagents(tmp_path):
     assert upload_bytes(plain) == b"x"
 
 
+def test_forked_session_bundles_agents_from_sibling_sessions(tmp_path):
+    """A forked session references agents whose transcripts stayed under the
+    original session's dir (one nested); each is bundled once, and a change
+    to one re-triggers the fork."""
+    old = tmp_path / "old" / "subagents"
+    old.mkdir(parents=True)
+    (tmp_path / "old.jsonl").write_bytes(b'{"o":1}\n')
+    (old / "agent-x.jsonl").write_bytes(b'{"toolUseResult":{"agentId":"y"}}\n')
+    (old / "agent-y.jsonl").write_bytes(b'{"y":1}\n')
+    (old / "agent-z.jsonl").write_bytes(b'{"z":1}\n')  # not referenced
+    fork = tmp_path / "fork.jsonl"
+    fork.write_bytes(b'{"toolUseResult":{"agentId":"x"}}\n{"toolUseResult":{"agentId":"x"}}\n')
+
+    assert upload_bytes(fork).splitlines()[2:] == [
+        b'{"toolUseResult":{"agentId":"y"}}',
+        b'{"y":1}',
+    ]
+    scanner = QuietScanner([fork], quiet_seconds=0)
+    scanner.mark_synced(fork)
+    (old / "agent-y.jsonl").write_bytes(b'{"y":1}\n{"y":2}\n')
+    assert scanner.scan() == [fork]
+
+
 def test_stat_reflects_subagent_growth(tmp_path):
     subs = _session_with_subagents(tmp_path)
     scanner = QuietScanner([tmp_path], quiet_seconds=0)

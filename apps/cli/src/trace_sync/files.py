@@ -1,5 +1,7 @@
 """Trace-file discovery and the watch-mode stability scan (5_cli.md)."""
 
+import functools
+import re
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -11,6 +13,7 @@ from trace_sync.prune import prune_jsonl
 SUFFIXES = (".json", ".jsonl", ".jsonl.zst")
 SUBAGENTS = "subagents"
 DEFAULT_QUIET_SECONDS = 300.0
+_AGENT_ID = re.compile(rb'"agentId":\s*"([\w-]+)"')
 
 
 def _is_trace(path: Path) -> bool:
@@ -46,23 +49,60 @@ def _in_session_dir(path: Path) -> bool:
     return any(d.with_name(f"{d.name}.jsonl").is_file() for d in path.parents if d.name)
 
 
-def _subagent_files(path: Path) -> list[Path]:
-    """A Claude Code session `X.jsonl` bundles `X/subagents/*.jsonl`."""
+def _subagent_files(path: Path, siblings: bool = True) -> list[Path]:
+    """A Claude Code session `X.jsonl` bundles `X/subagents/*.jsonl`, plus the
+    transcripts of agents it references (recursively) that live under a
+    sibling session's `subagents/`: a resumed or forked session copies the
+    earlier history into a new file but not its subagent transcripts."""
     if path.suffix.lower() != ".jsonl":
         return []
-    return sorted((path.with_suffix("") / SUBAGENTS).glob("*.jsonl"))
+    files = sorted((path.with_suffix("") / SUBAGENTS).glob("*.jsonl"))
+    if not siblings:
+        return files
+    included = {p.name for p in files}
+    elsewhere: dict[str, Path] | None = None
+    queue = [path, *files]
+    while queue:
+        for agent_id in _agent_ids(queue.pop(0)):
+            name = f"agent-{agent_id}.jsonl"
+            if name in included:
+                continue
+            if elsewhere is None:
+                elsewhere = {p.name: p for p in sorted(path.parent.glob(f"*/{SUBAGENTS}/*.jsonl"))}
+            if name in elsewhere:
+                included.add(name)
+                files.append(elsewhere[name])
+                queue.append(elsewhere[name])
+    return files
 
 
-def upload_bytes(path: Path) -> bytes:
-    """File bytes plus the session's subagent transcripts appended as
-    newline-separated JSONL; session logs are pruned to what the importers
-    read (prune.py)."""
+def _agent_ids(path: Path) -> list[str]:
+    st = path.stat()
+    return _agent_ids_at(path, st.st_size, st.st_mtime)
+
+
+@functools.lru_cache(maxsize=4096)
+def _agent_ids_at(path: Path, size: int, mtime: float) -> list[str]:
+    """Agent ids a transcript mentions, in order; keyed on the file's stat so
+    watch-mode ticks reread only changed files."""
+    return list(dict.fromkeys(m.decode() for m in _AGENT_ID.findall(path.read_bytes())))
+
+
+def sibling_transcripts(path: Path) -> int:
+    """How many bundled subagent transcripts come from sibling sessions."""
+    return len(_subagent_files(path)) - len(_subagent_files(path, siblings=False))
+
+
+def upload_bytes(path: Path, siblings: bool = True) -> bytes:
+    """File bytes plus the session's subagent transcripts (with `siblings`,
+    also those from sibling sessions) appended as newline-separated JSONL;
+    session logs are pruned to what the importers read (prune.py)."""
     if path.suffix.lower() == ".zst":
         with path.open("rb") as f:
             data = zstandard.ZstdDecompressor().stream_reader(f).read()
     else:
         data = path.read_bytes()
-    for sub in _subagent_files(path):
+    for sub in _subagent_files(path, siblings):
         if not data.endswith(b"\n"):
             data += b"\n"
         data += sub.read_bytes()
