@@ -17,6 +17,7 @@ from app.queries import spans as spans_q
 from app.queries import traces as traces_q
 from app.schemas.analysis import (
     AnalysisSignals,
+    AnalyzeResponse,
     SessionAnalysis,
     TraceAnalysis,
     TurnAnalysis,
@@ -83,6 +84,7 @@ def list_item(r: asyncpg.Record) -> TraceListItem:
         is_owner=r["is_owner"],
         acquired=r["acquired"],
         acquired_at=r["acquired_at"],
+        goal=r["goal"],
         outcome=r["outcome"],
         task_categories=list(r["task_categories"] or []),
         failure_modes=list(r["failure_modes"] or []),
@@ -225,16 +227,39 @@ async def acquire_trace(trace_id: str, user: CurrentUser, response: Response) ->
     )
 
 
-@router.post("/{trace_id}/analyze", status_code=202)
-async def analyze_now(trace_id: str, user: CurrentUser) -> Response:
+@router.post(
+    "/{trace_id}/analyze",
+    response_model=AnalyzeResponse,
+    status_code=202,
+    responses={200: {"model": AnalyzeResponse, "description": "Already final; nothing queued"}},
+)
+async def analyze_now(trace_id: str, user: CurrentUser, response: Response) -> AnalyzeResponse:
     """Owner-requested analysis (9_session-analysis.md): finalize now — the
-    last turn and the roll-up included — whatever the idle state."""
+    last turn and the roll-up included — whatever the idle state. Idempotent:
+    a final trace queues nothing (200), and a run in flight gets the request
+    noted instead of a second job."""
     row = await visible_or_404(trace_id, user)
     if not row["is_owner"]:
         raise ApiError("forbidden", "Only the owner can analyze a trace.", status=403)
-    await analysis_q.reset_attempts(db.pool(), trace_id)
+    status = analysis_q.derive_status(
+        row["llm_status"], row["analyzed_at"], row["analysis_attempts"]
+    )
+    if status == "final":
+        response.status_code = 200
+        return AnalyzeResponse(status=status, queued=False)
+    await request_finalize(trace_id)
+    return AnalyzeResponse(status=status, queued=True)
+
+
+async def request_finalize(trace_id: str) -> None:
+    """Get a finalizing run for the trace: noted on the lease when a run is
+    in flight (the holder enqueues it on release, budget untouched),
+    otherwise enqueued with a fresh attempt budget."""
+    pool = db.pool()
+    if await analysis_q.note_rerun_if_leased(pool, trace_id, True):
+        return
+    await analysis_q.reset_attempts(pool, trace_id)
     await analyze_trace.kiq(trace_id, finalize=True)
-    return Response(status_code=202)
 
 
 @router.get("/{trace_id}/similar", response_model=SimilarTracesResponse)
@@ -357,12 +382,13 @@ def session_analysis(row: Mapping[str, Any], turn_count: int) -> SessionAnalysis
     )
 
 
-def turn_analysis(turn: Mapping[str, Any]) -> TurnAnalysis:
+def turn_analysis(turn: Mapping[str, Any], is_owner: bool) -> TurnAnalysis:
+    """`uncertain` is review-queue content: owner-only."""
     return TurnAnalysis(
         turn_index=turn["turn_index"],
         outcome=turn["outcome"],
         summary=turn["summary"],
-        uncertain=turn["uncertain"],
+        uncertain=turn["uncertain"] if is_owner else None,
         provenance=turn["provenance"],
         signals=AnalysisSignals.model_validate(turn["signals"]),
         labels=[
@@ -380,13 +406,16 @@ def turn_analysis(turn: Mapping[str, Any]) -> TurnAnalysis:
 async def trace_analysis(row: Mapping[str, Any]) -> TraceAnalysis:
     """The detail analysis block for a `get_visible` row. Labels, reasons
     and cited span ids are visible to everyone who can see the trace — the
-    same rule the judge reasoning always had; the review item is owner-only."""
+    same rule the judge reasoning always had; review content (the open item,
+    `uncertain`) is owner-only."""
     pool = db.pool()
     trace_id = str(row["id"])
     dead_letter = await analysis_q.fetch_open_dead_letter(pool, trace_id)
     return TraceAnalysis(
         session=session_analysis(row, await analysis_q.count_turns(pool, trace_id)),
-        turns=[turn_analysis(t) for t in await analysis_q.fetch_turns(pool, trace_id)],
+        turns=[
+            turn_analysis(t, row["is_owner"]) for t in await analysis_q.fetch_turns(pool, trace_id)
+        ],
         failed_reason=dead_letter["last_error"] if dead_letter is not None else None,
         open_review_item_id=(
             str(row["open_review_item_id"])

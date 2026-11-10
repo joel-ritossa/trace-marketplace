@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     # Session traces are finalized (last turn + roll-up) once idle this
     # long (9_session-analysis.md); read by the minute sweep.
     analysis_idle_seconds: int = 7200
+    # Analysis runs per sweep tick, at most (oldest claim first).
+    sweep_analysis_batch: int = 50
+    # Per-trace analysis run lease (9_session-analysis.md); a live run
+    # extends it every third of this, so a crashed worker frees the trace
+    # within one period.
+    analysis_lease_seconds: int = 120
 
     @property
     def supabase_jwks_url(self) -> str:

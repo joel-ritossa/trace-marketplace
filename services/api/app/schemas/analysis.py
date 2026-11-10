@@ -41,6 +41,7 @@ class TurnAnalysis(BaseModel):
     # Null = not judged (LLM analysis skipped).
     outcome: Outcome | None
     summary: str | None
+    # Review-queue content: owner-only, null for everyone else.
     uncertain: str | None
     provenance: Provenance
     signals: AnalysisSignals
@@ -63,6 +64,15 @@ class SessionAnalysis(BaseModel):
     signals: AnalysisSignals | None = None
 
 
+class AnalyzeResponse(BaseModel):
+    """POST /v1/traces/{id}/analyze: 200 with queued=false when the trace is
+    already final; 202 with queued=true when a finalizing run was enqueued
+    or noted for the run in flight."""
+
+    status: AnalysisStatus
+    queued: bool
+
+
 class TraceAnalysis(BaseModel):
     session: SessionAnalysis
     turns: list[TurnAnalysis]
@@ -72,10 +82,23 @@ class TraceAnalysis(BaseModel):
     open_review_item_id: str | None = None
 
 
+# Relabel request bounds: one label per value (the taxonomies are small),
+# span citations capped like bulk id lists (100), reasons like trace
+# descriptions (2000 chars).
+MAX_SPAN_IDS = 100
+MAX_REASON_CHARS = 2000
+
+
+def _no_duplicates(values: list[str], what: str) -> list[str]:
+    if len(set(values)) != len(values):
+        raise ValueError(f"Duplicate {what}.")
+    return values
+
+
 class FailureLabelInput(BaseModel):
     value: str
-    span_ids: list[str] = []
-    reason: str | None = None
+    span_ids: list[str] = Field(default=[], max_length=MAX_SPAN_IDS)
+    reason: str | None = Field(default=None, max_length=MAX_REASON_CHARS)
 
     @field_validator("value")
     @classmethod
@@ -86,14 +109,19 @@ class FailureLabelInput(BaseModel):
             )
         return v
 
+    @field_validator("span_ids")
+    @classmethod
+    def _unique_spans(cls, v: list[str]) -> list[str]:
+        return _no_duplicates(v, "span ids")
+
 
 class TurnLabelsRequest(BaseModel):
     """PUT /v1/traces/{id}/turns/{turn_index}/labels — the turn's full
     label set, replacing what was there."""
 
     outcome: Outcome
-    task_categories: list[str] = Field(min_length=1)
-    failure_modes: list[FailureLabelInput] = []
+    task_categories: list[str] = Field(min_length=1, max_length=len(TASK_CATEGORIES))
+    failure_modes: list[FailureLabelInput] = Field(default=[], max_length=len(AGENT_FAILURE_MODES))
 
     @field_validator("task_categories")
     @classmethod
@@ -101,4 +129,10 @@ class TurnLabelsRequest(BaseModel):
         unknown = [c for c in v if c not in TASK_CATEGORIES]
         if unknown:
             raise ValueError(f"Unknown task_category {unknown}.")
-        return list(dict.fromkeys(v))
+        return _no_duplicates(v, "task categories")
+
+    @field_validator("failure_modes")
+    @classmethod
+    def _unique_modes(cls, v: list[FailureLabelInput]) -> list[FailureLabelInput]:
+        _no_duplicates([label.value for label in v], "failure modes")
+        return v

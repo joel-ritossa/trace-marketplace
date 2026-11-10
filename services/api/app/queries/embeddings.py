@@ -70,7 +70,7 @@ async def similar_traces(
                p.display_name as owner_display_name,
                (t.owner_id = $2) as is_owner,
                (a.id is not null) as acquired, a.acquired_at,
-               t.analysis_attempts, ta.outcome, ta.task_categories, ta.failure_modes,
+               t.analysis_attempts, ta.goal, ta.outcome, ta.task_categories, ta.failure_modes,
                ta.llm_status, ta.analyzed_at,
                exists (
                  select 1 from dead_letters dl

@@ -18,6 +18,7 @@ from app.analysis.agent.models import AgentMeta, SessionVerdict, TurnVerdict
 from app.analysis.agent.turns import split
 from app.analysis.embedding import EMBEDDING_VERSION, embedding_input, run_embedding
 from app.clients import db
+from app.config import settings as platform
 from app.dev import faults
 from app.queries import analysis as analysis_q
 from app.queries import embeddings as embeddings_q
@@ -39,22 +40,55 @@ async def analyze_trace(trace_id: str, finalize: bool = True) -> None:
     complete turns only — a session's last turn is still being written —
     and refresh the session arrays; the roll-up is left stale. Finalize
     (non-session traces always; sessions from the idle sweep, the owner's
-    analyze request, or listing): also judge the last turn and run the
-    roll-up (goal/outcome/summary, listing copy, embedding).
+    analyze request, listing, or a relabel): also judge the last turn and
+    run the roll-up (goal/outcome/summary, listing copy, embedding).
+
+    One run per trace at a time: a run takes the trace's lease (extended by
+    a heartbeat while it lives); a run that finds it held exits at once,
+    leaving its mode on the trace, and the holder enqueues one rerun in that
+    mode when it releases — so a finalize asked for mid-run still happens.
 
     Turns whose row is current are never re-judged, and human turns never
-    are. A turn that fails after the retry policy does not lose the others:
-    what succeeded is written, then the error is raised so the retry (or the
-    next run) judges only the rest.
+    are. A turn the judge permanently cannot process is stored as
+    indeterminate + uncertain and the run goes on; a transient failure
+    writes what succeeded, then raises so the retry judges only the rest.
     """
     obs.bind(trace_id=trace_id)
-    started = time.perf_counter()
     pool = db.pool()
-    attempt = await analysis_q.claim(pool, trace_id)
+    attempt = await analysis_q.claim(
+        pool, trace_id, finalize=finalize, lease_seconds=platform.analysis_lease_seconds
+    )
     if attempt is None:
         logger.warning("analyze_trace: trace %s no longer exists; dropping", trace_id)
         return
+    if attempt == "leased":
+        logger.info("analyze_trace: another run holds the lease; rerun noted")
+        return
+    heartbeat = asyncio.create_task(_heartbeat(trace_id))
+    try:
+        await _run(trace_id, finalize, attempt)
+    finally:
+        heartbeat.cancel()
+        rerun = await analysis_q.release(pool, trace_id)
+        if rerun is not None:
+            try:
+                await analyze_trace.kiq(trace_id, finalize=rerun == "finalize")
+            except Exception:
+                logger.exception("analyze_trace: failed to enqueue the noted rerun")
 
+
+async def _heartbeat(trace_id: str) -> None:
+    while True:
+        await asyncio.sleep(platform.analysis_lease_seconds / 3)
+        try:
+            await analysis_q.extend_lease(db.pool(), trace_id, platform.analysis_lease_seconds)
+        except Exception:
+            logger.exception("analyze_trace: lease heartbeat failed for trace %s", trace_id)
+
+
+async def _run(trace_id: str, finalize: bool, attempt: int) -> None:
+    started = time.perf_counter()
+    pool = db.pool()
     gate = await analysis_q.fetch_llm_gate(pool, trace_id)
     trace = await analysis_q.fetch_trace_input(pool, trace_id)
     if gate is None or trace is None:
@@ -64,7 +98,7 @@ async def analyze_trace(trace_id: str, finalize: bool = True) -> None:
     obs.bind(upload_id=upload_id)
     await faults.trip_analysis(upload_id, attempt)
 
-    settings = AnalysisSettings()
+    analysis = AnalysisSettings()
     finalize = finalize or not analysis_q.is_session_format(gate["source_format"])
 
     # The LLM gate (1_analysis.md degradation rules). Consent beats
@@ -76,7 +110,7 @@ async def analyze_trace(trace_id: str, finalize: bool = True) -> None:
     if canned is None:
         if opt_out:
             skip_reason = "owner_opt_out"
-        elif not llm_configured(settings.judge_model):
+        elif not llm_configured(analysis.judge_model):
             skip_reason = "not_configured"
     llm = skip_reason is None
 
@@ -114,16 +148,16 @@ async def analyze_trace(trace_id: str, finalize: bool = True) -> None:
     )
 
     signals = {
-        t.index: await run_signals(trace.model_copy(update={"spans": t.spans}), settings)
+        t.index: await run_signals(trace.model_copy(update={"spans": t.spans}), analysis)
         for t in pending
     }
     results: list = [(None, None)] * len(pending)
     if llm and pending:
-        semaphore = asyncio.Semaphore(settings.turn_concurrency)
+        semaphore = asyncio.Semaphore(analysis.turn_concurrency)
 
         async def judge_one(turn_index: int) -> tuple[TurnVerdict, AgentMeta | None]:
             async with semaphore:
-                return await _judge_turn(trace, turn_index, settings, canned)
+                return await _judge_turn(trace, turn_index, analysis, canned)
 
         with obs.stage(logger, "judge"):
             results = await asyncio.gather(
@@ -133,7 +167,12 @@ async def analyze_trace(trace_id: str, finalize: bool = True) -> None:
     writes: list[TurnWrite] = []
     failure: BaseException | None = None
     for turn, result in zip(pending, results, strict=True):
-        if isinstance(result, BaseException):
+        if isinstance(result, PermanentAnalysisError):
+            logger.warning(
+                "analyze_trace: turn %d permanently failed; marked uncertain", turn.index
+            )
+            result = (_unprocessable(turn.index), None)
+        elif isinstance(result, BaseException):
             failure = failure or result
             continue
         verdict, meta = result
@@ -151,7 +190,7 @@ async def analyze_trace(trace_id: str, finalize: bool = True) -> None:
                 verdicts.append(analysis_q.stored_verdict(stored[index]))
         try:
             with obs.stage(logger, "roll_up"):
-                session, roll_meta = await _roll_up(trace, verdicts, settings, canned)
+                session, roll_meta = await _roll_up(trace, verdicts, analysis, canned)
         except Exception as exc:
             failure = exc
 
@@ -162,20 +201,26 @@ async def analyze_trace(trace_id: str, finalize: bool = True) -> None:
         if i in stored and i not in {w.turn_index for w in writes}
     ]
     run = (
-        _audit_run(writes, roll_meta, finalize, canned, settings)
+        _audit_run(writes, roll_meta, finalize, canned, analysis)
         if llm and (writes or session)
         else None
     )
+    # The fingerprints this run read for every turn it saw as changed — the
+    # rewrite only applies turns still in that state.
+    expected = {
+        t.index: stored[t.index]["fingerprint"] if t.index in stored else None for t in stale
+    }
     with obs.stage(logger, "rewrite"):
         await analysis_q.rewrite(
             pool,
             trace_id,
             turns=writes,
-            present=present,
+            expected=expected,
             signals=combine(turn_signals),
             llm_status="complete" if llm else "skipped",
             llm_skip_reason=skip_reason,
             finalized=finalized,
+            succeeded=failure is None,
             session=session,
             run=run,
             owner_id=str(gate["owner_id"]),
@@ -196,7 +241,7 @@ async def analyze_trace(trace_id: str, finalize: bool = True) -> None:
             await traces_q.fill_listing_meta(
                 pool, trace_id, tags=session.tags, description=session.description
             )
-        await _embed(trace_id, session, verdicts, settings, opt_out)
+        await _embed(trace_id, session, verdicts, analysis, opt_out)
 
     # Subscription trigger (b), 3_api.md: analysis wrote labels on a listed
     # trace. Visibility re-read post-rewrite; best-effort — matching is
@@ -227,6 +272,19 @@ async def analyze_trace(trace_id: str, finalize: bool = True) -> None:
             "skip_reason": skip_reason,
             "match_kicked": visibility == "listed",
         },
+    )
+
+
+def _unprocessable(turn_index: int) -> TurnVerdict:
+    """A turn the judge permanently cannot process: indeterminate, no
+    labels, and uncertain so the owner is asked."""
+    return TurnVerdict.model_construct(
+        turn_index=turn_index,
+        outcome="indeterminate",
+        summary="",
+        task_categories=[],
+        failure_modes=[],
+        uncertain="The judge could not process this turn.",
     )
 
 

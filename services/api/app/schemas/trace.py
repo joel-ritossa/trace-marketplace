@@ -142,7 +142,9 @@ class TraceListItem(BaseModel):
     acquired: bool
     # Set when acquired; the library card shows it.
     acquired_at: datetime | None
-    # Session labels at list level (9_session-analysis.md) + derived status.
+    # Session labels at list level (9_session-analysis.md) + derived status;
+    # goal is the roll-up's one-line "what the user was doing".
+    goal: str | None
     outcome: Outcome | None
     task_categories: list[str]
     failure_modes: list[str]

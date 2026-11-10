@@ -25,6 +25,18 @@ def review_context(uncertain: list[Mapping[str, Any]]) -> dict[str, Any] | None:
     }
 
 
+def review_action(open_context: dict[str, Any] | None, context: dict[str, Any] | None) -> str:
+    """How the trace's one open item follows its uncertain machine turns:
+    `create` when some are uncertain and none is open, `update` its context
+    in place when the set changed, `close` it when none are left, else
+    `keep`. Never supersede-and-recreate: one item per trace question."""
+    if context is None:
+        return "close" if open_context is not None else "keep"
+    if open_context is None:
+        return "create"
+    return "keep" if open_context == context else "update"
+
+
 async def sync(
     conn: asyncpg.Connection,
     trace_id: str,
@@ -33,14 +45,11 @@ async def sync(
     upload_id: str | None = None,
     resolved_by: str | None = None,
 ) -> None:
-    """Make the trace's open item match its uncertain machine turns.
-
-    Analysis rewrite (`owner_id`/`upload_id` given): an unchanged question
-    keeps its item; a different one supersedes it with a fresh item and
-    bumps the owner's per-upload digest; none left supersedes it.
-    Owner relabel (`resolved_by` given): none left resolves the item,
-    otherwise its context narrows in place — the owner is working it.
-    """
+    """Make the trace's open item match its uncertain machine turns
+    (`review_action`). A new item bumps the owner's per-upload digest
+    (analysis rewrite: `owner_id`/`upload_id`). Closing is `resolved` when
+    an owner relabel (`resolved_by`) answered the last question, else
+    `superseded` (a re-run no longer asks it)."""
     uncertain = await conn.fetch(
         """
         select turn_index, uncertain, summary from turn_analysis
@@ -54,35 +63,37 @@ async def sync(
         "select id, context from review_items where trace_id = $1 and status = 'open' for update",
         trace_id,
     )
-    if item is not None and item["context"] == context:
-        return
-    if resolved_by is not None:
-        if item is None:
-            return
-        if context is None:
-            await conn.execute(
-                """
-                update review_items
-                set status = 'resolved', resolved_at = now(), resolved_by = $2
-                where id = $1
-                """,
-                item["id"],
-                resolved_by,
-            )
-        else:
-            await conn.execute(
-                "update review_items set context = $2 where id = $1", item["id"], context
-            )
-        return
-    if item is not None:
+    action = review_action(item["context"] if item else None, context)
+    if action == "update":
+        await conn.execute(
+            "update review_items set context = $2 where id = $1", item["id"], context
+        )
+    elif action == "close" and resolved_by is not None:
+        await conn.execute(
+            """
+            update review_items
+            set status = 'resolved', resolved_at = now(), resolved_by = $2
+            where id = $1
+            """,
+            item["id"],
+            resolved_by,
+        )
+    elif action == "close":
         await conn.execute(
             "update review_items set status = 'superseded' where id = $1", item["id"]
         )
-    if context is not None:
+    elif action == "create":
         await conn.execute(
             "insert into review_items (trace_id, context) values ($1, $2)", trace_id, context
         )
-        await notifications_q.review_digest_upsert(conn, user_id=owner_id, upload_id=upload_id)
+        if owner_id is not None and upload_id is not None:
+            await notifications_q.review_digest_upsert(
+                conn,
+                user_id=owner_id,
+                upload_id=upload_id,
+                trace_id=trace_id,
+                uncertain_turns=len(context["turns"]),
+            )
 
 
 async def list_for_owner(

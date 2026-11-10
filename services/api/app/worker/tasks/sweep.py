@@ -32,6 +32,7 @@ async def sweep_stuck_uploads() -> dict:
         db.pool(),
         older_than_minutes=settings.sweep_stuck_after_minutes,
         idle_seconds=settings.analysis_idle_seconds,
+        limit=settings.sweep_analysis_batch,
     )
     for trace_id, finalize in due:
         await analyze_trace.kiq(trace_id, finalize=finalize)

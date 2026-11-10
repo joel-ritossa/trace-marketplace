@@ -30,6 +30,17 @@ CANNED_TURN = {
 SPAN_ID = "cd" * 8  # otlp_payload's only span
 
 
+def tool_payload(marker: str) -> bytes:
+    """otlp_payload with its span as a tool call — citable evidence (only
+    llm/tool spans in the turn are)."""
+    payload = json.loads(otlp_payload(marker))
+    span = payload["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
+    span["attributes"] = [
+        {"key": "gen_ai.operation.name", "value": {"stringValue": "execute_tool"}}
+    ]
+    return json.dumps(payload).encode()
+
+
 def two_trace_payload(marker: str) -> bytes:
     """Two traces in one upload — the digest's 'N traces from upload X'."""
 
@@ -102,9 +113,13 @@ async def rearm(upload_id: str, spec: str) -> None:
 
 async def rejudge(api: httpx.AsyncClient, db: asyncpg.Connection, trace_id: str) -> None:
     """Re-judge the trace's machine turns as if their spans changed: stale
-    fingerprints, then the owner's analyze request; wait until rewritten."""
+    fingerprints and roll-up (a final trace queues nothing), then the
+    owner's analyze request; wait until rewritten."""
     await db.execute(
         "update turn_analysis set fingerprint = 'stale' where trace_id = $1", uuid.UUID(trace_id)
+    )
+    await db.execute(
+        "update trace_analysis set analyzed_at = null where trace_id = $1", uuid.UUID(trace_id)
     )
     assert (await api.post(f"/v1/traces/{trace_id}/analyze")).status_code == 202
 
@@ -147,6 +162,9 @@ async def test_uncertain_turns_create_items_and_one_digest(api: httpx.AsyncClien
     assert digests[0]["payload"]["upload_id"] == upload_id
     assert digests[0]["payload"]["filename"] == "batch.json"
     assert digests[0]["payload"]["item_count"] == 2
+    # Items span two traces: the digest stops naming one, counts the turns.
+    assert "trace_id" not in digests[0]["payload"]
+    assert digests[0]["payload"]["uncertain_turns"] == 2
     assert digests[0]["read_at"] is None
     assert (await api.get("/v1/notifications")).json()["unread_count"] == 1
 
@@ -185,15 +203,20 @@ async def test_uncertain_turns_create_items_and_one_digest(api: httpx.AsyncClien
         assert card["open_review_item_id"] is None
         foreign = (await other.get(f"/v1/traces/{trace_ids[0]}")).json()["analysis"]
         assert foreign["open_review_item_id"] is None
+        # `uncertain` is review content: owner-only.
+        assert [t["uncertain"] for t in foreign["turns"]] == [None]
 
 
 async def test_relabel_resolves_item(api: httpx.AsyncClient, db: asyncpg.Connection) -> None:
     """Relabeling the uncertain turn makes it human, recomputes the session
     arrays and resolves the item (resolved_by = owner); a later re-analysis
     never re-judges the human turn or reopens the item; foreign access 404s."""
-    upload_id, (trace_id,) = await upload_routed(api, otlp_payload(uuid.uuid4().hex))
+    upload_id, (trace_id,) = await upload_routed(api, tool_payload(uuid.uuid4().hex))
     (item,) = await wait_open_items(api, upload_id, 1)
     item_id = item["review_item_id"]
+    digest = (await review_digests(api))[0]["payload"]
+    assert (digest["trace_id"], digest["uncertain_turns"]) == (trace_id, 1)
+    assert digest["trace_name"]
     owner_id = (await api.get("/v1/profile")).json()["id"]
 
     labels = {
@@ -301,7 +324,7 @@ async def test_relabel_validation(api: httpx.AsyncClient, db: asyncpg.Connection
     no review item involved. Bad vocabularies and span ids outside the
     turn are 422; an unknown turn 404s; a turn with no row yet 409s;
     non-owners get 404 on private traces and 403 on listed ones."""
-    trace_id = await upload_and_ingest(api, otlp_payload(uuid.uuid4().hex))
+    trace_id = await upload_and_ingest(api, tool_payload(uuid.uuid4().hex))
     analysis = await wait_analysis(api, trace_id)
     assert analysis["session"]["status"] == "skipped"  # keyless, no fault
     url = f"/v1/traces/{trace_id}/turns/0/labels"
@@ -322,6 +345,13 @@ async def test_relabel_validation(api: httpx.AsyncClient, db: asyncpg.Connection
             "outcome": "failure",
             "task_categories": ["coding"],
             "failure_modes": [{"value": "invalid_invocation", "span_ids": ["ff" * 8]}],
+        },
+        # Duplicates are rejected, not merged.
+        {"outcome": "success", "task_categories": ["coding", "coding"]},
+        {
+            "outcome": "failure",
+            "task_categories": ["coding"],
+            "failure_modes": [{"value": "invalid_invocation"}, {"value": "invalid_invocation"}],
         },
     ):
         res = await api.put(url, json=bad)
@@ -347,7 +377,22 @@ async def test_relabel_validation(api: httpx.AsyncClient, db: asyncpg.Connection
         assert res.status_code == 200
         assert (await other.put(url, json=body)).status_code == 403
 
-    # No turn row yet -> nothing to relabel -> 409.
+    # No turn row yet -> nothing to relabel -> 409. Let the finalizing run
+    # each relabel enqueues settle first, or it would recreate the row.
+    async def settled() -> bool | None:
+        return (
+            await db.fetchval(
+                """
+            select analysis_attempts > 0 and analysis_lease_until is null
+                   and analysis_rerun is null
+            from traces where id = $1
+            """,
+                uuid.UUID(trace_id),
+            )
+            or None
+        )
+
+    await wait_until(settled, 60.0, "relabel finalization never settled")
     await db.execute("delete from turn_analysis where trace_id = $1", uuid.UUID(trace_id))
     res = await api.put(url, json=body)
     assert res.status_code == 409

@@ -60,15 +60,15 @@ There is no separate `/analysis` endpoint. Owner or listed; the trace detail car
 }
 ```
 
-`session.status` follows [2_data-model.md](2_data-model.md): `pending | in_progress | final | skipped` (`skipped` carries `skip_reason`: `not_configured | owner_opt_out`). `failed_reason` is the open analyze dead letter's error, verbatim. `open_review_item_id` is owner-only. Cited `span_ids` are `source_span_id`s inside the turn. There is no confidence, votes, audit block, or metric scores; the behavior summary is `session.goal` + `session.summary`.
+`session.status` follows [2_data-model.md](2_data-model.md): `pending | in_progress | final | skipped` (`skipped` carries `skip_reason`: `not_configured | owner_opt_out`). `failed_reason` is the open analyze dead letter's error, verbatim. `open_review_item_id` and `turns[].uncertain` are owner-only (null for everyone else, here and in `labels.jsonl`). Cited `span_ids` are `source_span_id`s inside the turn. There is no confidence, votes, audit block, or metric scores; the behavior summary is `session.goal` + `session.summary`.
 
 ### POST /v1/traces/{trace_id}/analyze
 
-Owner only; `202`. Finalizes now — the last turn and the roll-up are judged whatever the idle state ([9_session-analysis.md](9_session-analysis.md) When analysis runs). Resets the attempt counter.
+Owner only. Finalizes now — the last turn and the roll-up are judged whatever the idle state ([9_session-analysis.md](9_session-analysis.md) When analysis runs). Returns `{ status, queued }`: `200` with `queued: false` when the trace is already `final` (nothing enqueued); otherwise `202` with `queued: true` — a run in flight gets the request noted (it finalizes after, attempt counter untouched), else a finalizing job is enqueued with a reset attempt counter.
 
 ### PUT /v1/traces/{trace_id}/turns/{turn_index}/labels
 
-Owner only. Body: `outcome`, `task_categories` (≥ 1, known values), `failure_modes` (`[{ value, span_ids, reason }]`, `span_ids` must lie inside the turn else `422`) — the turn's full label set, replacing what was there. The turn becomes `provenance = human` and is never re-judged, `uncertain` clears, the session arrays are recomputed, and the review item closes when no uncertain turn is left. Returns the analysis block. `404` unknown turn, `409 analysis_pending` if the turn has not been judged yet. On a listed trace the relabel kicks subscription matching (trigger c).
+Owner only. Body: `outcome`, `task_categories` (≥ 1, known values, no duplicates), `failure_modes` (`[{ value, span_ids, reason }]`, one entry per value; `span_ids` (≤ 100, distinct) must be llm/tool spans inside the turn — the judge's citation rule — else `422`; `reason` ≤ 2000 chars) — the turn's full label set, replacing what was there. The turn becomes `provenance = human` and is never re-judged, `uncertain` clears, the session arrays are recomputed, the review item closes when no uncertain turn is left, and a finalizing run re-rolls the session verdict up. Returns the analysis block. `404` unknown turn, `409 analysis_pending` if the turn has not been judged yet. That finalizing run fires subscription matching on a listed trace (trigger c).
 
 ### API keys (JWT only)
 

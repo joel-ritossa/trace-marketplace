@@ -47,7 +47,8 @@ class TurnVerdict(BaseModel):
     summary: str             # one line: what was asked, what happened
     task_categories: list[TaskCategory]   # >= 1
     failure_modes: list[FailureLabel]     # may be empty
-    uncertain: str | None    # reason the agent could not judge confidently
+    uncertain: str | None    # null, or why a human should look: the agent
+                             # could not judge confidently (not caveats)
 
 class SessionVerdict(BaseModel):
     goal: str                # what the user was trying to get done overall
@@ -86,10 +87,13 @@ redacted):
 - **Validation.** Output must parse; `span_ids` must be llm/tool spans inside
   the judged turn (nested subagent spans count). On a violation the errors
   are fed back once; if the retry still violates, invalid ids are dropped, a
-  label left with no ids is dropped, and `uncertain` is set.
+  label left with no ids is dropped, and `uncertain` is set in plain
+  language (no span ids or internal error text).
 - A turn the agent never read (no `read_turn` call for it) is a violation.
-- Loop bound: `ANALYSIS_AGENT_MAX_STEPS` model turns; hitting it yields
-  `outcome=indeterminate` with `uncertain` set.
+- Loop bound: `ANALYSIS_AGENT_MAX_STEPS` model turns. Hitting it, or a
+  model call overflowing the context window, forces a tool-less answer from
+  what was read (older tool outputs dropped until it fits); the forced
+  answer's outcome stands and `uncertain` is set. The turn never fails the run.
 - LLM access stays behind `app/analysis/llm.py` (OpenAI Agents SDK,
   Responses API; OpenAI only). Model: `ANALYSIS_JUDGE_MODEL` (a plain
   OpenAI model id). Record latency/tokens and call counts per turn.
@@ -110,8 +114,10 @@ redacted):
   counts); votes are gone.
 - RLS mirrors `trace_analysis` for the new tables.
 
-**Fingerprint** = hash of the turn's span ids and end time. A turn is judged
-when it has no row or its fingerprint changed. A turn with
+**Fingerprint** = hash of the turn's span ids with each span's status and a
+digest of its input/output text (no timestamps: clockless logs get
+synthesized ones). A turn is judged when it has no row or its fingerprint
+changed. A turn with
 `provenance=human` is never re-judged or overwritten.
 
 ## When analysis runs
@@ -131,8 +137,22 @@ Ingest no longer enqueues analysis unconditionally.
   later grows, the old last turn is re-judged only if its fingerprint
   changed, and the roll-up re-runs at the next idle point.
 - **On demand**: `POST /v1/traces/{id}/analyze` (owner) finalizes now — last
-  turn and roll-up included — whatever the idle state.
+  turn and roll-up included — whatever the idle state. It is idempotent: a
+  final trace queues nothing, and a run in flight gets the request noted.
 - Listing a trace on the marketplace finalizes it first if it is not final.
+
+**One run per trace.** A run holds a per-trace lease
+(`ANALYSIS_LEASE_SECONDS`, heartbeat-extended while it lives, so a crashed
+worker frees the trace within one period). A run that finds the lease held
+exits at once and records its mode; the holder enqueues one rerun in that
+mode on release, so a finalize asked for mid-run still happens. The sweep
+skips leased traces and enqueues at most `SWEEP_ANALYSIS_BATCH` per tick.
+Writes are still guarded: a turn is written only if its row is as the run
+read it, and only turns in the current spans are deleted.
+
+A turn the judge permanently cannot process is stored `indeterminate`,
+`uncertain` ("The judge could not process this turn."), and the run goes on
+to the roll-up; a transient failure persists the judged turns and retries.
 
 A run judges only the turns that need it (bounded concurrency,
 `ANALYSIS_TURN_CONCURRENCY`), then re-runs the roll-up, then writes
@@ -148,12 +168,15 @@ roll-up text (goal, summary, one line per turn).
 
 - No confidence scores and no disagreement routing.
 - A trace with any `uncertain` machine turn has one open review item listing
-  those turns.
+  those turns. When the set changes the item is updated in place (no new
+  item, no new notification); it closes when the set is empty.
+- `uncertain` is review content: owner-only, like review items.
 - Owners relabel a turn at any time:
   `PUT /v1/traces/{id}/turns/{turn_index}/labels` with `outcome`,
   `task_categories`, `failure_modes`. That turn becomes `provenance=human`,
   `uncertain` clears, the roll-up arrays are recomputed, and the review item
-  closes when no uncertain turn is left.
+  closes when no uncertain turn is left. The session verdict is then stale:
+  a finalizing run re-rolls it up (no turn is re-judged).
 
 ## API
 
@@ -179,7 +202,8 @@ dependency), `metric_scores`, the standalone summary and listing calls.
 ## Tunables (env, documented in `.env.example`)
 
 `ANALYSIS_JUDGE_MODEL=gpt-5-mini`, `ANALYSIS_IDLE_SECONDS=7200`,
-`ANALYSIS_AGENT_MAX_STEPS=20`, `ANALYSIS_TURN_CONCURRENCY`. Removed:
+`ANALYSIS_AGENT_MAX_STEPS=100`, `ANALYSIS_TURN_CONCURRENCY`,
+`ANALYSIS_LEASE_SECONDS=120`, `SWEEP_ANALYSIS_BATCH=50`. Removed:
 `ANALYSIS_JUDGE_VOTES`, `ANALYSIS_JUDGE_CONSENSUS`,
 `ANALYSIS_CONFIDENCE_THRESHOLD`, `ANALYSIS_METRICS`, `ANALYSIS_CRITIC_VOTES`.
 

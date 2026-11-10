@@ -200,7 +200,7 @@ async def _label_line(pool: asyncpg.Pool, trace_id: str, caller_id: str) -> str:
     line = {
         "trace_id": trace_id,
         "session": session.model_dump(mode="json"),
-        "turns": [turn_analysis(t).model_dump(mode="json") for t in turns],
+        "turns": [turn_analysis(t, row["is_owner"]).model_dump(mode="json") for t in turns],
     }
     return json.dumps(line) + "\n"
 

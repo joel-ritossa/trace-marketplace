@@ -8,14 +8,17 @@ Executor = asyncpg.Pool | asyncpg.Connection
 
 
 async def review_digest_upsert(
-    executor: Executor, *, user_id: str, upload_id: str, new_items: int = 1
+    executor: Executor, *, user_id: str, upload_id: str, trace_id: str, uncertain_turns: int
 ) -> None:
     """The per-upload review_request digest (A3 decision 4): one unread
     notification per (user, upload) — the partial unique index is the
-    upsert target — its item_count incremented and re-dated as routed
-    items land. Once read, the slot frees and the next item starts a
-    fresh unread digest. Takes a connection so item + digest can share
-    the analysis rewrite's transaction."""
+    upsert target — its item_count incremented and re-dated as new review
+    items open. Like the subscription digest, it names the trace (id +
+    name) while every item is on one trace, and drops the name once items
+    span traces; `uncertain_turns` counts the turns asking for review.
+    Once read, the slot frees and the next item starts a fresh unread
+    digest. Takes a connection so item + digest share the analysis
+    rewrite's transaction."""
     await executor.execute(
         """
         insert into notifications (user_id, type, payload)
@@ -24,22 +27,31 @@ async def review_digest_upsert(
           jsonb_build_object(
             'upload_id', $2::text,
             'filename', (select filename from uploads where id = $2::uuid),
-            'item_count', $3::int
+            'item_count', 1,
+            'trace_id', $3::text,
+            'trace_name', (select name from traces where id = $3::uuid),
+            'uncertain_turns', $4::int
           )
         )
         on conflict (user_id, ((payload ->> 'upload_id')))
           where type = 'review_request' and read_at is null
         do update set
-          payload = jsonb_set(
-            notifications.payload,
-            '{item_count}',
-            to_jsonb(((notifications.payload ->> 'item_count')::int + $3::int))
+          payload = case
+            when notifications.payload ->> 'trace_id' = $3::text then notifications.payload
+            else notifications.payload - 'trace_id' - 'trace_name'
+          end || jsonb_build_object(
+            'item_count', (notifications.payload ->> 'item_count')::int + 1,
+            'uncertain_turns', case
+              when notifications.payload ->> 'trace_id' = $3::text then $4::int
+              else coalesce((notifications.payload ->> 'uncertain_turns')::int, 0) + $4::int
+            end
           ),
           created_at = now()
         """,
         user_id,
         upload_id,
-        new_items,
+        trace_id,
+        uncertain_turns,
     )
 
 

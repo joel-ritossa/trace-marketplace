@@ -3,13 +3,14 @@ import logging
 import asyncpg
 from fastapi import APIRouter, Query
 
+from app.analysis.agent.judge import _citable as citable_spans
 from app.analysis.agent.turns import split
 from app.auth import CurrentUser
 from app.clients import db
 from app.errors import ApiError
 from app.queries import analysis as analysis_q
 from app.queries import review_items as review_items_q
-from app.routers.traces import trace_analysis, visible_or_404
+from app.routers.traces import request_finalize, trace_analysis, visible_or_404
 from app.schemas.analysis import TraceAnalysis, TurnLabelsRequest
 from app.schemas.review import (
     ReviewContext,
@@ -18,7 +19,6 @@ from app.schemas.review import (
     ReviewListStatus,
     ReviewTraceSummary,
 )
-from app.worker.tasks import match_trace
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +84,8 @@ async def relabel_turn(
 ) -> TraceAnalysis:
     """Owner relabel of one turn (9_session-analysis.md Review): the turn
     becomes human-labeled and is never re-judged; the session arrays are
-    recomputed and the review item closes once no uncertain turn is left."""
+    recomputed, the review item closes once no uncertain turn is left, and
+    a finalizing run re-rolls the session verdict up (judging nothing)."""
     row = await visible_or_404(trace_id, user)
     if not row["is_owner"]:
         raise ApiError("forbidden", "Only the owner can relabel a trace.", status=403)
@@ -93,11 +94,14 @@ async def relabel_turn(
     turn = next((t for t in split(trace) if t.index == turn_index), None) if trace else None
     if turn is None:
         raise ApiError("not_found", "Turn not found.", status=404)
-    in_turn = {s.source_span_id for s in turn.spans}
-    foreign = [i for label in body.failure_modes for i in label.span_ids if i not in in_turn]
+    # The judge's citation rule: llm/tool spans inside the turn.
+    citable = citable_spans(turn)
+    foreign = [i for label in body.failure_modes for i in label.span_ids if i not in citable]
     if foreign:
         raise ApiError(
-            "invalid_request", f"Span ids not in turn {turn_index}: {foreign}.", status=422
+            "invalid_request",
+            f"Span ids are not llm/tool spans in turn {turn_index}: {foreign}.",
+            status=422,
         )
     labels = [("task_category", value, [], None) for value in body.task_categories] + [
         ("failure_mode", label.value, label.span_ids, label.reason) for label in body.failure_modes
@@ -108,13 +112,13 @@ async def relabel_turn(
         raise ApiError(
             "analysis_pending", "This turn has not been analyzed yet; try again later.", status=409
         )
-    # Subscription trigger (c), 3_api.md: a relabel can newly satisfy a
-    # stored query. Best-effort like the analyze-complete kick.
-    if row["visibility"] == "listed":
-        try:
-            await match_trace.kiq(trace_id)
-        except Exception:
-            logger.exception("relabel: failed to enqueue matching for trace %s", trace_id)
+    # The session verdict is stale now; the finalizing run re-rolls it up
+    # and fires matching (subscription trigger (c), 3_api.md) after. Best-
+    # effort: the relabel is committed, and the sweep finalizes stale traces.
+    try:
+        await request_finalize(trace_id)
+    except Exception:
+        logger.exception("relabel: failed to enqueue finalization for trace %s", trace_id)
     return await trace_analysis(await visible_or_404(trace_id, user))
 
 

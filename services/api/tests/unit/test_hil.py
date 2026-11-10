@@ -8,9 +8,17 @@ import pytest
 from pydantic import ValidationError
 
 from app.analysis import SignalsResult, combine
+from app.analysis.agent.models import FailureLabel, TurnVerdict
 from app.dev import faults
-from app.queries.analysis import derive_status, needs_judging, stored_verdict
-from app.queries.review_items import review_context
+from app.queries.analysis import (
+    derive_status,
+    needs_judging,
+    roll_up_state,
+    stored_verdict,
+    verdict_labels,
+)
+from app.queries.review_items import review_action, review_context
+from app.routers.traces import turn_analysis
 from app.schemas.analysis import TurnLabelsRequest
 
 
@@ -63,6 +71,16 @@ def test_no_uncertain_turn_no_item() -> None:
     assert review_context([]) is None
 
 
+def test_review_action_updates_in_place() -> None:
+    a = {"turns": [{"turn_index": 1, "reason": "r", "summary": None}]}
+    b = {"turns": [{"turn_index": 2, "reason": "r", "summary": None}]}
+    assert review_action(None, None) == "keep"
+    assert review_action(None, a) == "create"
+    assert review_action(a, a) == "keep"
+    assert review_action(a, b) == "update"  # never supersede-and-recreate
+    assert review_action(a, None) == "close"
+
+
 def test_item_lists_uncertain_turns() -> None:
     rows = [{"turn_index": 2, "uncertain": "step limit", "summary": "Ran tests"}]
     assert review_context(rows) == {
@@ -95,13 +113,25 @@ def test_stored_verdict_splits_labels() -> None:
 
 
 def test_relabel_request_validates_vocabularies() -> None:
-    ok = TurnLabelsRequest(
+    TurnLabelsRequest(
         outcome="partial",
-        task_categories=["coding", "coding"],
+        task_categories=["coding"],
         failure_modes=[{"value": "invalid_invocation", "span_ids": ["a"]}],
     )
-    assert ok.task_categories == ["coding"]
+    mode = {"value": "invalid_invocation"}
     for bad in (
+        {"outcome": "partial", "task_categories": ["coding", "coding"]},
+        {"outcome": "failure", "task_categories": ["coding"], "failure_modes": [mode, mode]},
+        {
+            "outcome": "failure",
+            "task_categories": ["coding"],
+            "failure_modes": [{"value": "invalid_invocation", "span_ids": ["a", "a"]}],
+        },
+        {
+            "outcome": "failure",
+            "task_categories": ["coding"],
+            "failure_modes": [{"value": "invalid_invocation", "reason": "x" * 2001}],
+        },
         {"outcome": "partial", "task_categories": []},
         {"outcome": "partial", "task_categories": ["nope"]},
         {"outcome": "maybe", "task_categories": ["coding"]},
@@ -181,3 +211,48 @@ async def test_verdict_spec_never_trips(monkeypatch: pytest.MonkeyPatch) -> None
 
     monkeypatch.setattr(faults, "_armed_spec", armed)
     await faults.trip_analysis("u1", attempt=1)  # must not raise
+
+
+# --- rewrite guards (pure parts) ---
+
+
+def test_roll_up_state() -> None:
+    assert roll_up_state(True, written=2, applied=2, changed=True) == "stamp"
+    assert roll_up_state(True, written=0, applied=0, changed=False) == "stamp"  # re-roll only
+    # A finalize whose write was refused (rows moved) does not stamp.
+    assert roll_up_state(True, written=2, applied=1, changed=True) == "stale"
+    assert roll_up_state(False, written=1, applied=1, changed=True) == "stale"
+    # Nothing the roll-up saw changed: an older snapshot must not unstamp.
+    assert roll_up_state(False, written=1, applied=0, changed=False) == "keep"
+
+
+def test_verdict_labels_merge_repeated_failure_modes() -> None:
+    verdict = TurnVerdict(
+        turn_index=0,
+        outcome="failure",
+        summary="s",
+        task_categories=["coding"],
+        failure_modes=[
+            FailureLabel(value="invalid_invocation", span_ids=["a"], reason="first"),
+            FailureLabel(value="invalid_invocation", span_ids=["b", "a"], reason="second"),
+        ],
+        uncertain=None,
+    )
+    assert verdict_labels(verdict) == [
+        ("task_category", "coding", [], None),
+        ("failure_mode", "invalid_invocation", ["a", "b"], "first"),
+    ]
+
+
+def test_uncertain_is_owner_only() -> None:
+    row = {
+        "turn_index": 0,
+        "outcome": "indeterminate",
+        "summary": "s",
+        "uncertain": "step limit",
+        "provenance": "machine",
+        "signals": {},
+        "labels": [],
+    }
+    assert turn_analysis(row, is_owner=True).uncertain == "step limit"
+    assert turn_analysis(row, is_owner=False).uncertain is None

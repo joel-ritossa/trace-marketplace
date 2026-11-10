@@ -357,7 +357,10 @@ async def test_sweep_due_ids(api: httpx.AsyncClient, db: asyncpg.Connection) -> 
             *args,
         )
         rows = await analysis_q.due_ids(
-            db, older_than_minutes=30, idle_seconds=settings.analysis_idle_seconds
+            db,
+            older_than_minutes=30,
+            idle_seconds=settings.analysis_idle_seconds,
+            limit=1_000_000,  # the shared DB may hold older due traces
         )
         return dict(rows)
 
@@ -365,6 +368,12 @@ async def test_sweep_due_ids(api: httpx.AsyncClient, db: asyncpg.Connection) -> 
     assert trace_id not in await due("analysis_attempts = 1")
     # Re-ingest whose analyze kick was lost: budget reset beside a stale row.
     assert (await due("analysis_attempts = 0"))[trace_id] is True
+    # ...unless a run holds the trace's lease: never a second run.
+    leased = "analysis_attempts = 0, analysis_lease_until = now() + interval '1 minute'"
+    assert trace_id not in await due(leased)
+    await db.execute(
+        "update traces set analysis_lease_until = null where id = $1", uuid.UUID(trace_id)
+    )
 
     # Crash on the final budgeted attempt: claimed to the cap, no row, no
     # dead letter — must still re-enqueue (the middleware enforces the

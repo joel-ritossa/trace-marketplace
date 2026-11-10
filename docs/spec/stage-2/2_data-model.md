@@ -25,7 +25,7 @@ New tables plus a minimal stage-1 contact surface. Same ground rules as stage 1:
 | `id` | uuid PK | |
 | `user_id` | uuid | References `profiles.id`. |
 | `type` | text | `review_request \| subscription_match \| upload_failed`. App-validated; new types are additive. |
-| `payload` | jsonb | Type-specific: `review_request` → upload_id + item count (digested per upload); `subscription_match` → subscription_id + name + match_count (digested per subscription; trace_id only while the count is 1, so a single match deep-links the trace); `upload_failed` → upload_id. Always enough to build the link target. |
+| `payload` | jsonb | Type-specific: `review_request` → upload_id + filename + item_count + uncertain_turns, and trace_id + trace_name while every item in the digest is on one trace (digested per upload; a new item only when a trace with no open item becomes uncertain); `subscription_match` → subscription_id + name + match_count (digested per subscription; trace_id only while the count is 1, so a single match deep-links the trace); `upload_failed` → upload_id. Always enough to build the link target. |
 | `created_at` | timestamptz | |
 | `read_at` | timestamptz | Null = unread. |
 
@@ -42,12 +42,12 @@ Generic plumbing; the question lives in the jsonb payload so it can change witho
 | `question_type` | text | `verdict` (column default; the only value). |
 | `context` | jsonb | `{ turns: [{ turn_index, reason, summary }] }` — the trace's uncertain machine turns and why the agent could not judge them. |
 | `answer` | jsonb | Unused since the agent judge (answers are turn relabels in `turn_analysis`); always null. |
-| `status` | text | `open \| resolved \| superseded`. `resolved` when owner relabels leave no uncertain turn; `superseded` when a re-judge changes or clears the uncertain set. |
+| `status` | text | `open \| resolved \| superseded`. `resolved` when owner relabels leave no uncertain turn; `superseded` when a re-judge clears the uncertain set. |
 | `created_at` | timestamptz | |
 | `resolved_at` | timestamptz | |
 | `resolved_by` | uuid | References `profiles.id`; set when the owner's relabels close the item. |
 
-Constraint: at most one `open` item per trace (partial unique index on `trace_id` where `status = 'open'`). An analysis run whose uncertain-turn set differs from the open item's marks it `superseded` and creates a fresh one (an unchanged set keeps the item) — never duplicates. Owner relabels narrow the open item's context in place.
+Constraint: at most one `open` item per trace (partial unique index on `trace_id` where `status = 'open'`). A changed uncertain-turn set updates the open item's context in place (analysis runs and owner relabels alike); an item is created only when none is open — never duplicates, no notification churn as a session grows.
 
 ### subscriptions
 
@@ -119,7 +119,7 @@ One row per judged turn; PK `(trace_id, turn_index)`. A trace with no turn spans
 
 ### trace_labels
 
-One row per label, hung off a turn (`(trace_id, turn_index)` FK → `turn_analysis`, cascade delete).
+One row per label, hung off a turn (`(trace_id, turn_index)` FK → `turn_analysis`, cascade delete); unique `(trace_id, turn_index, field, value)` — a value cited twice is one row with merged span ids.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -152,6 +152,8 @@ The scalar `failure_mode` / `task_category`, every `*_confidence` / `*_provenanc
 
 ### Analysis state (derived, not stored)
 
+The run lease lives on `traces`: `analysis_lease_until` (one analyze run per trace; heartbeat-extended) and `analysis_rerun` (`incremental | finalize`, the mode a run that found the lease held asked for; its holder enqueues it on release).
+
 The API derives the session analysis status the UI requires ([4_pages.md](4_pages.md)) from `trace_analysis`, `traces.analysis_attempts` and the dead-letter table (`queries/analysis.py:derive_status`):
 
 | Status | Condition |
@@ -180,7 +182,7 @@ All additive, via new migrations:
 
 ## Indexes
 
-`api_keys(key_hash)` unique; `notifications(user_id, created_at desc)` + partial on unread; `review_items(trace_id)` with the partial-unique open constraint, partial index on `status = 'open'`; `subscriptions(owner_id)`; unique `(subscription_id, trace_id)` on subscription_matches; `analyzer_results(trace_id)`; `trace_labels(trace_id, turn_index)`; GIN on `trace_analysis(task_categories)` and `(failure_modes)` (the filters are array overlap); `trace_analysis` and `turn_analysis` are otherwise PK-joined.
+`api_keys(key_hash)` unique; `notifications(user_id, created_at desc)` + partial on unread; `review_items(trace_id)` with the partial-unique open constraint, partial index on `status = 'open'`; `subscriptions(owner_id)`; unique `(subscription_id, trace_id)` on subscription_matches; `analyzer_results(trace_id)`; unique `trace_labels(trace_id, turn_index, field, value)`; GIN on `trace_analysis(task_categories)` and `(failure_modes)` (the filters are array overlap); `trace_analysis` and `turn_analysis` are otherwise PK-joined.
 
 ## Access Rules
 
@@ -193,7 +195,7 @@ Enforced in API queries; mirrored as RLS policies (stage-1 rule).
 | `review_items` | Owner of the referenced trace only (read; closed by turn relabels). |
 | `subscriptions`, `subscription_matches` | Owner only. |
 | `analyzer_results` | Mirrors the referenced trace (owner, or anyone if listed). |
-| `trace_analysis`, `turn_analysis`, `trace_labels` | Mirror `traces` exactly: owner, or any authenticated user when the trace is listed. Read-only for clients; turn relabels go through the API. |
+| `trace_analysis`, `turn_analysis`, `trace_labels` | Mirror `traces` exactly: owner, or any authenticated user when the trace is listed. Read-only for clients; turn relabels go through the API. Direct `turn_analysis` reads are column-limited for every client (owners included) to `trace_id, turn_index, outcome, summary, signals, provenance, analyzed_at`: `uncertain` is owner-only review content and `model` / `usage` / `fingerprint` are internal — the API serves them, owner-scoped. |
 | `span_raw` | Owner of the referenced trace only — never readable by non-owners regardless of visibility. |
 | Download (delta to stage 1) | Owner gets the raw storage object; an acquirer gets the scrubbed artifact. |
 
