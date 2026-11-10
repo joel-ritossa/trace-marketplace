@@ -10,19 +10,24 @@ SUBAGENTS = "subagents"
 def discover(paths: list[Path], since_hours: float | None = None) -> list[Path]:
     """`*.json` / `*.jsonl` files (any case) under the given paths, recursive,
     sorted, deduped. `since_hours` keeps only files modified in the last N
-    hours — file selection only, never content interpretation. Files under a
-    `subagents` directory are skipped: they upload with their parent session."""
+    hours — file selection only, never content interpretation. Files inside a
+    session's companion directory (`X/` beside `X.jsonl`: subagent
+    transcripts, title metadata) are skipped; subagents upload with `X`."""
     found: set[Path] = set()
     for path in paths:
         if path.is_file() and path.suffix.lower() in SUFFIXES:
             found.add(path)
         elif path.is_dir():
             found.update(p for p in path.rglob("*") if p.is_file() and p.suffix.lower() in SUFFIXES)
-    found = {p for p in found if SUBAGENTS not in p.parts}
+    found = {p for p in found if not _in_session_dir(p)}
     if since_hours is not None:
         cutoff = time.time() - since_hours * 3600
         found = {p for p in found if (_stat(p) or (0, -1.0))[1] >= cutoff}
     return sorted(found)
+
+
+def _in_session_dir(path: Path) -> bool:
+    return any(d.with_name(f"{d.name}.jsonl").is_file() for d in path.parents if d.name)
 
 
 def _subagent_files(path: Path) -> list[Path]:

@@ -68,8 +68,9 @@ def _session_with_subagents(tmp_path):
     return subs
 
 
-def test_discover_skips_subagents_dir(tmp_path):
+def test_discover_skips_session_companion_dir(tmp_path):
     _session_with_subagents(tmp_path)
+    (tmp_path / "s" / "custom-title.json").write_text("{}")
     assert discover([tmp_path]) == [tmp_path / "s.jsonl"]
 
 
