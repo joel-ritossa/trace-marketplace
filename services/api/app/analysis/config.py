@@ -32,7 +32,7 @@ class AnalysisSettings(BaseSettings):
     # and the roll-up; tool rounds per turn before the verdict is forced and
     # marked indeterminate; turns judged concurrently per run.
     judge_model: str = "gpt-5-mini"
-    agent_max_steps: int = Field(20, ge=1)
+    agent_max_steps: int = Field(100, ge=1)
     turn_concurrency: int = Field(4, ge=1)
 
     # Similar behavior (docs/proposals/similar-behavior.md): one embedding

@@ -16,6 +16,8 @@ from app.analysis.trace_input import SpanInput, TraceInput
 READ_TURN_PAGE_SPANS = 25
 PREVIEW_CHARS = 200
 SEARCH_MAX_HITS = 20
+# list_turns shows every turn, so its asks are short; read_turn has the full one.
+LIST_ASK_CHARS = 100
 
 SPECS: list[dict[str, Any]] = [
     {
@@ -28,7 +30,8 @@ SPECS: list[dict[str, Any]] = [
         "description": (
             "One turn's spans in order, one row each: span_id, kind, name/tool, status, "
             "duration, input/output previews. Subagent spans are indented under the call "
-            f"that spawned them. Paged, {READ_TURN_PAGE_SPANS} spans per page."
+            f"that spawned them. Paged, {READ_TURN_PAGE_SPANS} spans per page; the first "
+            "page also lists the turn's error spans with their offsets."
         ),
         "parameters": {
             "type": "object",
@@ -71,8 +74,8 @@ def list_turns(turns: list[TurnView]) -> str:
     for turn in turns:
         errors = sum(1 for s in turn.spans if s.status == "error")
         rows.append(
-            f"turn {turn.index}: {_duration_ms(turn)}ms, {len(turn.spans)} spans, "
-            f"{errors} errors | ask: {preview(turn.ask)}"
+            f"turn {turn.index} ({turn.origin}): {_duration_ms(turn)}ms, {len(turn.spans)} spans, "
+            f"{errors} errors | ask: {preview(turn.ask, LIST_ASK_CHARS)}"
         )
     return "\n".join(rows)
 
@@ -82,10 +85,17 @@ def read_turn(
 ) -> str:
     turn = _turn(turns, turn_index)
     offset = max(offset, 0)
+    if offset and offset >= len(turn.spans):
+        raise ValueError(f"turn {turn.index} has {len(turn.spans)} spans; offset is past the end")
     page = turn.spans[offset : offset + READ_TURN_PAGE_SPANS]
-    lines = [f"turn {turn.index}: spans {offset}-{offset + len(page) - 1} of {len(turn.spans)}"]
-    if offset == 0 and turn.ask:
-        lines.append(f"ask: {middle_out(turn.ask, config.conversation_cap_chars)[0]}")
+    lines = [
+        f"turn {turn.index} ({turn.origin}): spans {offset}-{offset + len(page) - 1} "
+        f"of {len(turn.spans)}"
+    ]
+    if offset == 0:
+        ask = middle_out(turn.ask, config.conversation_cap_chars)[0] if turn.ask else None
+        lines.append(f"ask: {ask or '(not recorded)'}")
+        lines.extend(_error_index(turn))
     for span in page:
         indent = "  " * turn.depth[span.source_span_id]
         lines.append(f"{indent}{_row(span)}")
@@ -113,6 +123,23 @@ def read_span(trace: TraceInput, span_id: str, config: RendererConfig) -> str:
     if not any(text for _, text in fields):
         lines.append(f"attrs: {content.attribute_summary(span) or '(none)'}")
     return "\n".join(lines)
+
+
+def final_message(turn: TurnView, config: RendererConfig) -> str | None:
+    """The output of the turn's last llm span: the agent's answer."""
+    llm = [s for s in turn.spans if s.kind == "llm" and content.output_text(s)]
+    return (
+        middle_out(content.output_text(llm[-1]), config.conversation_cap_chars)[0] if llm else None
+    )
+
+
+def _error_index(turn: TurnView) -> list[str]:
+    errors = [(i, s) for i, s in enumerate(turn.spans) if s.status == "error"]
+    if not errors:
+        return []
+    shown = [f"  offset {i}: {_row(s)}" for i, s in errors[:SEARCH_MAX_HITS]]
+    more = len(errors) - len(shown)
+    return [f"error spans ({len(errors)}):", *shown] + ([f"  ({more} more)"] if more else [])
 
 
 def search(turns: list[TurnView], query: str, turn_index: int | None = None) -> str:
@@ -177,8 +204,8 @@ def _row(span: SpanInput) -> str:
     return f"{span.source_span_id} {span.kind} {label} [{status}] {span.duration_ms}ms"
 
 
-def preview(text: str | None) -> str:
-    return middle_out(" ".join(text.split()), PREVIEW_CHARS)[0] if text else "-"
+def preview(text: str | None, chars: int = PREVIEW_CHARS) -> str:
+    return middle_out(" ".join(text.split()), chars)[0] if text else "-"
 
 
 def _duration_ms(turn: TurnView) -> int:

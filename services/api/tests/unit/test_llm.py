@@ -49,6 +49,15 @@ async def test_permanent_provider_error_is_classified(monkeypatch) -> None:
         await llm.run_agent(AGENT, "hi", 3)
 
 
+async def test_context_overflow_is_not_permanent(monkeypatch) -> None:
+    exc = api_error(openai.BadRequestError, 400)
+    exc.code = "context_length_exceeded"
+    monkeypatch.setattr(Runner, "run", raising(exc))
+    with pytest.raises(llm.ContextLimitExceeded) as info:
+        await llm.run_agent(AGENT, "hi", 3)
+    assert info.value.history == [{"role": "user", "content": "hi"}]
+
+
 async def test_transient_provider_error_propagates(monkeypatch) -> None:
     monkeypatch.setattr(Runner, "run", raising(api_error(openai.RateLimitError, 429)))
     with pytest.raises(openai.RateLimitError):

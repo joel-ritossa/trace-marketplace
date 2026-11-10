@@ -46,13 +46,36 @@ def test_turnless_trace_is_one_turn_with_every_span() -> None:
     assert turn.depth == {f"{0:016x}": 0, f"{1:016x}": 1, f"{2:016x}": 0}
 
 
-def test_fingerprint_is_stable_and_tracks_growth() -> None:
-    before = split(session())
-    assert [t.fingerprint for t in split(session())] == [t.fingerprint for t in before]
+def test_fingerprint_ignores_timestamps_and_tracks_changes() -> None:
+    before = [t.fingerprint for t in split(session())]
+    shifted = session()
+    shifted.spans[:] = [
+        s.model_copy(
+            update={
+                "started_at": s.started_at + timedelta(days=1),
+                "ended_at": s.ended_at + timedelta(days=1),
+            }
+        )
+        for s in shifted.spans
+    ]
+    assert [t.fingerprint for t in split(shifted)] == before
 
     grown = session()
-    late = _span(8, 6, kind="llm")
-    grown.spans.append(late.model_copy(update={"ended_at": late.ended_at + timedelta(hours=1)}))
-    after = split(grown)
-    assert after[0].fingerprint == before[0].fingerprint
-    assert after[1].fingerprint != before[1].fingerprint
+    grown.spans.append(_span(8, 6, kind="llm"))
+    assert [t.fingerprint for t in split(grown)][1] != before[1]
+    failed = session()
+    failed.spans[2] = failed.spans[2].model_copy(update={"status": "error"})
+    assert [t.fingerprint == b for t, b in zip(split(failed), before, strict=True)] == [False, True]
+
+
+def test_split_ignores_bool_and_duplicate_indices_and_reads_origin() -> None:
+    trace = session()
+    automated = trace.spans[6].model_copy(
+        update={"attributes": {**trace.spans[6].attributes, "turn.origin": "automated"}}
+    )
+    trace.spans[6] = automated
+    trace.spans.append(_span(9, 0, kind="agent", attributes={"turn.index": 1}))
+    trace.spans.append(_span(10, 0, kind="agent", attributes={"turn.index": True}))
+    turns = split(trace)
+    assert [(t.index, t.origin) for t in turns] == [(0, "human"), (1, "automated")]
+    assert turns[1].span.source_span_id == f"{6:016x}"

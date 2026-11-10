@@ -14,7 +14,8 @@ Normative design: `docs/spec/stage-2/9_session-analysis.md`.
    has one `turn.index` span per user ask; a turn is that span and all its
    descendants, nested subagent spans included. A trace with no turn spans
    (native OTLP) is one synthetic turn 0 over every span. Each turn carries a
-   fingerprint (hash of its span ids and latest end time).
+   fingerprint (hash of its span ids, statuses and input/output digests; no
+   timestamps).
 2. **Decide what to judge** (`worker/tasks/analyze.py:analyze_trace`). A turn
    is judged when it has no `turn_analysis` row or its fingerprint changed,
    and never when the row is `provenance = human`. Non-session traces are
@@ -32,8 +33,10 @@ Normative design: `docs/spec/stage-2/9_session-analysis.md`.
 4. **Validate the answer** (`judge.py:_check`). Categories must be in the
    owner's task scope (plus `other`); each failure mode needs at least one
    `span_id` that is an llm/tool span inside the turn. Violations are fed
-   back once; if the retry still violates, bad ids and labels are dropped and
-   `uncertain` is set.
+   back once, with a few valid span ids of the turn as candidates; if the
+   retry still violates, bad ids and labels are dropped and `uncertain` says
+   so in plain language (`judge.py:_verdict`). Otherwise `uncertain` is the
+   agent's own, meant only for "a human should look", not for caveats.
 5. **Roll up** (`judge.py:roll_up_with_meta`): one tool-less call over each
    turn's ask, outcome, failure modes and one-line summary (not spans) gives
    the session `goal`, `outcome`, `summary` and the listing copy. Session
@@ -51,8 +54,13 @@ Normative design: `docs/spec/stage-2/9_session-analysis.md`.
   (`ANALYSIS_RENDER_TOOL_FIELD_CAP_CHARS`, `..._CONVERSATION_CAP_CHARS`);
   per-turn usage is in the audit row.
 - **A turn that exhausts the step limit** (`ANALYSIS_AGENT_MAX_STEPS`, default
-  20 model turns) is forced to answer from what it has read and comes back
-  `indeterminate` with `uncertain` set, so it lands in the review queue.
+  100 model turns) **or the model's context window** is forced to answer
+  from what it has read; that outcome stands and `uncertain` is set, so it
+  lands in the review queue. Every tool result stays in the agent's
+  conversation, so a very large turn can overflow the window; the forced
+  answer then drops the older half of the tool outputs until it fits
+  (`judge.py:_forced_answer`). The judge is told to skim long turns (first
+  and last page, then search) rather than page through every span.
 - **Judgments are made once.** An unchanged turn is never revisited: changing
   the model, the prompts or the owner's task scope does not re-judge
   history. A turn is re-judged only when its fingerprint changes, and a

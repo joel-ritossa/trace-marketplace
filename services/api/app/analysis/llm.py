@@ -18,7 +18,15 @@ from dataclasses import dataclass
 from typing import Any
 
 import openai
-from agents import Agent, MaxTurnsExceeded, ModelBehaviorError, Runner, set_tracing_disabled
+from agents import (
+    Agent,
+    MaxTurnsExceeded,
+    ModelBehaviorError,
+    RunContextWrapper,
+    RunHooks,
+    Runner,
+    set_tracing_disabled,
+)
 from dotenv import dotenv_values
 from pydantic import BaseModel
 
@@ -32,7 +40,7 @@ _PERMANENT = (
     openai.AuthenticationError,
     openai.PermissionDeniedError,
     openai.NotFoundError,
-    openai.BadRequestError,  # includes context-window overflows
+    openai.BadRequestError,  # context-window overflows split out in run_agent
     openai.UnprocessableEntityError,
 )
 
@@ -101,23 +109,47 @@ class AgentRun:
     meta: CallMeta
 
 
-class StepLimitExceeded(Exception):
-    """The run used up `max_turns`; carries what it did so far."""
+class RunCutShort(Exception):
+    """The run stopped before answering; carries the conversation so far
+    (input items to continue from) and what it cost."""
 
     def __init__(self, history: list[Any], meta: CallMeta):
-        super().__init__("agent step limit reached")
+        super().__init__(type(self).__name__)
         self.history = history
         self.meta = meta
+
+
+class StepLimitExceeded(RunCutShort):
+    """The run used up `max_turns`."""
+
+
+class ContextLimitExceeded(RunCutShort):
+    """A model call's input outgrew the model's context window; `history`
+    is the input that overflowed."""
+
+
+class _LastInput(RunHooks):
+    """Remembers the latest model input and the run's usage: a provider
+    error carries neither."""
+
+    def __init__(self) -> None:
+        self.input: list[Any] = []
+        self.context: RunContextWrapper | None = None
+
+    async def on_llm_start(self, context, agent, system_prompt, input_items) -> None:
+        self.input, self.context = list(input_items), context
 
 
 async def run_agent(agent: Agent, input: str | list[Any], max_turns: int) -> AgentRun:
     """One Agents SDK run. Permanent provider errors raise
     PermanentAnalysisError, unparseable output MalformedResponse, the turn
-    bound StepLimitExceeded; everything else propagates as transient."""
+    bound StepLimitExceeded, a context-window overflow ContextLimitExceeded;
+    everything else propagates as transient."""
     _load_env_files()
     started = time.perf_counter()
+    last = _LastInput()
     try:
-        result = await Runner.run(agent, input, max_turns=max_turns)
+        result = await Runner.run(agent, input, max_turns=max_turns, hooks=last)
     except MaxTurnsExceeded as exc:
         data = exc.run_data
         if data is None:
@@ -127,6 +159,10 @@ async def run_agent(agent: Agent, input: str | list[Any], max_turns: int) -> Age
     except ModelBehaviorError as exc:
         raise MalformedResponse(str(exc)) from exc
     except _PERMANENT as exc:
+        if getattr(exc, "code", None) == "context_length_exceeded":
+            usage = last.context.usage if last.context else None
+            history = last.input or _as_list(input)
+            raise ContextLimitExceeded(history, _meta(usage, started)) from None
         raise PermanentAnalysisError(str(exc)) from exc
     return AgentRun(
         result.final_output, result.to_input_list(), _meta(result.context_wrapper.usage, started)
@@ -154,8 +190,11 @@ def _as_list(input: str | list[Any]) -> list[Any]:
 
 
 def _meta(usage: Any, started: float) -> CallMeta:
+    latency_ms = int((time.perf_counter() - started) * 1000)
+    if usage is None:
+        return CallMeta(latency_ms=latency_ms, llm_calls=0)
     return CallMeta(
-        latency_ms=int((time.perf_counter() - started) * 1000),
+        latency_ms=latency_ms,
         input_tokens=usage.input_tokens,
         output_tokens=usage.output_tokens,
         llm_calls=usage.requests,

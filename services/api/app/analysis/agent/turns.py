@@ -3,7 +3,7 @@
 import hashlib
 from dataclasses import dataclass
 
-from app.analysis.content import first_user_message
+from app.analysis.content import first_user_message, input_text, output_text
 from app.analysis.trace_input import SpanInput, TraceInput
 
 
@@ -17,13 +17,24 @@ class TurnView:
     spans: list[SpanInput]
     # source_span_id -> nesting depth below the turn (0 = direct child).
     depth: dict[str, int]
-    # Stable across re-ingest; changes when the turn gains or ends spans.
+    # Stable across re-ingest of unchanged content (no timestamps: clockless
+    # logs get synthesized ones); changes when a span is added or its
+    # status or content changes.
     fingerprint: str
+    # "human" (a person's ask) or "automated" (a CI, scheduled or peer
+    # event that started the work cycle); from the turn span's `turn.origin`.
+    origin: str = "human"
 
 
 def split(trace: TraceInput) -> list[TurnView]:
     children = _children(trace.spans)
-    turn_spans = [s for s in trace.spans if isinstance(s.attributes.get("turn.index"), int)]
+    # First span per index wins; booleans are not indices.
+    by_index: dict[int, SpanInput] = {}
+    for s in trace.spans:
+        index = s.attributes.get("turn.index")
+        if isinstance(index, int) and not isinstance(index, bool):
+            by_index.setdefault(index, s)
+    turn_spans = list(by_index.values())
     if not turn_spans:
         ids = {s.source_span_id for s in trace.spans}
         roots = [s for s in trace.spans if s.source_parent_span_id not in ids]
@@ -67,10 +78,12 @@ def _view(
         depth[current.source_span_id] = level
         stack.extend((child, level + 1) for child in children.get(current.source_span_id, []))
     spans = [s for s in trace.spans if s.source_span_id in depth]
-    ends = [s.ended_at for s in spans] + ([span.ended_at] if span else [])
-    digest = hashlib.sha256("\n".join(s.source_span_id for s in spans).encode())
-    if ends:
-        digest.update(max(ends).isoformat().encode())
+    digest = hashlib.sha256()
+    for s in ([span] if span else []) + spans:
+        text = f"{input_text(s) or ''}\0{output_text(s) or ''}"
+        signal = hashlib.sha256(text.encode()).hexdigest()
+        digest.update(f"{s.source_span_id} {s.status} {signal}\n".encode())
+    origin = "automated" if span and span.attributes.get("turn.origin") == "automated" else "human"
     return TurnView(
-        index, ask if isinstance(ask, str) else None, span, spans, depth, digest.hexdigest()
+        index, ask if isinstance(ask, str) else None, span, spans, depth, digest.hexdigest(), origin
     )

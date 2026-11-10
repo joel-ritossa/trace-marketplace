@@ -65,19 +65,25 @@ async def test_happy_path_with_meta(monkeypatch) -> None:
     assert (meta.llm_calls, meta.tool_calls, meta.input_tokens) == (1, 1, 100)
 
 
-async def test_invalid_span_id_is_fed_back_and_fixed(monkeypatch) -> None:
+async def test_invalid_span_id_is_fed_back_with_candidates(monkeypatch) -> None:
     seen = install(
         monkeypatch, [tool("read_turn", turn_index=0), answer([TURN_SPAN]), answer([LLM_SPAN])]
     )
     verdict = await judge.judge_turn(session(), 0, SETTINGS)
-    assert TURN_SPAN in seen[1]["input"][-1]["content"]
+    feedback = seen[1]["input"][-1]["content"]
+    last_llm = f"{4:016x}"
+    assert TURN_SPAN in feedback and "omission" in feedback and f"{last_llm} (llm" in feedback
     assert verdict.failure_modes[0].span_ids == [LLM_SPAN] and verdict.uncertain is None
 
 
-async def test_invalid_after_retry_drops_label_and_sets_uncertain(monkeypatch) -> None:
+async def test_invalid_after_retry_drops_label_in_plain_words(monkeypatch) -> None:
     install(monkeypatch, [tool("read_turn", turn_index=0), answer([TURN_SPAN]), answer(["nope"])])
     verdict = await judge.judge_turn(session(), 0, SETTINGS)
-    assert verdict.failure_modes == [] and verdict.uncertain
+    assert verdict.failure_modes == []
+    assert verdict.uncertain == (
+        "The judge could not point to the spans that show 'invention_of_information'; "
+        "that label was dropped."
+    )
 
 
 async def test_answer_without_reading_the_turn_is_a_violation(monkeypatch) -> None:
@@ -92,14 +98,66 @@ async def test_answer_without_reading_the_turn_is_a_violation(monkeypatch) -> No
 async def test_reading_another_turn_does_not_count(monkeypatch) -> None:
     install(monkeypatch, [tool("read_turn", turn_index=1), answer([LLM_SPAN]), answer([LLM_SPAN])])
     verdict = await judge.judge_turn(session(), 0, SETTINGS)
-    assert "never read the turn" in verdict.uncertain
+    assert "without reading" in verdict.uncertain
 
 
 async def test_step_limit_forces_indeterminate(monkeypatch) -> None:
     seen = install(monkeypatch, [tool("list_turns")] * 3 + [answer([LLM_SPAN], outcome="success")])
     verdict = await judge.judge_turn(session(), 0, SETTINGS)
     assert seen[-1]["agent"].model_settings.tool_choice == "none"
-    assert verdict.outcome == "indeterminate" and "step limit" in verdict.uncertain
+    assert verdict.outcome == "success" and "all 3 of its steps" in verdict.uncertain
+
+
+async def test_context_overflow_degrades_like_the_step_limit(monkeypatch) -> None:
+    outputs = [{"type": "function_call_output", "output": f"page {i}"} for i in range(4)]
+    seen: list = []
+
+    async def fake_run(agent, input, max_turns):
+        seen.append(input)
+        if len(seen) < 3:  # the run, then the first forced answer, overflow
+            raise llm.ContextLimitExceeded([{"role": "user", "content": "go"}, *outputs], META)
+        return llm.AgentRun(judge._Answer(**answer([LLM_SPAN])["answer"]), [], META)
+
+    monkeypatch.setattr(llm, "run_agent", fake_run)
+    verdict = await judge.judge_turn(session(), 0, SETTINGS)
+    kept = [[i["output"] for i in call if i.get("type")] for call in seen[1:]]
+    assert kept[0][2:] == ["page 2", "page 3"] and kept[1][3:] == ["page 3"]
+    assert verdict.outcome == "failure" and "too large" in verdict.uncertain
+
+
+async def test_opening_message_carries_the_previous_turn(monkeypatch) -> None:
+    seen = install(monkeypatch, [tool("read_turn", turn_index=1), answer([], failure_modes=[])])
+    await judge.judge_turn(session(), 1, SETTINGS)
+    assert "Previous turn 0 (human):\nask: first ask" in seen[0]["input"]
+
+
+async def test_read_past_the_end_does_not_count(monkeypatch) -> None:
+    install(monkeypatch, [tool("read_turn", turn_index=0, offset=99), answer([LLM_SPAN])] * 2)
+    verdict = await judge.judge_turn(session(), 0, SETTINGS)
+    assert "without reading" in verdict.uncertain
+
+
+async def test_malformed_retry_keeps_the_first_answer(monkeypatch) -> None:
+    script = [tool("read_turn", turn_index=0), answer([TURN_SPAN, LLM_SPAN])]
+
+    install(monkeypatch, script)
+    scripted = llm.run_agent
+
+    async def fake_run(agent, input, max_turns):
+        if not script:
+            raise llm.MalformedResponse("bad")
+        return await scripted(agent, input, max_turns)
+
+    monkeypatch.setattr(llm, "run_agent", fake_run)
+    verdict = await judge.judge_turn(session(), 0, SETTINGS)
+    assert verdict.failure_modes[0].span_ids == [LLM_SPAN] and verdict.uncertain is None
+
+
+def test_round_budget_cuts_later_results() -> None:
+    usage = judge._Usage(0, round_budget=10)
+    assert judge._within_round_budget("x" * 8, usage) == "x" * 8
+    assert judge._within_round_budget("y" * 8, usage) == "yy\n" + judge._ROUND_BUDGET_NOTE
+    assert judge._within_round_budget("z", usage) == judge._ROUND_BUDGET_NOTE
 
 
 async def test_owner_scope_constrains_categories(monkeypatch) -> None:
