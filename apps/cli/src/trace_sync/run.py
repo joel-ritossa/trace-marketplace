@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from trace_sync.client import FileOutcome, PendingUpload, SyncClient
-from trace_sync.files import StabilityScanner, discover
+from trace_sync.files import DEFAULT_QUIET_SECONDS, QuietScanner, discover
 
 WATCH_INTERVAL_SECONDS = 2.0
 DRAIN_INTERVAL_SECONDS = 1.0
@@ -74,7 +74,7 @@ def sync_batch(client: SyncClient, files: list[Path], counts: Counts) -> list[tu
 def run_sync(client: SyncClient, paths: list[Path], since_hours: float | None = None) -> int:
     files = discover(paths, since_hours)
     if not files:
-        print("no .json/.jsonl files found under the given paths", file=sys.stderr)
+        print("no .json/.jsonl/.jsonl.zst files found under the given paths", file=sys.stderr)
         return EXIT_UNRUNNABLE
     counts = Counts()
     sync_batch(client, files, counts)
@@ -83,7 +83,7 @@ def run_sync(client: SyncClient, paths: list[Path], since_hours: float | None = 
 
 
 def _sync_and_mark(
-    client: SyncClient, files: list[Path], counts: Counts, scanner: StabilityScanner
+    client: SyncClient, files: list[Path], counts: Counts, scanner: QuietScanner
 ) -> None:
     # Transport failures stay unmarked so the scanner re-offers the file;
     # server rejections are marked — a permanently bad file must not loop.
@@ -92,11 +92,17 @@ def _sync_and_mark(
             scanner.mark_synced(path)
 
 
-def run_watch(client: SyncClient, paths: list[Path], since_hours: float | None = None) -> int:
-    """Initial sync pass, then upload files as they appear or change.
+def run_watch(
+    client: SyncClient,
+    paths: list[Path],
+    since_hours: float | None = None,
+    quiet_seconds: float = DEFAULT_QUIET_SECONDS,
+) -> int:
+    """Initial sync pass, then upload files once they have been quiet for
+    `quiet_seconds` after appearing or changing.
     Exits only on interrupt; the code reflects failures seen so far."""
     counts = Counts()
-    scanner = StabilityScanner(paths, since_hours)
+    scanner = QuietScanner(paths, since_hours, quiet_seconds)
     _sync_and_mark(client, discover(paths, since_hours), counts, scanner)
     print(f"watching {', '.join(str(p) for p in paths)} — Ctrl-C to stop")
     try:

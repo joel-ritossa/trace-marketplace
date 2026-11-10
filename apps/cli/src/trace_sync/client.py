@@ -10,8 +10,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
+import zstandard
 
-from trace_sync.files import upload_bytes
+from trace_sync.files import upload_bytes, upload_name
 
 POLL_TIMEOUT_SECONDS = 120.0
 RETRY_AFTER_CAP_SECONDS = 60.0
@@ -73,11 +74,13 @@ class SyncClient:
             data = upload_bytes(path)
         except OSError as exc:
             return FileOutcome("failed", f"failed: {exc}", retryable=True)
+        except zstandard.ZstdError as exc:
+            return FileOutcome("failed", f"failed: cannot decompress {path.name}: {exc}")
         try:
             res = self._request(
                 "POST",
                 "/v1/uploads",
-                files={"file": (path.name, data, "application/json")},
+                files={"file": (upload_name(path), data, "application/json")},
             )
         except httpx.HTTPError as exc:
             return FileOutcome("failed", f"failed: {exc}", retryable=True)

@@ -1,26 +1,40 @@
 """Trace-file discovery and the watch-mode stability scan (5_cli.md)."""
 
 import time
+from collections.abc import Callable
 from pathlib import Path
+
+import zstandard
 
 from trace_sync.prune import prune_jsonl
 
-SUFFIXES = (".json", ".jsonl")
+SUFFIXES = (".json", ".jsonl", ".jsonl.zst")
 SUBAGENTS = "subagents"
+DEFAULT_QUIET_SECONDS = 300.0
+
+
+def _is_trace(path: Path) -> bool:
+    return path.name.lower().endswith(SUFFIXES)
+
+
+def upload_name(path: Path) -> str:
+    """Filename sent to the server: `.zst` dropped so a session keeps its name
+    live and archived."""
+    return path.name.removesuffix(".zst") if path.suffix.lower() == ".zst" else path.name
 
 
 def discover(paths: list[Path], since_hours: float | None = None) -> list[Path]:
-    """`*.json` / `*.jsonl` files (any case) under the given paths, recursive,
+    """`*.json` / `*.jsonl` / `*.jsonl.zst` files (any case) under the given paths, recursive,
     sorted, deduped. `since_hours` keeps only files modified in the last N
     hours — file selection only, never content interpretation. Files inside a
     session's companion directory (`X/` beside `X.jsonl`: subagent
     transcripts, title metadata) are skipped; subagents upload with `X`."""
     found: set[Path] = set()
     for path in paths:
-        if path.is_file() and path.suffix.lower() in SUFFIXES:
+        if path.is_file() and _is_trace(path):
             found.add(path)
         elif path.is_dir():
-            found.update(p for p in path.rglob("*") if p.is_file() and p.suffix.lower() in SUFFIXES)
+            found.update(p for p in path.rglob("*") if p.is_file() and _is_trace(p))
     found = {p for p in found if not _in_session_dir(p)}
     if since_hours is not None:
         cutoff = time.time() - since_hours * 3600
@@ -43,12 +57,16 @@ def upload_bytes(path: Path) -> bytes:
     """File bytes plus the session's subagent transcripts appended as
     newline-separated JSONL; session logs are pruned to what the importers
     read (prune.py)."""
-    data = path.read_bytes()
+    if path.suffix.lower() == ".zst":
+        with path.open("rb") as f:
+            data = zstandard.ZstdDecompressor().stream_reader(f).read()
+    else:
+        data = path.read_bytes()
     for sub in _subagent_files(path):
         if not data.endswith(b"\n"):
             data += b"\n"
         data += sub.read_bytes()
-    return prune_jsonl(data) if path.suffix.lower() == ".jsonl" else data
+    return prune_jsonl(data) if upload_name(path).lower().endswith(".jsonl") else data
 
 
 def _stat(path: Path) -> tuple[int, float] | None:
@@ -60,16 +78,24 @@ def _stat(path: Path) -> tuple[int, float] | None:
     return (sum(st.st_size for st in stats), max(st.st_mtime for st in stats))
 
 
-class StabilityScanner:
-    """Tracks (size, mtime) across scans so watch only uploads files that
-    have stopped growing (the spec's debounce). In-process state only — the
-    CLI stays stateless across runs; server dedupe is the source of truth.
+class QuietScanner:
+    """Offers files whose combined mtime is at least `quiet_seconds` old and
+    that differ from the last synced stat, so an active session uploads once
+    it goes quiet. In-process state only — the CLI stays stateless across
+    runs; server dedupe is the source of truth.
     """
 
-    def __init__(self, paths: list[Path], since_hours: float | None = None) -> None:
+    def __init__(
+        self,
+        paths: list[Path],
+        since_hours: float | None = None,
+        quiet_seconds: float = DEFAULT_QUIET_SECONDS,
+        clock: Callable[[], float] = time.time,
+    ) -> None:
         self._paths = paths
         self._since_hours = since_hours
-        self._pending: dict[Path, tuple[int, float]] = {}
+        self._quiet = quiet_seconds
+        self._clock = clock
         self._synced: dict[Path, tuple[int, float]] = {}
 
     def mark_synced(self, path: Path) -> None:
@@ -78,22 +104,16 @@ class StabilityScanner:
         stat = _stat(path)
         if stat is not None:
             self._synced[path] = stat
-            self._pending.pop(path, None)
 
     def scan(self) -> list[Path]:
-        """One tick: files whose stats are new/changed vs the synced mark and
-        unchanged since the previous tick (stable) are ready to upload."""
-        ready: list[Path] = []
+        """One tick: files changed since the synced mark and quiet long enough."""
+        now = self._clock()
         present = set(discover(self._paths, self._since_hours))
+        ready = []
         for path in present:
             stat = _stat(path)
-            if stat is None or self._synced.get(path) == stat:
-                continue
-            if self._pending.get(path) == stat:
+            if stat is not None and self._synced.get(path) != stat and now - stat[1] >= self._quiet:
                 ready.append(path)
-            else:
-                self._pending[path] = stat
         # Drop state for deleted files so a long watch doesn't grow forever.
-        self._pending = {p: s for p, s in self._pending.items() if p in present}
         self._synced = {p: s for p, s in self._synced.items() if p in present}
         return sorted(ready)

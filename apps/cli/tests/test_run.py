@@ -65,7 +65,7 @@ def test_watch_interrupt_prints_summary(tmp_path, capsys, monkeypatch):
         raise KeyboardInterrupt
 
     monkeypatch.setattr(run_mod.time, "sleep", interrupt)
-    assert run_watch(client, [tmp_path]) == EXIT_FAILURES
+    assert run_watch(client, [tmp_path], quiet_seconds=0) == EXIT_FAILURES
     out = capsys.readouterr().out
     assert "synced 0 · skipped 0 · failed 1" in out
 
@@ -84,13 +84,12 @@ def _interrupt_after(monkeypatch, ticks: int) -> None:
 
 def test_watch_retries_transport_failures(tmp_path, monkeypatch):
     """A transport failure (server never saw the bytes) is not marked synced:
-    the scanner re-offers the file once its stats are stable again."""
+    the scanner re-offers the file on the next quiet tick."""
     (tmp_path / "a.json").write_text("{}")
     client = FakeClient({"a.json": FileOutcome("failed", "failed: boom", retryable=True)})
 
-    # Initial pass + two scan ticks: tick 1 marks pending, tick 2 re-offers.
-    _interrupt_after(monkeypatch, ticks=2)
-    assert run_watch(client, [tmp_path]) == EXIT_FAILURES
+    _interrupt_after(monkeypatch, ticks=1)
+    assert run_watch(client, [tmp_path], quiet_seconds=0) == EXIT_FAILURES
     assert client.calls == ["a.json", "a.json"]
 
 
@@ -101,5 +100,5 @@ def test_watch_does_not_retry_server_rejections(tmp_path, monkeypatch):
     client = FakeClient({"a.json": FileOutcome("failed", "failed: invalid JSON")})
 
     _interrupt_after(monkeypatch, ticks=3)
-    assert run_watch(client, [tmp_path]) == EXIT_FAILURES
+    assert run_watch(client, [tmp_path], quiet_seconds=0) == EXIT_FAILURES
     assert client.calls == ["a.json"]

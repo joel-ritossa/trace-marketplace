@@ -42,7 +42,7 @@ TRACE_API_KEY=tmk_…  uv run trace-sync sync ../../devdata/sessions-src --since
 6. Leave a watcher running and drop files into the directory:
 
 ```sh
-TRACE_API_KEY=tmk_…  uv run trace-sync watch /tmp/drop
+TRACE_API_KEY=tmk_…  uv run trace-sync watch /tmp/drop --quiet-seconds 2
 cp ../../fixtures/agent-session.json /tmp/drop/        # → uploads within ~2 s
 echo '{"resourceSpans": []}' > /tmp/drop/bad.json       # → failed: Payload contains no valid spans
 ```
@@ -73,8 +73,8 @@ failures surface when no one is looking at a progress bar.
 - **Stateless capture, server-side truth.** The CLI keeps no manifest or
   config (`apps/cli/src/trace_sync/`); dedupe is the server's per-user
   content hash, so syncs are idempotent from any machine, and `watch` is
-  just `sync` without the exit condition (a 2 s size/mtime stability scan,
-  no fs-events dependency).
+  just `sync` without the exit condition (a 2 s scan that uploads a file once its mtime is
+  300 s quiet, no fs-events dependency).
 - **One auth header, two principals.** `Authorization: Bearer` accepts a
   Supabase JWT or a `tmk_` key (`services/api/app/auth.py`) — the only
   stage-1 code change. Keys are sha256-stored, upload-scoped (exactly two

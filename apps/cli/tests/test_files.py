@@ -1,7 +1,9 @@
 import json
 import os
 
-from trace_sync.files import StabilityScanner, discover, upload_bytes
+import zstandard
+
+from trace_sync.files import QuietScanner, discover, upload_bytes, upload_name
 
 
 def test_discover_recursive_json_and_jsonl(tmp_path):
@@ -34,20 +36,20 @@ def test_discover_accepts_explicit_file(tmp_path):
     assert discover([tmp_path / "missing"]) == []
 
 
-def test_scanner_waits_for_stability(tmp_path):
-    scanner = StabilityScanner([tmp_path])
+def test_scanner_waits_for_quiet_period(tmp_path):
     f = tmp_path / "grow.json"
-    f.write_text("{")
+    f.write_text("{}")
+    mtime = f.stat().st_mtime
+    now = [mtime + 10]
+    scanner = QuietScanner([tmp_path], quiet_seconds=60, clock=lambda: now[0])
 
-    assert scanner.scan() == []  # first sighting: pending, not ready
-    f.write_text('{"resourceSpans": []}')  # grew since last tick
-    os.utime(f, (1, 1))  # force a distinct mtime
-    assert scanner.scan() == []  # changed again: still pending
-    assert scanner.scan() == [f]  # stable across two ticks: ready
+    assert scanner.scan() == []  # modified 10s ago: still active
+    now[0] = mtime + 60
+    assert scanner.scan() == [f]  # quiet long enough
 
 
 def test_scanner_skips_synced_until_changed(tmp_path):
-    scanner = StabilityScanner([tmp_path])
+    scanner = QuietScanner([tmp_path], quiet_seconds=0)
     f = tmp_path / "t.json"
     f.write_text("{}")
     scanner.mark_synced(f)
@@ -55,8 +57,7 @@ def test_scanner_skips_synced_until_changed(tmp_path):
     assert scanner.scan() == []  # unchanged since upload
     f.write_text('{"changed": true}')
     os.utime(f, (2, 2))
-    scanner.scan()  # pending tick
-    assert scanner.scan() == [f]  # changed file re-offers once stable
+    assert scanner.scan() == [f]
 
 
 def _session_with_subagents(tmp_path):
@@ -85,12 +86,11 @@ def test_upload_bytes_bundles_sorted_subagents(tmp_path):
 
 def test_stat_reflects_subagent_growth(tmp_path):
     subs = _session_with_subagents(tmp_path)
-    scanner = StabilityScanner([tmp_path])
+    scanner = QuietScanner([tmp_path], quiet_seconds=0)
     scanner.mark_synced(tmp_path / "s.jsonl")
     assert scanner.scan() == []
     (subs / "agent-a.jsonl").write_bytes(b'{"a":1}\n{"a":2}\n')
-    assert scanner.scan() == []  # changed: pending
-    assert scanner.scan() == [tmp_path / "s.jsonl"]  # stable
+    assert scanner.scan() == [tmp_path / "s.jsonl"]
 
 
 def test_upload_bytes_prunes_session_bookkeeping(tmp_path):
@@ -122,3 +122,16 @@ def test_upload_bytes_prunes_session_bookkeeping(tmp_path):
     other = tmp_path / "other.jsonl"
     other.write_bytes(b'{"kind": "metric"}\n')
     assert upload_bytes(other) == b'{"kind": "metric"}\n'
+
+
+def test_zst_matches_plain_twin(tmp_path):
+    raw = b'{"type":"user","message":{"content":"hi"}}\n'
+    plain = tmp_path / "rollout.jsonl"
+    plain.write_bytes(raw)
+    archived = tmp_path / "archived" / "rollout.jsonl.zst"
+    archived.parent.mkdir()
+    archived.write_bytes(zstandard.ZstdCompressor().compress(raw))
+
+    assert archived in discover([archived.parent])
+    assert upload_bytes(archived) == upload_bytes(plain)
+    assert upload_name(archived) == plain.name
