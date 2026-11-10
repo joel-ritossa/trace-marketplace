@@ -1,4 +1,4 @@
-"""Anthropic-block JSONL → per-turn session model (8_session-ingestion.md).
+"""Anthropic-block JSONL → session model (8_session-ingestion.md).
 
 Claude Code and Cursor transcripts share this shape: records typed
 `user`/`assistant` carrying a `message` whose content is a string or a list

@@ -1,7 +1,7 @@
 """Coding-agent session-log importers (8_session-ingestion.md).
 
 Detects raw JSONL session logs (Codex rollouts, Claude Code / Cursor
-transcripts), converts them into a per-turn OTLP payload, and hands off to
+transcripts), converts them into a session-level OTLP payload, and hands off to
 the one OTLP normalize path. Pure: bytes/records in, OTLP dict out.
 """
 
@@ -18,7 +18,7 @@ SOURCE_FORMAT_ANTHROPIC = "anthropic_jsonl"
 
 # Bump on any change to parsing/turn-splitting/OTLP emission; stored on every
 # session-converted trace row for provenance (2_data-model.md).
-IMPORTER_VERSION = "1.2.0"
+IMPORTER_VERSION = "2.0.0"
 
 _PARSERS = {
     SOURCE_FORMAT_CODEX: codex.parse,
@@ -57,7 +57,7 @@ def detect(records: list[dict]) -> str | None:
 
 
 def convert(source_format: str, records: list[dict], *, session_id: str, anchor: datetime) -> dict:
-    """Records → per-turn OTLP payload.
+    """Records → session-level OTLP payload.
 
     `session_id` seeds trace identity (overridden by content-borne ids where
     the format carries one); `anchor` ends the synthesized-timestamp walk

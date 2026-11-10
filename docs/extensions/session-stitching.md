@@ -1,5 +1,7 @@
 # Extension: Session Stitching
 
+> **Update:** coding-agent session-log uploads (Codex, Claude Code, Cursor) now land as one trace per session — the importer does the grouping (`docs/spec/stage-2/8_session-ingestion.md`). This extension remains relevant only for native OTLP per-turn instrumentation.
+
 Stage 1 defines one marketplace trace = one OTLP `trace_id`. There is no session/conversation concept: a multi-turn agent session instrumented as per-turn traces lands as N independent traces, each judged with no visibility into its siblings. This extension adds the session as a first-class grouping.
 
 ## Why

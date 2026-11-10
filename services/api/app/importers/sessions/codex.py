@@ -1,4 +1,4 @@
-"""Codex rollout JSONL → per-turn session model (8_session-ingestion.md).
+"""Codex rollout JSONL → session model (8_session-ingestion.md).
 
 Record shapes (one JSON object per line, verified against real rollouts):
 `session_meta` (cwd, session id), `turn_context` (model), `event_msg` (typed
@@ -9,7 +9,7 @@ UI events) and `response_item` (the model-facing items). Parsing notes:
   seed the llm prompt when no typed ask exists.
 - Usage arrives as `event_msg`/`token_count` (one per model request,
   including requests that produced only tool calls), never on messages —
-  per-turn sums land on the turn root span.
+  per-turn sums land on the turn span.
 - Tool calls are generic: any `*_call` payload with a `call_id` opens a
   call and any `*_output` with the same id closes it (`function_call`,
   `custom_tool_call`, `tool_search_call`, …), so new Codex tool types keep

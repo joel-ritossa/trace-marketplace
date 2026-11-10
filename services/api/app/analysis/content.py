@@ -197,7 +197,12 @@ def _user_text_from_generic(value: str | None) -> str | None:
 def first_user_message(spans: list[SpanInput]) -> str | None:
     """The earliest user-role message across LLM spans — a rendering must-have
     and the sample adapter's `user_input`. Per-span fallback chain mirrors
-    `input_text`: GenAI messages, Traceloop flattened prompts, generic input."""
+    `input_text`: GenAI messages, Traceloop flattened prompts, generic input.
+    Session traces carry the ask on their turn spans; the first one wins."""
+    for span in spans:
+        ask = span.attributes.get("turn.user_message")
+        if isinstance(ask, str) and ask:
+            return ask
     for span in spans:
         if span.kind != "llm":
             continue

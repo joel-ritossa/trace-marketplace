@@ -14,7 +14,7 @@ signed in at http://localhost:3000 (or your `WEB_PORT`):
 # 1. Symlink your local coding-agent session logs (Codex, Claude Code,
 #    Cursor) into git-ignored devdata/sessions-src/ → ~/.codex, ~/.claude,
 #    ~/.cursor. No conversion step: the raw JSONL uploads as-is and the
-#    server turns each session into per-turn traces (8_session-ingestion.md).
+#    server turns each session into one trace (8_session-ingestion.md).
 make link-sessions
 
 # 2. Mint a key: Settings → API keys → Create key. The plaintext is shown
@@ -31,8 +31,9 @@ TRACE_API_KEY=tmk_…  uv run trace-sync sync ../../devdata/sessions-src --since
    `processing → complete` **without a refresh** (Supabase Realtime as an
    invalidation signal). Your sessions land on Traces with scannable
    names ("cursor: run an implementation plan for A1"), models, token
-   counts, and tool spans — one trace per user turn, stamped with a
-   `session.id` for grouping.
+   counts, and tool spans — one trace per session, with a span per
+   user turn under the session root. Re-syncing a session that has grown
+   updates the same trace in place.
 
 5. Re-run the same sync — every line prints `already synced`, exit 0. The
    CLI keeps no state; the server's per-user sha256 dedupe is the source of
@@ -93,7 +94,7 @@ failures surface when no one is looking at a progress bar.
   socket never becomes a second data path.
 - **The server speaks your agent's native format.** Raw session JSONL is
   detected and converted at ingestion (`app/importers/sessions/`,
-  8_session-ingestion.md) into per-turn GenAI-semconv OTLP through the one
+  8_session-ingestion.md) into one GenAI-semconv OTLP trace per session through the one
   normalize path; unsupported schemas reject with a readable reason at
   upload. The CLI stays a dumb byte mover — your own sessions exercise
   detection, conversion, ingestion, inspection, and analysis end to end.

@@ -1,9 +1,11 @@
-"""Shared session model: ordered llm/tool events split into per-turn traces,
-emitted as an OTLP JSON payload for the one normalize path (8_session-ingestion.md).
+"""Shared session model: ordered llm/tool events grouped into turns
+under one session trace, emitted as an OTLP JSON payload for the one normalize
+path (8_session-ingestion.md).
 
 A turn is one user message plus all assistant activity until the next user
-message. Identity is deterministic — sha256 over (agent, session id, turn
-index) — so re-uploads and re-ingests reproduce the same source trace ids.
+message. Identity is deterministic — sha256 over (agent, session id) for the
+trace, plus turn/event index for spans — so re-uploads and re-ingests
+reproduce the same source trace id.
 """
 
 from __future__ import annotations
@@ -38,8 +40,17 @@ def _any_value(value: Any) -> dict:
     return {"stringValue": value if isinstance(value, str) else str(value)}
 
 
+_LEAD = NANO // 1_000_000
+
+
 def _attr_list(attributes: dict) -> list[dict]:
     return [{"key": k, "value": _any_value(v)} for k, v in attributes.items() if v is not None]
+
+
+def _usage_attrs(usage: dict[str, int]) -> dict[str, int | None]:
+    return {
+        f"gen_ai.usage.{k}": usage.get(k) for k in ("input_tokens", "output_tokens", "total_tokens")
+    }
 
 
 def clean_user_text(text: str) -> str:
@@ -63,7 +74,7 @@ class Event:
 class Turn:
     title: str | None
     events: list[Event] = field(default_factory=list)
-    # Turn-level usage sums (Codex token_count events); rendered on the root
+    # Turn-level usage sums (Codex token_count events); rendered on the turn
     # span — formats with per-message usage (Claude) put it on llm events.
     usage: dict[str, int] = field(default_factory=dict)
 
@@ -126,7 +137,7 @@ class SessionBuilder:
         self._current = None
 
     def to_otlp(self, *, anchor_ns: int) -> dict:
-        """One OTLP payload, one trace per turn.
+        """One OTLP payload, one trace per session.
 
         `anchor_ns` ends the synthesized-timestamp walk for logs that carry
         no clocks (Cursor); callers pass the upload's created_at so
@@ -164,32 +175,52 @@ class SessionBuilder:
                 nxt = events[i + 1].ts if i + 1 < len(events) else None
                 event.end = max(event.ts + NANO // 1000, nxt or event.ts + NANO)
 
-        spans: list[dict] = []
+        key = f"{self.agent}:{self.session_id}"
+        trace_id = hashlib.sha256(key.encode()).hexdigest()[:32]
+        root_id = hashlib.sha256(f"root:{key}".encode()).hexdigest()[:16]
+        title = self.turns[0].title or f"{self.agent} session"
+        spans: list[dict] = [
+            {
+                "traceId": trace_id,
+                "spanId": root_id,
+                "name": f"{self.agent}: {title}"[:120],
+                "kind": 1,
+                "startTimeUnixNano": str(min(e.ts for e in events) - 2 * _LEAD),
+                "endTimeUnixNano": str(max(e.end for e in events)),
+                "attributes": _attr_list(
+                    {
+                        "gen_ai.operation.name": "invoke_agent",
+                        "gen_ai.agent.name": self.agent,
+                        "session.id": self.session_id,
+                        "session.turn_count": len(self.turns),
+                        "workspace.cwd": self.cwd,
+                        "converted.synthesized_root": True,
+                        "converted.synthesized_timestamps": synthesized or None,
+                    }
+                ),
+                "status": {"code": 1},
+            }
+        ]
         for turn_index, turn in enumerate(self.turns):
-            key = f"{self.agent}:{self.session_id}:{turn_index}"
-            trace_id = hashlib.sha256(key.encode()).hexdigest()[:32]
-            root_id = hashlib.sha256(f"root:{key}".encode()).hexdigest()[:16]
-            title = turn.title or f"{self.agent} session"
+            turn_id = hashlib.sha256(f"turn:{key}:{turn_index}".encode()).hexdigest()[:16]
             spans.append(
                 {
                     "traceId": trace_id,
-                    "spanId": root_id,
-                    "name": f"{self.agent}: {title}"[:120],
+                    "spanId": turn_id,
+                    "parentSpanId": root_id,
+                    "name": f"turn {turn_index + 1}: {turn.title or f'{self.agent} session'}"[:120],
                     "kind": 1,
-                    "startTimeUnixNano": str(min(e.ts for e in turn.events)),
+                    # 1µs lead (stored precision): spans sort by (start, span
+                    # id), so the ask must precede its first event, not tie.
+                    "startTimeUnixNano": str(min(e.ts for e in turn.events) - _LEAD),
                     "endTimeUnixNano": str(max(e.end for e in turn.events)),
                     "attributes": _attr_list(
                         {
                             "gen_ai.operation.name": "invoke_agent",
                             "gen_ai.agent.name": self.agent,
-                            "session.id": self.session_id,
                             "turn.index": turn_index,
-                            "workspace.cwd": self.cwd,
-                            "converted.synthesized_root": True,
-                            "converted.synthesized_timestamps": synthesized or None,
-                            "gen_ai.usage.input_tokens": turn.usage.get("input_tokens"),
-                            "gen_ai.usage.output_tokens": turn.usage.get("output_tokens"),
-                            "gen_ai.usage.total_tokens": turn.usage.get("total_tokens"),
+                            "turn.user_message": turn.title,
+                            **_usage_attrs(turn.usage),
                         }
                     ),
                     "status": {"code": 1},
@@ -199,8 +230,10 @@ class SessionBuilder:
                 spans.append(
                     {
                         "traceId": trace_id,
-                        "spanId": hashlib.sha256(f"{key}:{i}".encode()).hexdigest()[:16],
-                        "parentSpanId": root_id,
+                        "spanId": hashlib.sha256(f"{key}:{turn_index}:{i}".encode()).hexdigest()[
+                            :16
+                        ],
+                        "parentSpanId": turn_id,
                         "name": event.name,
                         "kind": 3,
                         "startTimeUnixNano": str(event.ts),

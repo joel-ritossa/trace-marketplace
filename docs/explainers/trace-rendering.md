@@ -2,7 +2,7 @@
 
 **One-line answer:** a rendering is a pure function of (trace, renderer
 version, config) — a chronological OpenAI-style message list, hard-bounded to
-a character budget, where the first user message, error spans, and the final
+a character budget, where the first user message (plus every turn's ask, for session traces), error spans, and the final
 K steps survive first and every cut or elision is visibly marked.
 
 This is the only trace-content surface that reaches an LLM (the outcome judge
@@ -30,7 +30,11 @@ reproducibly it does both are the questions that keep coming up.
    `conversation_cap_chars`, with an in-text `…[N chars truncated]…` marker
    (bare `…` when the cap is too small to fit the counted marker).
 5. **Priority tiers:** must-haves are the first user message, all error
-   spans, and the final K steps. If must-haves alone exceed the budget, the
+   spans, the final K steps, and — for session traces (`RENDERER_VERSION`
+   3) — every turn's ask (`turn.user_message` on the turn spans), emitted
+   as a `user` message in chronological position and never elided. A judge
+   of a whole session needs the original goal and the clarifying exchanges;
+   non-session OTLP traces render unchanged. If must-haves alone exceed the budget, the
    per-field caps halve (uniformly, so one config renders one way) down to a
    skeleton-only floor.
 6. **Fill, then exact trim.** Remaining middle steps fill the leftover budget
@@ -58,7 +62,7 @@ violation. Config values are env tunables (`ANALYSIS_RENDER_*`,
   size/cost guard, not a hard model limit.
 - **Under extreme budgets, pre-final-K error spans can be elided** (marked,
   never silent) — spec'd in `1_analysis.md` rendering. The first user
-  message and the final K steps are never dropped, which is also the budget
+  message, every turn ask, and the final K steps are never dropped, which is also the budget
   floor: with a degenerate config (budget smaller than K skeleton lines) the
   output runs over rather than dropping them.
 - **The first user message follows the full fallback chain** (B4 pass 4):
@@ -68,4 +72,4 @@ violation. Config values are env tunables (`ANALYSIS_RENDER_*`,
   importers' shape, where it *is* the ask). JSON payloads without user-role
   messages fail open to no dedicated user message; the content still
   appears on its span's step.
-- One trace = one rendering unit; no session aggregation (extension).
+- One trace = one rendering unit. A coding-agent session is one trace, so its turns render together; cross-trace session aggregation for native OTLP remains an extension.

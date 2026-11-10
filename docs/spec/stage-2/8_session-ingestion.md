@@ -1,7 +1,7 @@
 # Native Session Ingestion (A6)
 
 Raw coding-agent session logs (Codex, Claude Code, Cursor JSONL) upload
-directly; the server detects the schema, converts to per-turn traces, and
+directly; the server detects the schema, converts each session to one trace, and
 rejects what it cannot convert. The client-side converter
 (`tools/agent_sessions_to_otlp.py`) is retired: capture is `trace-sync`
 pointed at the directories the tools already write.
@@ -32,7 +32,7 @@ pointed at the directories the tools already write.
   - Token accounting: Anthropic input = `input_tokens` +
     `cache_read_input_tokens` + `cache_creation_input_tokens`. Codex usage
     arrives as `token_count` events (per model request, not per message);
-    per-turn sums land on the turn root span as `gen_ai.usage.*`.
+    per-turn sums land on the turn span as `gen_ai.usage.*`; the session root carries no usage (trace totals already sum spans).
   - Reasoning is preserved as `gen_ai.reasoning` on the llm span: Claude
     `thinking` blocks, Codex `reasoning` summary text (the encrypted body
     is dropped).
@@ -46,22 +46,29 @@ pointed at the directories the tools already write.
   at ingest (e.g. a detected schema yielding zero turns) are
   `PermanentIngestError`s — verbatim on `/uploads`, never retried.
 - `uploads.source_format` and `traces.source_format` record the detected
-  format; session-converted traces carry the sessions importer version.
+  format; session-converted traces carry the sessions importer version (`2.0.0`: one trace per session).
 
-## Per-Turn Granularity
+## Per-Session Granularity
 
-One marketplace trace = one *turn*: a user message and all assistant
-activity (LLM responses, tool calls) until the next user message.
+One marketplace trace = one *session*. A *turn* is a user message and all
+assistant activity (LLM responses, tool calls) until the next user message;
+turns are spans inside the session trace, not traces.
 
-- Deterministic identity: `trace_id = sha256(source:session_id:turn_index)`
-  — re-ingest and re-upload of the same session produce the same source
-  trace ids.
-- Each turn gets a synthetic `invoke_agent` root span named
-  `<agent>: <user ask>`, with `session.id`, `turn.index`, and
-  `workspace.cwd` attributes. `session.id` is the grouping key the
-  session-stitching extension consumes (docs/extensions/session-stitching.md).
-- Events before any user message (or sessions with none) form one leading
-  turn named after the agent.
+- Deterministic identity: `trace_id = sha256(agent:session_id)` — re-ingest
+  and re-upload of the same session produce the same source trace id, even
+  as the session grows.
+- Span tree: a session root `invoke_agent` span named
+  `<agent>: <first ask>` (attrs `session.id`, `session.turn_count`,
+  `workspace.cwd`; no `gen_ai.usage.*`, which would double-count in trace totals) → one turn
+  `invoke_agent` span per turn named `turn N: <ask>` (attrs `turn.index`,
+  0-based; `turn.user_message`, the full ask; per-turn `gen_ai.usage.*`, or on the llm spans for formats reporting
+  per-message usage) → that turn's llm and tool spans.
+- Turn splitting is unchanged: events before any user message (or sessions
+  with none) form one leading turn; a trailing unanswered ask is dropped;
+  consecutive asks merge into one turn.
+- Native OTLP uploads are not grouped: instrumented agents that emit
+  per-request traces still land one trace per OTLP `trace_id`. Cross-trace
+  stitching stays the future extension (docs/extensions/session-stitching.md).
 - Timestamps: real where the log has them (Codex, Claude). Cursor
   transcripts carry none: synthesized at one second per event anchored to
   the upload's `created_at`, marked `converted.synthesized_timestamps`.
@@ -76,10 +83,10 @@ activity (LLM responses, tool calls) until the next user message.
   The owner's raw download remains the original JSONL bytes.
 - **Re-syncing a grown session is idempotent.** Trace identity is
   owner-scoped — unique `(owner_id, source_trace_id)`, 6_architecture.md A6
-  amendment — and per-turn ids are deterministic, so a later upload of the
-  same session adopts its existing turn traces (latest upload owns them,
-  content rewritten under its salt), appends new turns, and never
-  duplicates. `traces.id` is stable across re-syncs: acquisitions, labels,
+  amendment — and the session id is deterministic, so a later upload of the
+  same session adopts its existing trace (latest upload owns it, content
+  rewritten in place under its salt), shows the new turns as more turn
+  spans, and never duplicates. Analysis re-runs on every ingest. `traces.id` is stable across re-syncs: acquisitions, labels,
   and review items survive. The superseded upload remains `complete` with
   zero traces.
 
@@ -93,12 +100,12 @@ activity (LLM responses, tool calls) until the next user message.
 ## Done When
 
 - `trace-sync sync devdata/sessions-src/cursor --since-hours 24` (raw
-  transcripts, no conversion step) lands per-turn traces on `/traces` with
+  transcripts, no conversion step) lands one trace per session on `/traces` with
   scannable names, models, token counts, and tool spans.
 - An unsupported-schema `.jsonl` fails at POST with `unsupported_format`;
   a detected-but-empty session fails ingestion with a verbatim reason on
   `/uploads`.
 - Re-uploading the same session file dedupes (`409 duplicate_upload`);
   re-ingesting an existing session upload converges to identical rows.
-- Re-syncing a session that grew by one turn yields exactly one new trace;
-  the existing turns keep their `traces.id` and move to the new upload.
+- Re-syncing a session that grew by one turn updates the same trace with
+  one more turn span; `traces.id` is stable and moves to the new upload.

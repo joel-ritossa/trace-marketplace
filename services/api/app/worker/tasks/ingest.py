@@ -62,7 +62,7 @@ async def ingest_upload(upload_id: str) -> None:
             raise PermanentIngestError("Stored payload does not match the recorded checksum.")
 
         # Route by format (8_session-ingestion.md): OTLP flows through as-is;
-        # session JSONL converts to a per-turn OTLP payload first, then both
+        # session JSONL converts to a session OTLP payload first, then both
         # share the one normalize path below. Detection re-reads the raw
         # bytes (not the upload row) so the result stays a pure function of
         # the stored payload.

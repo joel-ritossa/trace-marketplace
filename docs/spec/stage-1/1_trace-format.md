@@ -4,7 +4,7 @@
 
 Stage 1 accepts one upload format: an OpenTelemetry OTLP/JSON trace export — the JSON encoding of `ExportTraceServiceRequest`. One uploaded file contains one or more traces; each distinct `trace_id` in the payload becomes one marketplace trace record.
 
-> **Amended at stage-2 A6** (`docs/spec/stage-2/8_session-ingestion.md`): OTLP JSON stays the canonical format, but raw coding-agent session JSONL (Codex, Claude Code / Cursor) is also accepted and converted server-side into per-turn OTLP before the normalize path below. Undetectable bytes reject at POST with `422 unsupported_format`.
+> **Amended at stage-2 A6** (`docs/spec/stage-2/8_session-ingestion.md`): OTLP JSON stays the canonical format, but raw coding-agent session JSONL (Codex, Claude Code / Cursor) is also accepted and converted server-side into one OTLP trace per session before the normalize path below. Undetectable bytes reject at POST with `422 unsupported_format`.
 
 Why OTLP JSON first: OTel GenAI, OpenInference, OpenLLMetry, Langfuse's OTLP path, and Phoenix all emit or pass through this envelope, so one importer accepts traces from the widest set of real agent tooling. See `.archive/planning_docs/research/trace-source-schemas.md` for the inventory.
 

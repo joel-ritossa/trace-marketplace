@@ -47,6 +47,12 @@ Identical to stage 1 (`docs/buildlog/stage-1/README.md`), with two stage-2 notes
 |---|---|---|
 | integration | Full demo script on fresh compose + smoke script + validation number + third-party data-flow docs | Not started |
 
+### Post-slice changes
+
+| Change | Scope | Status |
+|---|---|---|
+| [session-as-trace](session-as-trace/000_implementation.md) | A session is one trace (A6 importer 2.0.0, renderer v3) | In progress (2026-11-10) |
+
 ## Spec amendments (pre-build)
 
 Amendments made after promotion but before any slice started — recorded here since there is no slice log to carry them yet:

@@ -122,3 +122,34 @@ def test_middle_out_marker_counts_removed_chars() -> None:
     assert "chars truncated" in capped
     same, uncut = _middle_out("short", 100)
     assert same == "short" and not uncut
+
+
+def test_session_turn_asks_render_as_user_messages_and_are_never_elided() -> None:
+    spans = [make_span(0, kind="agent", name="session", attributes={"session.turn_count": 3})]
+    for turn in range(3):
+        spans.append(
+            make_span(
+                len(spans),
+                kind="agent",
+                name=f"turn-{turn}",
+                attributes={"turn.index": turn, "turn.user_message": f"ask number {turn}"},
+            )
+        )
+        for _ in range(8):
+            spans.append(
+                make_span(
+                    len(spans),
+                    kind="tool",
+                    tool_name="bash",
+                    attributes={"gen_ai.tool.call.result": "z" * 500},
+                )
+            )
+    config = RendererConfig(
+        budget_chars=2_500, final_steps=2, tool_field_cap_chars=200, conversation_cap_chars=400
+    )
+    rendered = render_trace(make_trace(spans), config)
+
+    user_messages = [m.content for m in rendered.messages if m.role == "user"]
+    assert user_messages == [f"ask number {turn}" for turn in range(3)]
+    assert rendered.elided_step_count > 0
+    assert any("elided (" in m.content for m in rendered.messages)

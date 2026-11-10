@@ -48,7 +48,7 @@ TRACE_API_KEY=tmk_… uv run trace-sync watch ~/agent-logs   # stay alive, uploa
 
 The CLI is stateless — the server's per-user content hash dedupe makes re-syncing a directory a no-op (`already synced`). Per-file ingestion results print as they land (`uploaded (complete, 3 traces)` / `failed: <reason>`); failures that happen while nobody watches are visible on **/uploads**. Exit codes: 0 all synced/skipped, 1 some file failed, 2 couldn't run (bad key, unreachable API, no files).
 
-Want real data of your own? Raw Codex / Claude Code / Cursor session logs upload directly — the server detects the schema and converts each session into per-turn traces. `make link-sessions` symlinks your local session directories into git-ignored `devdata/sessions-src/`; see `docs/demos/cli-sync.md` for the full walkthrough.
+Want real data of your own? Raw Codex / Claude Code / Cursor session logs upload directly — the server detects the schema and converts each session into one trace. `make link-sessions` symlinks your local session directories into git-ignored `devdata/sessions-src/`; see `docs/demos/cli-sync.md` for the full walkthrough.
 
 ## Desktop app
 
