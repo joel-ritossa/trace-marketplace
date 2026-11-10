@@ -405,6 +405,20 @@ _V6_SUBAGENTS = """\
 """
 _V6_TEMPLATE = _V4_TEMPLATE.replace(_V4_SUBAGENTS, _V6_SUBAGENTS)
 
+# V7: the judge is handed the start of its turn instead of fetching it (a
+# round saved, and every round re-sends all that was read).
+_V4_START = """\
+- You see nothing until you call tools. Start with read_turn for your
+  turn; its first page lists the error spans and subagents with offsets.
+"""
+_V7_START = """\
+- The opening message already holds the start of your turn as read_turn
+  returns it: the ask, the error spans and subagents with their offsets,
+  and the first rows. Do not request those pages again; when its last
+  line says more spans remain, continue from the offset it gives.
+"""
+_V7_TEMPLATE = _V6_TEMPLATE.replace(_V4_START, _V7_START)
+
 
 def build_v1(allowed: Iterable[str]) -> str:
     """`allowed` must already include "other"; order follows the canonical
@@ -443,3 +457,8 @@ def build_v5(allowed: Iterable[str]) -> str:
 def build_v6(allowed: Iterable[str]) -> str:
     """Same contract as `build_v1`."""
     return _V6_TEMPLATE.format(categories=_category_lines(allowed))
+
+
+def build_v7(allowed: Iterable[str]) -> str:
+    """Same contract as `build_v1`."""
+    return _V7_TEMPLATE.format(categories=_category_lines(allowed))

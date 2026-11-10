@@ -83,20 +83,24 @@ redacted):
 - Previews and full-field caps reuse the renderer's existing caps
   (`ANALYSIS_RENDER_TOOL_FIELD_CAP_CHARS`, `..._CONVERSATION_CAP_CHARS`).
 - The agent is told which turn it is judging and that other turns are
-  context. It must read the turn before answering.
+  context. Its opening message already holds the turn's first `read_turn`
+  pages (as many as fit one round's tool-output budget), so the turn is
+  read before it answers; a subagent's judge gets the pages under its
+  spawn span the same way.
 - **Validation.** Output must parse; `span_ids` must be llm/tool spans inside
   the judged turn (nested subagent spans count). On a violation the errors
   are fed back once; if the retry still violates, invalid ids are dropped, a
   label left with no ids is dropped, and `uncertain` is set in plain
   language (no span ids or internal error text).
-- A turn the agent never read (no `read_turn` call for it) is a violation.
 - Loop bound: `ANALYSIS_AGENT_MAX_STEPS` model turns. Hitting it, or a
   model call overflowing the context window, forces a tool-less answer from
   what was read (older tool outputs dropped until it fits); the forced
   answer's outcome stands and `uncertain` is set. The turn never fails the run.
 - LLM access stays behind `app/analysis/llm.py` (OpenAI Agents SDK,
   Responses API; OpenAI only). Model: `ANALYSIS_JUDGE_MODEL` (a plain
-  OpenAI model id). Record latency/tokens and call counts per turn.
+  OpenAI model id). Record latency/tokens (cached input tokens
+  included) and call counts per turn. Every call of one judge run shares a
+  `prompt_cache_key`.
 
 ## Subagent verdicts
 
@@ -137,8 +141,7 @@ class SubagentVerdict(BaseModel):
   is being judged and it has no row or its fingerprint changed. Subagent
   and turn judging share `ANALYSIS_TURN_CONCURRENCY`. A subagent gets no
   row, and the turn judge reads it inline as before, when the judge
-  permanently cannot process it, returns malformed output, never read it
-  (still, after the retry), or was cut short by the step bound or the
+  permanently cannot process it, returns malformed output, or was cut short by the step bound or the
   context window (a verdict has no `uncertain` to carry that). A transient
   failure (rate limit, network) fails the run like a turn's. Duplicate
   failure-mode values are merged as for a turn.

@@ -74,4 +74,5 @@ class AgentMeta(BaseModel):
     tool_calls: int
     latency_ms: int
     input_tokens: int | None
+    cached_input_tokens: int | None
     output_tokens: int | None

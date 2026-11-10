@@ -5,7 +5,8 @@ import pytest
 from app.analysis import llm
 from app.analysis.agent import judge
 from app.analysis.config import AnalysisSettings
-from tests.unit.test_agent_turns import delegating, session
+from tests.unit.analysis_factories import make_trace
+from tests.unit.test_agent_turns import _span, _turn, delegating, session
 
 LLM_SPAN = f"{2:016x}"
 SUB_TOOL_SPAN = f"{5:016x}"
@@ -86,19 +87,25 @@ async def test_invalid_after_retry_drops_label_in_plain_words(monkeypatch) -> No
     )
 
 
-async def test_answer_without_reading_the_turn_is_a_violation(monkeypatch) -> None:
-    seen = install(
-        monkeypatch, [answer([LLM_SPAN]), tool("read_turn", turn_index=0), answer([LLM_SPAN])]
-    )
-    verdict = await judge.judge_turn(session(), 0, SETTINGS)
-    assert "read_turn(0)" in seen[1]["input"][-1]["content"]
-    assert verdict.uncertain is None
+async def test_opening_message_holds_the_first_read_of_the_judged_scope(monkeypatch) -> None:
+    from app.analysis.agent import tools
+    from app.analysis.agent.turns import split
+    from app.analysis.config import RendererConfig
 
+    # No read_turn call needed: the turn's first page is in the prompt.
+    seen = install(monkeypatch, [answer([LLM_SPAN])])
+    verdict, meta = await judge.judge_turn_with_meta(session(), 0, SETTINGS)
+    page = tools.read_turn(split(session()), 0, RendererConfig.from_settings(SETTINGS))
+    assert seen[0]["input"].endswith(page)
+    assert verdict.uncertain is None and meta.tool_calls == 0
 
-async def test_reading_another_turn_does_not_count(monkeypatch) -> None:
-    install(monkeypatch, [tool("read_turn", turn_index=1), answer([LLM_SPAN]), answer([LLM_SPAN])])
-    verdict = await judge.judge_turn(session(), 0, SETTINGS)
-    assert "without reading" in verdict.uncertain
+    # Only the pages that fit one round's budget; the last line says where to go on.
+    long = make_trace([_turn(1, 0, "ask"), *(_span(i, 1, kind="llm") for i in range(2, 80))])
+    turns, config = split(long), RendererConfig.from_settings(SETTINGS)
+    two_pages = len(tools.read_turn(turns, 0, config)) + len(tools.read_turn(turns, 0, config, 25))
+    opening = judge._opening_read(turns, turns[0], config, None, two_pages)
+    assert opening.endswith("(28 more: read_turn(0, offset=50))")
+    assert judge._opening_read(turns, turns[0], config, None, 10**9).count("spans ") == 4
 
 
 async def test_step_limit_forces_indeterminate(monkeypatch) -> None:
@@ -131,12 +138,6 @@ async def test_opening_message_carries_the_previous_turn(monkeypatch) -> None:
     assert "Previous turn 0 (human):\nask: first ask" in seen[0]["input"]
 
 
-async def test_read_past_the_end_does_not_count(monkeypatch) -> None:
-    install(monkeypatch, [tool("read_turn", turn_index=0, offset=99), answer([LLM_SPAN])] * 2)
-    verdict = await judge.judge_turn(session(), 0, SETTINGS)
-    assert "without reading" in verdict.uncertain
-
-
 async def test_malformed_retry_keeps_the_first_answer(monkeypatch) -> None:
     script = [tool("read_turn", turn_index=0), answer([TURN_SPAN, LLM_SPAN])]
 
@@ -154,7 +155,7 @@ async def test_malformed_retry_keeps_the_first_answer(monkeypatch) -> None:
 
 
 def test_round_budget_cuts_later_results() -> None:
-    usage = judge._Usage(0, round_budget=10)
+    usage = judge._Usage(round_budget=10)
     assert judge._within_round_budget("x" * 8, usage) == "x" * 8
     assert judge._within_round_budget("y" * 8, usage) == "yy\n" + judge._ROUND_BUDGET_NOTE
     assert judge._within_round_budget("z", usage) == judge._ROUND_BUDGET_NOTE
@@ -189,42 +190,34 @@ async def test_malformed_output_propagates(monkeypatch) -> None:
         await judge.judge_turn(session(), 0, SETTINGS)
 
 
-async def test_subagent_judge_reads_and_cites_only_under_its_spawn_span(monkeypatch) -> None:
+async def test_subagent_judge_starts_under_its_spawn_span_and_cites_only_below(monkeypatch) -> None:
     outer, own_llm, nested_llm, main_llm = (f"{i:016x}" for i in (3, 4, 6, 2))
 
     def verdict(span_ids: list[str]) -> dict:
         body = answer(span_ids)["answer"]
         return {"answer": {k: body[k] for k in ("outcome", "summary", "failure_modes")}}
 
-    # Reading the whole turn is not reading the subagent; the main agent's
-    # span and the spawn span are outside it.
+    # The main agent's span and the spawn span are outside the subagent.
     seen = install(
-        monkeypatch,
-        [
-            tool("read_turn", turn_index=0),
-            verdict([main_llm, outer]),
-            tool("read_turn", turn_index=0, under=outer),
-            verdict([main_llm, own_llm, nested_llm]),
-        ],
+        monkeypatch, [verdict([main_llm, outer]), verdict([main_llm, own_llm, nested_llm])]
     )
     result, meta = await judge.judge_subagent_with_meta(delegating(), 0, outer, SETTINGS)
-    feedback = seen[1]["input"][-1]["content"]
+    opening, feedback = seen[0]["input"], seen[1]["input"][-1]["content"]
+    assert "Brief (the spawn call's input)" in opening
+    assert f"under {outer}: spans 0-2 of 3" in opening and f"{main_llm} llm" not in opening
     assert f"read_turn(0, under='{outer}')" in feedback and "the subagent under" in feedback
     assert result.span_id == outer and result.failure_modes[0].span_ids == [own_llm, nested_llm]
     assert meta.llm_calls == 2
-    assert "Brief (the spawn call's input)" in seen[0]["input"]
 
 
-async def test_subagent_cut_short_or_unread_gets_no_verdict(monkeypatch) -> None:
-    outer = f"{3:016x}"
+async def test_subagent_cut_short_gets_no_verdict(monkeypatch) -> None:
     body = {"answer": {"outcome": "success", "summary": "s", "failure_modes": []}}
     install(monkeypatch, [tool("list_turns")] * 3 + [body])  # step limit, forced answer
-    assert (await judge.judge_subagent_with_meta(delegating(), 0, outer, SETTINGS))[0] is None
-    install(monkeypatch, [body, body])  # never read, even after the feedback
-    assert (await judge.judge_subagent_with_meta(delegating(), 0, outer, SETTINGS))[0] is None
+    result = await judge.judge_subagent_with_meta(delegating(), 0, f"{3:016x}", SETTINGS)
+    assert result[0] is None
 
 
 def test_turn_prompt_explains_subagent_verdict_rows() -> None:
     from app.analysis.prompts.agent import judge_turn
 
-    assert "is a lead, not a" in judge_turn.build_v6(["other"])
+    assert "is a lead, not a" in judge_turn.build_v7(["other"])

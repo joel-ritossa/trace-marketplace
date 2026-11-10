@@ -90,6 +90,8 @@ class MalformedResponse(Exception):
 class CallMeta(BaseModel):
     latency_ms: int
     input_tokens: int | None = None
+    # The part of input_tokens served from the provider's prompt cache.
+    cached_input_tokens: int | None = None
     output_tokens: int | None = None
     llm_calls: int = 1
 
@@ -105,6 +107,7 @@ def fold_meta(metas: list[CallMeta]) -> CallMeta:
     return CallMeta(
         latency_ms=sum(m.latency_ms for m in metas),
         input_tokens=total([m.input_tokens for m in metas]),
+        cached_input_tokens=total([m.cached_input_tokens for m in metas]),
         output_tokens=total([m.output_tokens for m in metas]),
         llm_calls=sum(m.llm_calls for m in metas),
     )
@@ -216,6 +219,9 @@ def _meta(usage: Any, started: float) -> CallMeta:
     return CallMeta(
         latency_ms=latency_ms,
         input_tokens=usage.input_tokens,
+        cached_input_tokens=getattr(
+            getattr(usage, "input_tokens_details", None), "cached_tokens", None
+        ),
         output_tokens=usage.output_tokens,
         llm_calls=usage.requests,
     )

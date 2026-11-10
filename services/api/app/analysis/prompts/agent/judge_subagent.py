@@ -172,3 +172,20 @@ wrote its final report.
 summary: one line — what it was briefed to do, what it did, and any minor
 slip. Be concise; never quote long trace content.
 """
+
+# V3: the judge is handed the start of the transcript instead of fetching it.
+_V2_START = """\
+- You see nothing until you call tools. You are told how many spans the
+  subagent has: request all its read_turn pages (under=<the spawn span>,
+  one call per offset) in your first round, or the first, last and a few
+  middle pages when there are too many for one round.
+"""
+_V3_START = """\
+- The opening message already holds the start of the subagent's
+  transcript as read_turn (under=<the spawn span>) returns it: its error
+  spans with offsets and the first rows. Do not request those pages
+  again. When its last line says more spans remain, request the remaining
+  pages together in your first round (one call per offset), or the last
+  and a few middle pages when there are too many for one round.
+"""
+V3 = V2.replace(_V2_START, _V3_START)

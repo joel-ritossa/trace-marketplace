@@ -19,7 +19,8 @@ judges take `verdicts` (by spawn span id): the subagents already judged,
 which their tools show as one row each.
 """
 
-import json
+import hashlib
+import itertools
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -47,7 +48,7 @@ from app.analysis.prompts.agent import roll_up as roll_up_prompt
 from app.analysis.rendering import middle_out
 from app.analysis.trace_input import TraceInput
 
-AGENT_VERSION = "7"
+AGENT_VERSION = "8"
 
 _CITABLE_KINDS = ("llm", "tool")
 
@@ -83,12 +84,8 @@ class _SubagentAnswer(BaseModel):
 
 @dataclass
 class _Usage:
-    turn_index: int
     # Tool output chars returned in the current round (one model turn).
     round_budget: int
-    # The spawn span a subagent's judge must read under; None for a turn.
-    under: str | None = None
-    read: bool = False
     tool_calls: int = 0
     round_chars: int = 0
 
@@ -131,13 +128,13 @@ async def judge_turn_with_meta(
     prompt = (
         f"Judge turn {turn_index} ({turn.origin}). "
         f"The session has {len(turns)} turns (indices {indices}). "
-        f"Start with {_read_call(turn)}. {_budget(settings)}"
+        + _budget(settings)
         + _previous_turn(turns, turn, RendererConfig.from_settings(settings))
     )
-    answer, read, cut_short, meta = await _judge(
+    answer, cut_short, meta = await _judge(
         Agent(
             name="turn_judge",
-            instructions=judge_prompt.build_v6(allowed),
+            instructions=judge_prompt.build_v7(allowed),
             model=settings.judge_model,
             output_type=_Answer,
         ),
@@ -157,7 +154,7 @@ async def judge_turn_with_meta(
             failure_modes=[],
             uncertain=None,
         )
-    return _verdict(answer, turn, read, allowed, cut_short), meta
+    return _verdict(answer, turn, allowed, cut_short), meta
 
 
 async def judge_subagent_with_meta(
@@ -168,9 +165,9 @@ async def judge_subagent_with_meta(
     verdicts: Mapping[str, SubagentVerdict] | None = None,
 ) -> tuple[SubagentVerdict | None, AgentMeta]:
     """Judge one linked subagent against its brief: the turn judge scoped to
-    the spawn span `span_id`. No verdict (None) when the judge never read
-    the subagent or its run was cut short: a subagent verdict has no
-    `uncertain` to say so, and it would hide the spans from the turn judge."""
+    the spawn span `span_id`. No verdict (None) when the run was cut short:
+    a subagent verdict has no `uncertain` to say so, and it would hide the
+    spans from the turn judge."""
     turns = split(trace)
     view = next((v for v in subagents(trace, _find(turns, turn_index)) if v.under == span_id), None)
     if view is None:
@@ -180,21 +177,18 @@ async def judge_subagent_with_meta(
         middle_out(text, cap)[0] if text else "(not recorded)"
         for text in (view.ask, content.output_text(view.span))
     )
-    page = tools.READ_TURN_PAGE_SPANS
     prompt = (
         f"Judge the subagent spawned by span {span_id} in turn {turn_index}. "
-        f"It has {len(view.spans)} spans: {_read_call(view)} shows {page} per page "
-        f"(offset 0, {page}, {2 * page}, ...). Request its pages together in your first round. "
         f"Budget: {settings.agent_max_steps} model turns; each round of tool calls is one, and "
         "so is your answer. Every round re-sends all you have read, so use few: put "
         "independent calls in the same round and answer as soon as you can judge."
         f"\n\nBrief (the spawn call's input):\n{brief}"
         f"\n\nWhat the spawn call returned to its parent:\n{returned}"
     )
-    answer, read, cut_short, meta = await _judge(
+    answer, cut_short, meta = await _judge(
         Agent(
             name="subagent_judge",
-            instructions=subagent_prompt.V2,
+            instructions=subagent_prompt.V3,
             model=settings.judge_model,
             output_type=_SubagentAnswer,
         ),
@@ -206,7 +200,7 @@ async def judge_subagent_with_meta(
         verdicts,
         None,
     )
-    if answer is None or not read or cut_short:
+    if answer is None or cut_short:
         return None, meta
     verdict = SubagentVerdict(
         span_id=span_id,
@@ -226,16 +220,26 @@ async def _judge(
     settings: AnalysisSettings,
     verdicts: Mapping[str, SubagentVerdict] | None,
     allowed: frozenset[str] | None,
-) -> tuple[Any | None, bool, str | None, AgentMeta]:
-    """The judge run shared by turns and subagents: `agent` gets the tools,
-    contract violations are fed back once, and a run cut short by the step
-    bound or the context window is forced to answer from what it read.
-    Returns the answer (None when even the forced one failed), whether the
-    scope was read, why the run was cut short, and what it cost."""
+) -> tuple[Any | None, str | None, AgentMeta]:
+    """The judge run shared by turns and subagents: `agent` gets the tools
+    and the opening read of its scope, contract violations are fed back
+    once, and a run cut short by the step bound or the context window is
+    forced to answer from what it read. Returns the answer (None when even
+    the forced one failed), why the run was cut short, and what it cost."""
     config = RendererConfig.from_settings(settings)
-    usage = _Usage(scope.index, _ROUND_FULL_READS * 2 * config.conversation_cap_chars, scope.under)
+    usage = _Usage(_ROUND_FULL_READS * 2 * config.conversation_cap_chars)
+    # One cache key for every call of this judge run (its retry and forced
+    # answer included), so they share the prompt-cache prefix.
+    key = f"{trace.trace_id or trace.source_trace_id}:{scope.index}:{scope.under}"
     agent = agent.clone(
-        hooks=_NewRound(usage), tools=_function_tools(trace, turns, config, usage, verdicts)
+        hooks=_NewRound(usage),
+        tools=_function_tools(trace, turns, config, usage, verdicts),
+        model_settings=ModelSettings(
+            extra_args={"prompt_cache_key": hashlib.sha256(key.encode()).hexdigest()[:32]}
+        ),
+    )
+    prompt += f"\n\nAlready read for you, {_read_call(scope)} from its start:\n\n" + _opening_read(
+        turns, scope, config, verdicts, usage.round_budget
     )
     steps = settings.agent_max_steps
     metas: list[llm.CallMeta] = []
@@ -244,7 +248,7 @@ async def _judge(
         run = await llm.run_agent(agent, prompt, steps)
         metas.append(run.meta)
         answer = run.output
-        errors = _check(answer, scope, usage.read, allowed)
+        errors = _check(answer, scope, allowed)
         if errors:
             feedback = "Your answer has problems; fix them:\n" + "\n".join(f"- {e}" for e in errors)
             history = run.history + [{"role": "user", "content": feedback}]
@@ -266,7 +270,29 @@ async def _judge(
         cut_short += "; the verdict is from what it read."
         answer, meta = await _forced_answer(agent, history)
         metas.extend(meta)
-    return answer, usage.read, cut_short, _meta(settings, metas, usage.tool_calls)
+    return answer, cut_short, _meta(settings, metas, usage.tool_calls)
+
+
+def _opening_read(
+    turns: list[TurnView],
+    scope: TurnView,
+    config: RendererConfig,
+    verdicts: Mapping[str, SubagentVerdict] | None,
+    budget: int,
+) -> str:
+    """The judged scope's leading read_turn pages, exactly as the tool
+    returns them: as many as fit one round's output budget. The last page's
+    final line says where the next one starts."""
+    pages: list[str] = []
+    for offset in itertools.count(0, tools.READ_TURN_PAGE_SPANS):
+        try:
+            page = tools.read_turn(turns, scope.index, config, offset, scope.under, verdicts)
+        except ValueError:  # past the end
+            break
+        if pages and sum(map(len, pages)) + len(page) > budget:
+            break
+        pages.append(page)
+    return "\n\n".join(pages)
 
 
 def _find(turns: list[TurnView], turn_index: int) -> TurnView:
@@ -333,12 +359,6 @@ def _function_tools(
         async def invoke(_ctx: Any, arguments: str) -> str:
             usage.tool_calls += 1
             result = tools.run(spec["name"], arguments, trace, turns, config, verdicts)
-            if (
-                spec["name"] == "read_turn"
-                and _reads(arguments, usage)
-                and not result.startswith("error:")
-            ):
-                usage.read = True
             return _within_round_budget(result, usage)
 
         return FunctionTool(
@@ -356,7 +376,9 @@ async def _forced_answer(agent: Agent, history: list[Any]) -> tuple[Any | None, 
     """One tool-less answer from what the agent has read, dropping older
     tool outputs while the conversation overflows the context window; None
     if even that fails."""
-    final = agent.clone(model_settings=ModelSettings(tool_choice="none"))
+    final = agent.clone(
+        model_settings=agent.model_settings.resolve(ModelSettings(tool_choice="none"))
+    )
     nudge = {"role": "user", "content": "Out of budget. Answer now from what you have read."}
     while True:
         try:
@@ -407,12 +429,10 @@ def _previous_turn(turns: list[TurnView], turn: TurnView, config: RendererConfig
     )
 
 
-def _check(answer: Any, turn: TurnView, read: bool, allowed: frozenset[str] | None) -> list[str]:
+def _check(answer: Any, turn: TurnView, allowed: frozenset[str] | None) -> list[str]:
     """Contract violations, phrased as feedback for the model. `turn` is the
     judged scope; `allowed` is None for a subagent (no task categories)."""
     errors = []
-    if not read:
-        errors.append(f"you never read it: call {_read_call(turn)} before answering")
     if allowed is not None:
         if not answer.task_categories:
             errors.append("give at least one task category")
@@ -458,13 +478,11 @@ def _citation_hint(turn: TurnView) -> str:
 
 
 def _verdict(
-    answer: _Answer, turn: TurnView, read: bool, allowed: frozenset[str], cut_short: str | None
+    answer: _Answer, turn: TurnView, allowed: frozenset[str], cut_short: str | None
 ) -> TurnVerdict:
     """Build the verdict, dropping whatever still violates the contract;
     each drop adds a plain sentence to `uncertain`."""
     notes = [cut_short] if cut_short else []
-    if not read:
-        notes.append("The judge answered without reading this turn.")
     labels = _labels(answer, turn, notes)
     categories = [c for c in dict.fromkeys(answer.task_categories) if c in allowed]
     if not categories:
@@ -510,18 +528,6 @@ def _within_round_budget(result: str, usage: _Usage) -> str:
     if len(result) <= left:
         return result
     return (result[: max(left, 0)] + "\n" if left > 0 else "") + _ROUND_BUDGET_NOTE
-
-
-def _reads(arguments: str, usage: _Usage) -> bool:
-    """Whether a read_turn call opens what is being judged: the turn, or
-    for a subagent's judge the spawn span."""
-    try:
-        args = json.loads(arguments or "{}")
-        return int(args.get("turn_index")) == usage.turn_index and (
-            usage.under is None or args.get("under") == usage.under
-        )
-    except (ValueError, TypeError, AttributeError):
-        return False
 
 
 def _meta(settings: AnalysisSettings, metas: list[llm.CallMeta], tool_calls: int) -> AgentMeta:
