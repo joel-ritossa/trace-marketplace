@@ -47,10 +47,9 @@ The load is split across three boundaries, each bounded independently:
   `GET /v1/traces/{id}/spans/{span_id}` only when a span is selected, then
   cached client-side (`apps/web/src/components/traces/trace-inspector.tsx`).
   Inspecting one span costs one span's payload.
-- **Capped default expansion** — the tree expands breadth-first to ~300
-  visible spans by default (`apps/web/src/components/traces/span-tree.ts`,
-  `defaultExpandedIds`), keeping the initial DOM small while every span
-  stays reachable by expanding.
+- **Collapsed by default** — the tree opens fully collapsed
+  (`apps/web/src/components/traces/trace-evidence.tsx`), keeping the initial
+  DOM small while every span stays reachable by expanding.
 
 Honest limits, measured on the 5,000-span trace (production build): the
 span tree is not virtualized, so a span-selection re-render with ~300 cards

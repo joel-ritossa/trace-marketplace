@@ -74,23 +74,6 @@ export function buildSpanTree(spans: SpanListItem[]): TraceSpan[] {
   return roots;
 }
 
-/** Breadth-first default expansion, capped so huge traces don't render tens
- *  of thousands of cards at once (AgentPrism has no virtualization). */
-export function defaultExpandedIds(roots: TraceSpan[], cap = 300): string[] {
-  const expanded: string[] = [];
-  let visible = roots.length;
-  const queue = [...roots];
-  while (queue.length > 0 && visible < cap) {
-    const node = queue.shift()!;
-    const children = node.children ?? [];
-    if (children.length === 0) continue;
-    expanded.push(node.id);
-    visible += children.length;
-    queue.push(...children);
-  }
-  return expanded;
-}
-
 function toAttributeValue(value: unknown): TraceSpanAttribute["value"] {
   if (typeof value === "boolean") return { boolValue: value };
   if (typeof value === "number") return { intValue: String(value) };

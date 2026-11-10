@@ -8,7 +8,7 @@ import { DetailsView } from "@/components/agent-prism/DetailsView/DetailsView";
 import { TreeView } from "@/components/agent-prism/TreeView";
 import { buildConversation, isContentSpan } from "@/components/traces/conversation";
 import { ConversationView } from "@/components/traces/conversation-view";
-import { buildSpanTree, defaultExpandedIds, withDetail } from "@/components/traces/span-tree";
+import { buildSpanTree, withDetail } from "@/components/traces/span-tree";
 import { ApiError } from "@/lib/api/client";
 import { getSpan, listAllSpans, type SpanDetail, type SpanListItem } from "@/lib/api/traces";
 import { cn } from "@/lib/utils";
@@ -103,7 +103,7 @@ export function TraceEvidence({ traceId, className }: { traceId: string; classNa
       .then((spans) => {
         if (cancelled) return;
         const roots = buildSpanTree(spans);
-        setExpandedIds(defaultExpandedIds(roots));
+        setExpandedIds([]);
         setState({ phase: "ready", spans, roots });
       })
       .catch(() => {
