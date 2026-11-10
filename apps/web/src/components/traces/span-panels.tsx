@@ -4,12 +4,14 @@ import type { ReactNode } from "react";
 import {
   AutomatedMarker,
   ClampedText,
-  SessionCard,
   TurnDetailBody,
   type Nav,
 } from "@/components/traces/analysis-section";
 import { SubagentCard, SubagentIcon } from "@/components/traces/agents-view";
 import { OutcomeBadge } from "@/components/traces/badges";
+import { MessageText } from "@/components/traces/conversation-view";
+import { ExpandableText } from "@/components/ui/expandable-text";
+import { formatCompact, formatDuration } from "@/lib/format";
 import { spawnBrief } from "@/components/traces/span-tree";
 import { Button } from "@/components/ui/button";
 import { stripWrappers } from "@/components/traces/names";
@@ -76,9 +78,44 @@ export function traceSpanPanel(
     );
   }
   if (ctx.attributes?.["converted.synthesized_root"] === true) {
+    // The session root: trace totals (the analysis is in its own panel).
+    const facts: [string, string, string?][] = [
+      ["Duration", formatDuration(trace.duration_ms)],
+      ["Turns", String(trace.analysis.session.turn_count)],
+      ["Spans", trace.span_count.toLocaleString()],
+      [
+        "Tokens (incl. cached)",
+        trace.total_tokens !== null ? formatCompact(trace.total_tokens) : "—",
+        trace.total_tokens?.toLocaleString(),
+      ],
+      ["Span errors", trace.error_count.toLocaleString()],
+      ["Subagents", String(trace.subagents?.count ?? 0)],
+    ];
     return (
-      <div className="p-4">
-        <SessionCard trace={trace} nav={nav} />
+      <div className="flex flex-col gap-4 p-4">
+        <h3 className="text-sm font-semibold">Session</h3>
+        <dl className="grid grid-cols-3 gap-x-4 gap-y-2">
+          {facts.map(([k, v, exact]) => (
+            <div key={k}>
+              <dt className="text-xs text-muted-foreground">{k}</dt>
+              <dd className="font-mono text-xs" title={exact}>
+                {v}
+              </dd>
+            </div>
+          ))}
+        </dl>
+        <Block title="Tools">
+          <ExpandableText
+            text={trace.tool_names.length ? trace.tool_names.join(", ") : "—"}
+            lines={2}
+            className="mt-0.5 text-xs"
+          />
+        </Block>
+        {trace.skill_names && trace.skill_names.length > 0 && (
+          <Block title="Skills">
+            <p className="mt-0.5 text-xs">{trace.skill_names.join(", ")}</p>
+          </Block>
+        )}
       </div>
     );
   }
@@ -117,7 +154,10 @@ export function traceSpanPanel(
       </Block>
       <Block title="Final reply">
         {ctx.finalReply ? (
-          <ClampedText text={ctx.finalReply} lines={6} />
+          // The conversation's renderer (light markdown, tables, pasted folds).
+          <div className="mt-0.5">
+            <MessageText text={ctx.finalReply} />
+          </div>
         ) : (
           <p className="mt-0.5 text-sm text-muted-foreground">
             {ctx.finalReply === undefined ? "Loading…" : "No reply recorded."}

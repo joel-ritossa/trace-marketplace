@@ -54,5 +54,10 @@ export function useTraceDetail(traceId: string) {
     setState((prev) => (prev.phase === "ready" ? { ...prev, trace } : prev));
   }, []);
 
-  return { state, setTrace };
+  const reload = useCallback(() => {
+    setState({ phase: "loading" });
+    void load();
+  }, [load]);
+
+  return { state, setTrace, reload };
 }

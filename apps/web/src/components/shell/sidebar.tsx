@@ -56,9 +56,14 @@ function NavItem({ item, active, badge }: { item: Item; active: boolean; badge?:
       {/* ex-app-shell-row active indicator */}
       {active && <span aria-hidden className="absolute -left-2 h-4 w-0.5 rounded-full bg-primary" />}
       <Icon className="size-4 shrink-0" strokeWidth={1.75} />
-      {/* Icon rail: the count collapses to a dot. */}
+      {/* Icon rail: the count sits on the icon. */}
       {badge !== undefined && badge > 0 && (
-        <span aria-hidden className="absolute top-2 left-6 size-1.5 rounded-full bg-link xl:hidden" />
+        <span
+          aria-hidden
+          className="absolute top-0.5 left-5 rounded-full bg-secondary px-1 font-mono text-[10px] leading-4 text-foreground xl:hidden"
+        >
+          {badge > 99 ? "99+" : badge}
+        </span>
       )}
       <span className="hidden min-w-0 flex-1 truncate xl:inline">{item.label}</span>
       {badge !== undefined && badge > 0 && (

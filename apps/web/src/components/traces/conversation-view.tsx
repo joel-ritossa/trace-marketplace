@@ -263,7 +263,7 @@ function PastedBlock({ text }: { text: string }) {
 
 /** A message's text with pasted blocks folded and runs of blank lines
  *  collapsed (they rendered as large gaps). */
-function MessageText({ text }: { text: string }) {
+export function MessageText({ text }: { text: string }) {
   const parts: ReactNode[] = [];
   let last = 0;
   for (const match of text.matchAll(PASTED)) {
@@ -277,32 +277,56 @@ function MessageText({ text }: { text: string }) {
   return <>{parts}</>;
 }
 
-/** Chronological chat rendering of a reconstructed conversation. */
-export function ConversationView({ items }: { items: ConversationItem[] }) {
+/** Chronological chat rendering of a reconstructed conversation. With
+ *  `turnOf`, a quiet "Turn N" divider (an anchor, `conv-turn-N`) opens each
+ *  turn so the page can bring a selected turn into view. */
+export function ConversationView({
+  items,
+  turnOf,
+  activeTurn,
+}: {
+  items: ConversationItem[];
+  turnOf?: (spanId: string) => number | undefined;
+  activeTurn?: number;
+}) {
+  let lastTurn: number | undefined;
   return (
     <div className="flex flex-col gap-3">
       {items.map((item) => {
-        if (item.kind === "tool") return <ToolCard key={item.id} item={item} />;
-        if (item.kind === "reasoning") return <ReasoningCard key={item.id} text={item.text} />;
-        if (item.role === "system") return <SystemCard key={item.id} text={item.text} />;
-        const user = item.role === "user";
-        return (
-          <div
-            key={item.id}
-            className={cn("flex max-w-[92%] flex-col", user ? "self-end items-end" : "self-start")}
-          >
-            <p className="mb-1 px-0.5 text-xs font-medium text-muted-foreground">{item.label}</p>
+        const turn = item.spanId && turnOf ? turnOf(item.spanId) : undefined;
+        const divider =
+          turn !== undefined && turn !== lastTurn ? (
             <div
+              key={`turn-${turn}-${item.id}`}
+              id={`conv-turn-${turn}`}
               className={cn(
-                "rounded-lg px-3 py-2",
-                user ? "bg-accent border" : "border bg-background",
+                "flex scroll-mt-2 items-center gap-2 font-mono text-xs text-muted-foreground",
+                activeTurn === turn && "text-foreground",
               )}
             >
-              <MessageText text={item.text} />
+              <span className={cn("h-px flex-1 bg-border", activeTurn === turn && "bg-primary")} />
+              Turn {turn + 1}
+              <span className={cn("h-px flex-1 bg-border", activeTurn === turn && "bg-primary")} />
             </div>
-          </div>
-        );
+          ) : null;
+        if (turn !== undefined) lastTurn = turn;
+        return [divider, <Item key={item.id} item={item} />];
       })}
+    </div>
+  );
+}
+
+function Item({ item }: { item: ConversationItem }) {
+  if (item.kind === "tool") return <ToolCard item={item} />;
+  if (item.kind === "reasoning") return <ReasoningCard text={item.text} />;
+  if (item.role === "system") return <SystemCard text={item.text} />;
+  const user = item.role === "user";
+  return (
+    <div className={cn("flex max-w-[92%] flex-col", user ? "self-end items-end" : "self-start")}>
+      <p className="mb-1 px-0.5 text-xs font-medium text-muted-foreground">{item.label}</p>
+      <div className={cn("rounded-lg px-3 py-2", user ? "bg-accent border" : "border bg-background")}>
+        <MessageText text={item.text} />
+      </div>
     </div>
   );
 }

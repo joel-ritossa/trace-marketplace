@@ -112,6 +112,9 @@ function carrying(turns: TurnAnalysis[], field: Field, value: string): TurnAnaly
 
 const turnsText = (n: number) => `in ${n} turn${n === 1 ? "" : "s"}`;
 
+// Top bar (56px) + the trace page's sticky header strip.
+const HEADER_CLEARANCE = 160;
+
 // Pills sit inside table rows and turn-row toggles: their clicks are theirs.
 const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
@@ -125,19 +128,85 @@ function PanelState({ resolved }: { resolved: Resolved }) {
   return <p className="py-2 text-xs text-error-deep">Could not load this trace’s turns.</p>;
 }
 
-/** "Open evidence", or "Span 1, Span 2…" for several cited spans. */
+/** "Open evidence", or "Evidence 1, 2…" for several cited spans. */
 function EvidenceActions({ spanIds, showSpan }: { spanIds: string[]; showSpan: (id: string) => void }) {
   return spanIds.map((id, i) => (
     <PopoverClose key={id} asChild>
       <Button size="xs" variant="outline" title={id} onClick={() => showSpan(id)}>
-        {spanIds.length === 1 ? "Open evidence" : `Span ${i + 1}`}
+        {spanIds.length === 1 ? "Open evidence" : `Evidence ${i + 1}`}
       </Button>
     </PopoverClose>
   ));
 }
 
+/** The one popover row for a turn: number, one-line summary, an optional
+ *  note (the label's reason, who invoked a skill), "Go to turn" and evidence. */
+function TurnRefItem({
+  turnIndex,
+  summary,
+  note,
+  spanIds,
+  resolved,
+}: {
+  turnIndex: number | null;
+  summary: string | null | undefined;
+  note?: ReactNode;
+  spanIds: string[];
+  resolved: Extract<Resolved, { phase: "ready" }>;
+}) {
+  return (
+    <li className="flex flex-col gap-1 px-4 py-2">
+      <p className="flex items-baseline gap-2">
+        <span className="shrink-0 font-mono text-xs text-muted-foreground">
+          {turnIndex === null ? "No turn" : `Turn ${turnIndex + 1}`}
+        </span>
+        <ExpandableText
+          text={summary ?? "Not judged yet"}
+          lines={1}
+          className="min-w-0 flex-1 text-sm"
+        />
+      </p>
+      {note}
+      <div className="flex flex-wrap gap-1">
+        {turnIndex !== null && (
+          <PopoverClose asChild>
+            <Button size="xs" variant="outline" onClick={() => resolved.goToTurn(turnIndex)}>
+              Go to turn
+            </Button>
+          </PopoverClose>
+        )}
+        <EvidenceActions spanIds={spanIds} showSpan={resolved.showSpan} />
+      </div>
+    </li>
+  );
+}
+
+// Rows a popover list shows before "Show all N turns".
+const LIST_WINDOW = 6;
+
+/** A popover's bounded list: whole items only, the rest behind "Show all";
+ *  the list scrolls inside the popover's available height. */
+function RefList({ count, children }: { count: number; children: (limit: number) => ReactNode }) {
+  const [all, setAll] = useState(false);
+  const limit = all ? count : LIST_WINDOW;
+  return (
+    <div className="-mx-4 flex min-h-0 flex-col border-t">
+      <ul className="min-h-0 flex-1 divide-y overflow-y-auto">{children(limit)}</ul>
+      {count > LIST_WINDOW && !all && (
+        <button
+          type="button"
+          onClick={() => setAll(true)}
+          className="shrink-0 border-t px-4 py-1.5 text-left text-xs font-medium text-link hover:underline focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
+        >
+          Show all {count} turns
+        </button>
+      )}
+    </div>
+  );
+}
+
 /** The turns that carry one label: number, one-line summary, the label's
- *  reason (failure modes), actions. Scrolls inside its own bounded area. */
+ *  reason (failure modes), actions. */
 function TurnList({
   field,
   value,
@@ -151,42 +220,32 @@ function TurnList({
   if (turns.length === 0)
     return <p className="py-2 text-xs text-muted-foreground">No judged turn carries it.</p>;
   return (
-    <ul className="-mx-4 max-h-72 divide-y overflow-y-auto border-t">
-      {turns.map((turn) => {
-        const label = findLabel(turn, field, value)!;
-        return (
-          <li key={turn.turn_index} className="flex flex-col gap-1 px-4 py-2">
-            <p className="flex items-baseline gap-2">
-              <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                Turn {turn.turn_index + 1}
-              </span>
-              <ExpandableText
-                text={turn.summary ?? "No summary"}
-                lines={1}
-                className="min-w-0 flex-1 text-sm"
-              />
-            </p>
-            {field === "failure_mode" && label.reason && (
-              <ExpandableText text={label.reason} lines={2} className="text-xs text-muted-foreground" />
-            )}
-            <div className="flex flex-wrap gap-1">
-              <PopoverClose asChild>
-                <Button
-                  size="xs"
-                  variant="outline"
-                  onClick={() => resolved.goToTurn(turn.turn_index)}
-                >
-                  Go to turn
-                </Button>
-              </PopoverClose>
-              {field === "failure_mode" && (
-                <EvidenceActions spanIds={label.span_ids} showSpan={resolved.showSpan} />
-              )}
-            </div>
-          </li>
-        );
-      })}
-    </ul>
+    <RefList count={turns.length}>
+      {(limit) =>
+        turns.slice(0, limit).map((turn) => {
+          const label = findLabel(turn, field, value)!;
+          return (
+            <TurnRefItem
+              key={turn.turn_index}
+              turnIndex={turn.turn_index}
+              summary={turn.summary}
+              resolved={resolved}
+              spanIds={field === "failure_mode" ? label.span_ids : []}
+              note={
+                field === "failure_mode" &&
+                label.reason && (
+                  <ExpandableText
+                    text={label.reason}
+                    lines={2}
+                    className="text-xs text-muted-foreground"
+                  />
+                )
+              }
+            />
+          );
+        })
+      }
+    </RefList>
   );
 }
 
@@ -232,7 +291,17 @@ function SourcePopover({
       <PopoverTrigger asChild onClick={stop}>
         {trigger}
       </PopoverTrigger>
-      <PopoverContent align="start" className={cn("w-80", className)} onClick={stop}>
+      <PopoverContent
+        align="start"
+        // Below or beside, never over the sticky page header; the content
+        // fits the room left and scrolls inside.
+        collisionPadding={{ top: HEADER_CLEARANCE, bottom: 12, left: 12, right: 12 }}
+        className={cn(
+          "flex max-h-[min(32rem,var(--radix-popover-content-available-height))] w-80 flex-col",
+          className,
+        )}
+        onClick={stop}
+      >
         {children(resolved)}
       </PopoverContent>
     </Popover>
@@ -334,9 +403,11 @@ function GroupBody({
     <>
       <p className="mb-2 flex items-baseline justify-between gap-3 text-sm font-medium">
         {title}
-        <span className="font-mono text-xs font-normal text-muted-foreground">{values.length}</span>
+        <span className="text-xs font-normal text-muted-foreground">
+          {values.length} {field === "failure_mode" ? "modes" : "categories"}
+        </span>
       </p>
-      <ul className="-mx-4 max-h-96 overflow-y-auto border-t">
+      <ul className="-mx-4 min-h-0 flex-1 overflow-y-auto border-t">
         {values.map((value) => {
           const open = expanded === value;
           return (
@@ -359,8 +430,8 @@ function GroupBody({
                 )}
                 <span className="min-w-0 flex-1 truncate">{humanize(value)}</span>
                 {resolved.phase === "ready" && (
-                  <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                    {carrying(resolved.turns, field, value).length}
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {turnsText(carrying(resolved.turns, field, value).length)}
                   </span>
                 )}
               </button>
@@ -490,6 +561,7 @@ export function LabelSummary({
   const source = useLazySource(traceId);
   const capped = taskCategories.slice(0, LIST_LABEL_CAP);
   const ref = useRef<HTMLSpanElement>(null);
+  const skillsRef = useRef<HTMLSpanElement>(null);
   const [fit, setFit] = useState(capped.length);
 
   // Whole chips only: the chips sit in a one-line box that wraps and hides
@@ -512,6 +584,13 @@ export function LabelSummary({
       ).length;
       chips.forEach((chip, i) => (chip.style.display = i < count ? "" : "none"));
       setFit(count);
+      // The skills pill (lowest priority) shows whole or not at all.
+      const skills = skillsRef.current?.lastElementChild as HTMLElement | null;
+      const edge = box.parentElement?.getBoundingClientRect().right;
+      if (skills && edge !== undefined) {
+        skills.style.visibility = "";
+        if (skills.getBoundingClientRect().right > edge + 0.5) skills.style.visibility = "hidden";
+      }
     };
     measure();
     const observer = new ResizeObserver(() => measure());
@@ -565,9 +644,12 @@ export function LabelSummary({
         // of the one-line box whole) — unless it names why the row matched the
         // active skill filter.
         <span
+          ref={skillsRef}
           className={cn(
             "flex h-5 min-w-0 overflow-hidden",
-            matchedSkill ? "max-w-40 shrink-0" : "shrink-[100] flex-wrap",
+            // Below xl the column has no room for it: folded away unless it
+            // names the active filter's match.
+            matchedSkill ? "max-w-40 shrink-0" : "hidden shrink-[100] flex-wrap xl:flex",
           )}
         >
           {/* A zero-width first item lets the pill wrap out of the line
@@ -596,16 +678,15 @@ export function TraceOutcomeControl({
   status,
   failed,
   source,
-  placeholder = false,
 }: {
   outcome: Outcome | null;
   status: AnalysisStatus;
   failed: boolean;
   source: TurnSource;
-  placeholder?: boolean;
 }) {
+  // The same status on every surface (owner or not).
   if (outcome) return <OutcomePill outcome={outcome} source={source} />;
-  return <AnalysisStatusBadge status={status} failed={failed} placeholder={placeholder} />;
+  return <AnalysisStatusBadge status={status} failed={failed} />;
 }
 
 /** The lazy source for a list row, stable per trace id. */
@@ -648,48 +729,26 @@ function SkillBody({
       {uses.length === 0 ? (
         <p className="py-2 text-xs text-muted-foreground">No recorded uses.</p>
       ) : (
-        <ul className="-mx-4 max-h-72 divide-y overflow-y-auto border-t">
-          {uses.map((use, i) => {
-            const turn = resolved.turns.find((t) => t.turn_index === use.turn_index);
-            return (
-              <li key={`${use.span_id}-${i}`} className="flex flex-col gap-1 px-4 py-2">
-                <p className="flex items-baseline gap-2">
-                  <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                    {use.turn_index === null ? "No turn" : `Turn ${use.turn_index + 1}`}
-                  </span>
-                  <ExpandableText
-                    text={turn?.summary ?? "Not judged yet"}
-                    lines={1}
-                    className="min-w-0 flex-1 text-sm"
-                  />
-                </p>
-                {use.source && (
-                  <p className="text-xs text-muted-foreground">
-                    {use.source === "user" ? "by you (slash command)" : "by the agent"}
-                  </p>
-                )}
-                <div className="flex flex-wrap gap-1">
-                  {use.turn_index !== null && (
-                    <PopoverClose asChild>
-                      <Button
-                        size="xs"
-                        variant="outline"
-                        onClick={() => resolved.goToTurn(use.turn_index!)}
-                      >
-                        Go to turn
-                      </Button>
-                    </PopoverClose>
-                  )}
-                  <PopoverClose asChild>
-                    <Button size="xs" variant="outline" onClick={() => resolved.showSpan(use.span_id)}>
-                      Open span
-                    </Button>
-                  </PopoverClose>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+        <RefList count={uses.length}>
+          {(limit) =>
+            uses.slice(0, limit).map((use, i) => (
+              <TurnRefItem
+                key={`${use.span_id}-${i}`}
+                turnIndex={use.turn_index}
+                summary={resolved.turns.find((t) => t.turn_index === use.turn_index)?.summary}
+                resolved={resolved}
+                spanIds={[use.span_id]}
+                note={
+                  use.source && (
+                    <p className="text-xs text-muted-foreground">
+                      {use.source === "user" ? "by you (slash command)" : "by the agent"}
+                    </p>
+                  )
+                }
+              />
+            ))
+          }
+        </RefList>
       )}
       {footer?.(name)}
     </>
@@ -803,9 +862,11 @@ function SkillsGroupBody({
     <>
       <p className="mb-2 flex items-baseline justify-between gap-3 text-sm font-medium">
         Skills
-        <span className="font-mono text-xs font-normal text-muted-foreground">{names.length}</span>
+        <span className="text-xs font-normal text-muted-foreground">
+          {names.length} skill{names.length === 1 ? "" : "s"}
+        </span>
       </p>
-      <ul className="-mx-4 max-h-96 overflow-y-auto border-t">
+      <ul className="-mx-4 min-h-0 flex-1 overflow-y-auto border-t">
         {names.map((name) => {
           const open = expanded === name;
           return (
@@ -828,7 +889,7 @@ function SkillsGroupBody({
                 </span>
                 {resolved.phase === "ready" && (
                   <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                    {usesOf(resolved.skills, name).length}×
+                    used {usesOf(resolved.skills, name).length}×
                   </span>
                 )}
               </button>

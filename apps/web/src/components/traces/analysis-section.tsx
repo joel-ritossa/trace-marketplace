@@ -155,6 +155,7 @@ export function AnalysisSection({
   onShowSpan,
   focusTurn,
   turnRequest,
+  onTurnSelected,
   syncUrl = false,
   className,
   agents,
@@ -173,6 +174,8 @@ export function AnalysisSection({
   focusTurn?: number;
   // "Go to turn" from outside the section (the span panels); seq re-fires.
   turnRequest?: { turnIndex: number; seq: number } | null;
+  // A turn was explicitly selected here (expand, Next issue, a popover).
+  onTurnSelected?: (turnIndex: number) => void;
   syncUrl?: boolean;
   className?: string;
 }) {
@@ -200,20 +203,31 @@ export function AnalysisSection({
   }, [targetPresent, scrollTo]);
 
   function toggleTurn(turnIndex: number) {
+    const opening = !openTurns.has(turnIndex);
     setOpenTurns((prev) => {
       const next = new Set(prev);
       if (!next.delete(turnIndex)) next.add(turnIndex);
       return next;
     });
+    // Expanding a turn selects it (the evidence pane follows).
+    if (opening) {
+      setHighlight(turnIndex);
+      onTurnSelected?.(turnIndex);
+    }
+  }
+
+  function reveal(turnIndex: number) {
+    const turn = analysis.turns.find((t) => t.turn_index === turnIndex);
+    if (turn && !matches(turn, filter, skills)) setFilter("all");
+    setOpenTurns((prev) => new Set(prev).add(turnIndex));
+    setHighlight(turnIndex);
+    setScrollTo((prev) => ({ turnIndex, seq: (prev?.seq ?? 0) + 1 }));
   }
 
   const nav: Nav = {
     goToTurn(turnIndex) {
-      const turn = analysis.turns.find((t) => t.turn_index === turnIndex);
-      if (turn && !matches(turn, filter, skills)) setFilter("all");
-      setOpenTurns((prev) => new Set(prev).add(turnIndex));
-      setHighlight(turnIndex);
-      setScrollTo((prev) => ({ turnIndex, seq: (prev?.seq ?? 0) + 1 }));
+      reveal(turnIndex);
+      onTurnSelected?.(turnIndex);
     },
     showSpan: onShowSpan,
     filterTurns: setFilter,
@@ -222,7 +236,8 @@ export function AnalysisSection({
   };
 
   useEffect(() => {
-    if (turnRequest) nav.goToTurn(turnRequest.turnIndex);
+    // From outside: reveal only (the host already knows).
+    if (turnRequest) reveal(turnRequest.turnIndex);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [turnRequest]);
 
@@ -384,12 +399,19 @@ export function SessionCard({
           session verdict wait until the session has gone idle.
         </p>
       )}
-      {session.status === "in_progress" && (
-        <p className="text-sm text-muted-foreground">
-          {judged} of {plural(session.turn_count, "turn")} judged — the session verdict is written
-          once the session goes idle.
-        </p>
-      )}
+      {session.status === "in_progress" &&
+        (session.outcome && session.analyzed_at ? (
+          // A verdict exists but newer turns arrived after it.
+          <p className="text-sm text-muted-foreground">
+            Verdict from {formatDate(session.analyzed_at)}; newer turns since — it refreshes when
+            the session goes idle.
+          </p>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            {judged} of {plural(session.turn_count, "turn")} judged — the session verdict is
+            written once the session goes idle.
+          </p>
+        ))}
       {session.status === "skipped" && session.skip_reason && (
         <p className="text-sm text-muted-foreground">
           {SKIP_REASON_COPY[session.skip_reason]}
@@ -443,7 +465,7 @@ export function SessionCard({
         </div>
       )}
 
-      {session.analyzed_at && (
+      {session.analyzed_at && session.status === "final" && (
         <p className="text-xs text-muted-foreground">
           Session verdict written {formatDate(session.analyzed_at)}
         </p>
@@ -659,7 +681,7 @@ function AnalyzeNow({ trace }: { trace: TraceDetail }) {
       <Button size="sm" variant="outline" disabled={running} onClick={onAnalyze}>
         <BusyLabel busy={running}>
           {!running && <Play data-slot="icon" />}
-          {running ? "Analyzing…" : "Analyze now"}
+          {running ? "Analyzing…" : session.outcome ? "Refresh verdict" : "Analyze now"}
         </BusyLabel>
       </Button>
     </span>
@@ -794,7 +816,7 @@ function TurnRow({
                 <CircleHelp className="text-muted-foreground" />
               </Button>
             </PopoverTrigger>
-            <PopoverContent align="end">
+            <PopoverContent align="end" collisionPadding={{ top: 160, bottom: 12 }}>
               <p className="text-xs font-medium text-muted-foreground">The judge was uncertain</p>
               <p className="mt-1 text-sm">{turn.uncertain}</p>
               {trace.is_owner && (
@@ -826,7 +848,7 @@ function TurnRow({
                 <UserCheck className="text-muted-foreground" />
               </Button>
             </PopoverTrigger>
-            <PopoverContent align="end" className="text-sm">
+            <PopoverContent align="end" collisionPadding={{ top: 160, bottom: 12 }} className="text-sm">
               Labeled by the owner — the judge never re-judges this turn.
             </PopoverContent>
           </Popover>

@@ -11,7 +11,7 @@ import {
   type Notification,
   type NotificationList,
 } from "@/lib/api/notifications";
-import { cleanName } from "@/components/traces/names";
+import { traceTitle } from "@/components/traces/names";
 import { formatDate } from "@/lib/format";
 import { useRealtimeRefetch } from "@/lib/realtime";
 import { cn } from "@/lib/utils";
@@ -30,7 +30,7 @@ function view(n: Notification): { text: string; href: string | null } {
     if (typeof p.trace_name === "string") {
       const turns = Number(p.uncertain_turns ?? 0);
       return {
-        text: `${turns > 0 ? `${turns} uncertain turn${turns === 1 ? "" : "s"}` : "Review requested"} in “${cleanName(p.trace_name)}”`,
+        text: `${turns > 0 ? `${turns} uncertain turn${turns === 1 ? "" : "s"}` : "Review requested"} in “${traceTitle(p.trace_name, typeof p.goal === "string" ? p.goal : null)}”`,
         href: `/review?upload_id=${p.upload_id}`,
       };
     }

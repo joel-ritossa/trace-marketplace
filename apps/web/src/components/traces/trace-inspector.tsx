@@ -42,51 +42,73 @@ export function TraceInspector({
   focusAgent?: string;
   initialView?: EvidenceView;
 }) {
-  const { state, setTrace } = useTraceDetail(traceId);
+  const { state, setTrace, reload } = useTraceDetail(traceId);
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  // Subagent spawns, fetched once the detail says there are any.
+  // Subagent spawns: deferred until the Agents view or the analysis panel's
+  // line wants them (after first paint), so page load stays a few requests.
   const [agents, setAgents] = useState<AgentSpawn[] | null>(null);
   const subagentCount = state.phase === "ready" ? (state.trace.subagents?.count ?? 0) : 0;
   useEffect(() => {
     if (subagentCount === 0) return;
     let cancelled = false;
-    listAgents(traceId)
-      .then((list) => !cancelled && setAgents(list))
-      .catch(() => !cancelled && setAgents([]));
+    const timer = setTimeout(() => {
+      listAgents(traceId)
+        .then((list) => !cancelled && setAgents(list))
+        .catch(() => !cancelled && setAgents([]));
+    }, 1200);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [traceId, subagentCount]);
-  // ?agent=<spawn span id> scopes the evidence pane; ?view= picks its view.
-  const [agentScope, setAgentScopeState] = useState<string | null>(focusAgent ?? null);
-  const [viewRequest, setViewRequest] = useState<{
-    view: EvidenceView;
-    turn?: number;
-    seq: number;
-  } | null>(null);
-  const setParam = (key: string, value: string | null) => {
+
+  // Navigational state lives in the URL, one history entry per step, so
+  // Back returns to it: ?agent= (subagent scope), ?view= (evidence view),
+  // ?turn= (selected turn), ?span= (selected evidence span).
+  const agentScope = searchParams.get("agent") || null;
+  const viewParam = searchParams.get("view");
+  const view: EvidenceView =
+    viewParam === "spans" || viewParam === "agents" ? viewParam : "conversation";
+  const turnParam = searchParams.get("turn");
+  const spanParam = searchParams.get("span");
+  const navigate = (updates: Record<string, string | null>, push = true) => {
     const params = new URLSearchParams(searchParams);
-    if (value === null) params.delete(key);
-    else params.set(key, value);
-    router.replace(params.size > 0 ? `${pathname}?${params}` : pathname, { scroll: false });
+    for (const [key, value] of Object.entries(updates)) {
+      if (value === null) params.delete(key);
+      else params.set(key, value);
+    }
+    const url = params.size > 0 ? `${pathname}?${params}` : pathname;
+    if (push) router.push(url, { scroll: false });
+    else router.replace(url, { scroll: false });
   };
   const setAgentScope = (spanId: string | null) => {
-    setAgentScopeState(spanId);
-    setParam("agent", spanId);
+    navigate({ agent: spanId });
     setPane("evidence");
   };
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [spanFocus, setSpanFocus] = useState<SpanFocus | null>(
-    focusSpan ? { sourceSpanId: focusSpan, seq: 1 } : null,
-  );
+  const [spanFocus, setSpanFocus] = useState<SpanFocus | null>(null);
   const [turnRequest, setTurnRequest] = useState<{ turnIndex: number; seq: number } | null>(
     null,
   );
+  // The one selected turn, mirrored into the evidence pane.
+  const [turnFocus, setTurnFocus] = useState<{ turn: number; seq: number } | null>(null);
+  const [agentFocus, setAgentFocus] = useState<{ turn: number; seq: number } | null>(null);
+  // URL → state, on load and on Back/Forward.
+  useEffect(() => {
+    if (turnParam === null || !/^\d+$/.test(turnParam)) return;
+    const turn = Number(turnParam);
+    setTurnRequest((prev) => ({ turnIndex: turn, seq: (prev?.seq ?? 0) + 1 }));
+    setTurnFocus((prev) => ({ turn, seq: (prev?.seq ?? 0) + 1 }));
+  }, [turnParam]);
+  useEffect(() => {
+    if (spanParam) setSpanFocus((prev) => ({ sourceSpanId: spanParam, seq: (prev?.seq ?? 0) + 1 }));
+  }, [spanParam]);
   // Analysis and evidence side by side when wide; tabs below xl.
   const wide = useMinWidth(1280);
-  // Narrow layouts open on the evidence when a span (and no turn) is asked for.
+  // Narrow layouts open on the evidence when a span, subagent or view (and
+  // no turn) is asked for.
   const [pane, setPane] = useState<"analysis" | "evidence">(
     (focusSpan || focusAgent || initialView) && focusTurn === undefined ? "evidence" : "analysis",
   );
@@ -117,25 +139,47 @@ export function TraceInspector({
   }
 
   if (state.phase === "error") {
-    return <p className="text-sm text-error-deep">{state.message}</p>;
+    // Rate limits are retried automatically; what's left is shown with a way
+    // to try again, inside the page frame.
+    return (
+      <div className="flex flex-col items-center rounded-lg border bg-background px-6 py-12 text-center">
+        <p className="text-sm font-medium">Could not load this trace</p>
+        <p className="mt-1 max-w-md text-sm text-muted-foreground">{state.message}</p>
+        <Button size="sm" variant="outline" className="mt-4" onClick={reload}>
+          Retry
+        </Button>
+      </div>
+    );
   }
 
   const { trace } = state;
 
   const nav: Nav = {
+    // "Go to turn": a history step; both panes follow.
     goToTurn: (turnIndex) => {
+      navigate({ turn: String(turnIndex) });
       setTurnRequest((prev) => ({ turnIndex, seq: (prev?.seq ?? 0) + 1 }));
+      setTurnFocus((prev) => ({ turn: turnIndex, seq: (prev?.seq ?? 0) + 1 }));
       setPane("analysis");
     },
+    // "Open evidence": a history step to the span in the tree.
     showSpan: (sourceSpanId) => {
+      navigate({ span: sourceSpanId, view: "spans" });
       setSpanFocus((prev) => ({ sourceSpanId, seq: (prev?.seq ?? 0) + 1 }));
       setPane("evidence");
     },
     showAgents: (turn) => {
-      setViewRequest((prev) => ({ view: "agents", turn, seq: (prev?.seq ?? 0) + 1 }));
+      navigate({ view: "agents", agent: null });
+      if (turn !== undefined) setAgentFocus((prev) => ({ turn, seq: (prev?.seq ?? 0) + 1 }));
       setPane("evidence");
     },
     openAgent: (spanId) => setAgentScope(spanId),
+  };
+  // A turn selected in the analysis pane (expand, Next issue, popovers):
+  // the evidence follows; the URL records it without a history step.
+  const onTurnSelected = (turnIndex: number) => {
+    navigate({ turn: String(turnIndex) }, false);
+    setTurnFocus((prev) => ({ turn: turnIndex, seq: (prev?.seq ?? 0) + 1 }));
   };
   const onAnalysisChange = (analysis: TraceAnalysis) => setTrace({ ...trace, analysis });
   const title = traceTitle(trace.name, trace.analysis.session.goal);
@@ -167,6 +211,7 @@ export function TraceInspector({
       onShowSpan={nav.showSpan}
       focusTurn={focusTurn}
       turnRequest={turnRequest}
+      onTurnSelected={onTurnSelected}
       syncUrl
       className={cn(wide && "h-full overflow-y-auto")}
       agents={agents}
@@ -186,9 +231,16 @@ export function TraceInspector({
       agents={subagentCount > 0 ? agents : undefined}
       agentScope={agentScope}
       onScope={setAgentScope}
-      initialView={initialView}
-      viewRequest={viewRequest}
-      onViewChange={(view) => setParam("view", view === "conversation" ? null : view)}
+      view={view}
+      onViewChange={(next) => navigate({ view: next === "conversation" ? null : next })}
+      agentFocus={agentFocus}
+      turnFocus={turnFocus}
+      onTurnSelect={(turn) => {
+        navigate({ turn: String(turn) }, false);
+        setTurnRequest((prev) => ({ turnIndex: turn, seq: (prev?.seq ?? 0) + 1 }));
+      }}
+      onShowAgents={(turn) => nav.showAgents?.(turn)}
+      rootTitle={title}
     />
   );
 
@@ -203,7 +255,11 @@ export function TraceInspector({
               "size-2.5 shrink-0 rounded-full",
               trace.status === "error" ? "bg-error-deep" : "bg-status-ok",
             )}
-            title={trace.status === "error" ? "Trace contains errors" : "Trace OK"}
+            title={
+              trace.error_count > 0
+                ? `${trace.error_count.toLocaleString()} span error${trace.error_count === 1 ? "" : "s"} (the verdict is separate)`
+                : "No span errors"
+            }
           />
           <span className="min-w-0 truncate" title={`First ask: ${cleanName(trace.name)}`}>
             {title}

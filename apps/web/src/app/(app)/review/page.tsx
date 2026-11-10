@@ -3,10 +3,12 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { CheckCircle2, CircleHelp, X } from "lucide-react";
+import { CheckCircle2, CircleHelp, TriangleAlert, X } from "lucide-react";
 import { Pager, usePageParam } from "@/components/shell/pager";
 import { AgentBadge } from "@/components/traces/badges";
+import { Button } from "@/components/ui/button";
 import { ExpandableText } from "@/components/ui/expandable-text";
+import { analyzeTrace } from "@/lib/api/traces";
 import { agentOf, cleanName, traceTitle } from "@/components/traces/names";
 import { listReviewItems, type ReviewItem, type ReviewItemList } from "@/lib/api/review";
 import { formatDate } from "@/lib/format";
@@ -50,10 +52,19 @@ function Row({ item }: { item: ReviewItem }) {
             </Link>
             <div className="min-w-0">
               {/* Advisory, not alarm (4_pages.md): muted icon, ink reason. */}
-              <div className="flex items-start gap-1.5 text-sm">
-                <CircleHelp className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
-                <ExpandableText text={turn.reason} lines={2} className="min-w-0 flex-1" />
-              </div>
+              {isJudgeFailure(turn.reason) ? (
+                // Not uncertainty: the judge errored on this turn.
+                <div className="flex flex-wrap items-center gap-2 text-sm">
+                  <TriangleAlert className="size-3.5 shrink-0 text-error-deep" />
+                  <span className="text-error-deep">Analysis failed for this turn</span>
+                  <RetryAnalysis traceId={item.trace_id} />
+                </div>
+              ) : (
+                <div className="flex items-start gap-1.5 text-sm">
+                  <CircleHelp className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+                  <ExpandableText text={turn.reason} lines={2} className="min-w-0 flex-1" />
+                </div>
+              )}
               {turn.summary && (
                 <ExpandableText
                   text={turn.summary}
@@ -66,6 +77,29 @@ function Row({ item }: { item: ReviewItem }) {
         ))}
       </ul>
     </div>
+  );
+}
+
+// The judge's own failure marker, distinct from genuine uncertainty.
+const isJudgeFailure = (reason: string) => /^The judge could not process/i.test(reason);
+
+/** Re-run the trace's analysis (POST /analyze); the queue refreshes live. */
+function RetryAnalysis({ traceId }: { traceId: string }) {
+  const [state, setState] = useState<"idle" | "busy" | "queued" | "error">("idle");
+  return (
+    <Button
+      size="xs"
+      variant="outline"
+      disabled={state === "busy" || state === "queued"}
+      onClick={() => {
+        setState("busy");
+        analyzeTrace(traceId)
+          .then(() => setState("queued"))
+          .catch(() => setState("error"));
+      }}
+    >
+      {state === "queued" ? "Retry queued" : state === "error" ? "Retry failed — again" : "Retry analysis"}
+    </Button>
   );
 }
 

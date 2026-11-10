@@ -310,9 +310,6 @@ export const SpanCard: FC<SpanCardProps> = ({
         <div
           className={cn(
             "relative grid w-full",
-            // DESIGN.md selected row: canvas-soft-2 fill + primary left edge.
-            state.isSelected &&
-              "bg-secondary rounded-sm shadow-[inset_2px_0_0_0_var(--color-primary)]",
           )}
           style={{
             gridTemplateColumns,
@@ -351,9 +348,14 @@ export const SpanCard: FC<SpanCardProps> = ({
               narrows (container queries on the tree). */}
           <div
             className={cn(
-              "mb-2.5 flex h-4 min-w-0 cursor-pointer items-center gap-2 pr-1",
+              // Same 26px pitch as before (-4 + 24 + 6), centred on the
+              // connectors; the selection marks this row's own content.
+              "relative -mt-1 mb-1.5 flex h-6 min-w-0 cursor-pointer items-center gap-2 pr-1",
               level !== 0 && !hasExpandButtonAsFirstChild && "pl-2",
               level !== 0 && hasExpandButtonAsFirstChild && "pl-1",
+              // DESIGN.md selected row: canvas-soft-2 fill + primary left edge.
+              state.isSelected &&
+                "bg-secondary before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-primary",
             )}
           >
             {avatar && <Avatar size="4" {...avatar} />}

@@ -8,6 +8,14 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronRight, GitFork } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { ExpandableText } from "@/components/ui/expandable-text";
 import type { AgentSpawn } from "@/lib/api/traces";
 import { formatCompact, formatDuration } from "@/lib/format";
@@ -137,43 +145,51 @@ export function AgentsView({
             </span>
           )}
         </span>
-        <span className="flex flex-wrap items-center gap-1">
-          <Button
-            size="xs"
-            variant={withTranscript ? "secondary" : "ghost"}
-            aria-pressed={withTranscript}
-            onClick={() => setWithTranscript((v) => !v)}
-            className={cn(!withTranscript && "text-muted-foreground")}
-            title="Fold subagents launched without a transcript into one row per turn"
-          >
-            With transcript
-          </Button>
-          <span className="mx-1 h-4 w-px bg-border" aria-hidden />
-          {FILTERS.filter((f) => f.key !== "background" || backgroundMixed).map(
-            ({ key, label, match }) => (
-              <Button
-                key={key}
-                size="xs"
-                variant={filter === key ? "secondary" : "ghost"}
-                aria-pressed={filter === key}
-                disabled={key !== "all" && !agents.some(match)}
-                onClick={() => setFilter(key)}
-                className={cn(filter !== key && "text-muted-foreground")}
-              >
-                {label}
-              </Button>
-            ),
-          )}
-          <span className="mx-1 h-4 w-px bg-border" aria-hidden />
-          <Button
-            size="xs"
-            variant="ghost"
-            className="text-muted-foreground"
-            onClick={() => setSort(sort === "start" ? "duration" : "start")}
-            title="Sort lanes within each turn"
-          >
-            Sort: {sort === "start" ? "start" : "duration"}
-          </Button>
+        <span className="flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-1.5">
+            <Switch
+              checked={withTranscript}
+              onCheckedChange={setWithTranscript}
+              aria-label="Fold subagents without a transcript"
+            />
+            Only with transcript
+          </label>
+          {/* Segmented: one filter at a time. */}
+          <span role="radiogroup" aria-label="Filter subagents" className="inline-flex rounded-md border p-0.5">
+            {FILTERS.filter((f) => f.key !== "background" || backgroundMixed).map(
+              ({ key, label, match }) => (
+                <button
+                  key={key}
+                  type="button"
+                  role="radio"
+                  aria-checked={filter === key}
+                  disabled={key !== "all" && !agents.some(match)}
+                  onClick={() => setFilter(key)}
+                  className={cn(
+                    "rounded px-2 py-0.5 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none disabled:opacity-50",
+                    filter === key
+                      ? "bg-foreground text-background"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {label}
+                </button>
+              ),
+            )}
+          </span>
+          <Select value={sort} onValueChange={(v) => setSort(v as Sort)}>
+            <SelectTrigger size="sm" aria-label="Sort lanes within each turn" className="h-7 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="end">
+              <SelectItem value="start" className="text-xs">
+                By start time
+              </SelectItem>
+              <SelectItem value="duration" className="text-xs">
+                By run time
+              </SelectItem>
+            </SelectContent>
+          </Select>
         </span>
       </div>
       {groups.length === 0 && (
@@ -193,6 +209,9 @@ export function AgentsView({
     </div>
   );
 }
+
+/** "general-purpose" → "general"; full name on hover. */
+const shortType = (type: string) => type.split(/[-:]/)[0] || type;
 
 const TURN_TIP = "Turn duration: the turn span, start → end";
 const RUN_TIP = "Run time: spawn → the subagent's last span";
@@ -268,8 +287,9 @@ function TurnGroup({
               // Labels for the lanes' right-hand figures.
               <li
                 aria-hidden
-                className="grid grid-cols-[minmax(0,1fr)_minmax(4rem,24%)_auto] text-[11px] text-muted-foreground"
+                className={cn(LANE_GRID, "text-[11px] text-muted-foreground")}
               >
+                <span />
                 <span />
                 <span />
                 <span className="pl-2 text-right">run time · steps · tokens</span>
@@ -346,6 +366,10 @@ function TurnGroup({
   );
 }
 
+// One grid for every lane and the main-agent row, so bars share an axis:
+// description | type | bar track | stats.
+const LANE_GRID = "grid grid-cols-[minmax(0,1fr)_4.5rem_minmax(6rem,26%)_10rem] items-center";
+
 /** The lane grid: label | bar | stats, the bar column shared by the group
  *  (the turn-end marker uses the same variables). */
 function Lane({
@@ -372,11 +396,11 @@ function Lane({
   badges?: ReactNode;
 }) {
   return (
-    <span className="grid grid-cols-[minmax(0,1fr)_minmax(4rem,24%)_auto] items-center text-xs">
-      <span className="flex min-w-0 items-center gap-1.5 pr-2" style={{ paddingLeft: indent * 12 }}>
-        <span className={cn("min-w-0 flex-1", muted && "text-muted-foreground")}>{label}</span>
-        {badges}
+    <span className={cn(LANE_GRID, "text-xs")}>
+      <span className="min-w-0 pr-2" style={{ paddingLeft: indent * 12 }}>
+        <span className={cn("block min-w-0", muted && "text-muted-foreground")}>{label}</span>
       </span>
+      <span className="flex min-w-0 items-center gap-1 pr-2">{badges}</span>
       <span className="relative h-4 rounded-sm bg-agentprism-secondary">
         {/* The turn's end, faint (background agents may run past it). */}
         {marker !== null && marker < 99.5 && (
@@ -395,9 +419,7 @@ function Lane({
           style={{ left: `${start}%`, width: `max(4px, ${Math.max(0, end - start)}%)` }}
         />
       </span>
-      <span className="whitespace-nowrap pl-2 text-right font-mono text-muted-foreground">
-        {stats}
-      </span>
+      <span className="truncate pl-2 text-right font-mono text-muted-foreground">{stats}</span>
     </span>
   );
 }
@@ -434,10 +456,10 @@ function AgentLane({
         <>
           {(a.type || a.model) && (
             <span
-              className="max-w-20 shrink-0 truncate rounded-full bg-secondary px-1.5 text-foreground/75"
+              className="min-w-0 truncate rounded-full bg-secondary px-1.5 text-foreground/75"
               title={[a.type, a.model].filter(Boolean).join(" · ")}
             >
-              {a.type ?? a.model}
+              {shortType(a.type ?? a.model ?? "")}
             </span>
           )}
           {showBg && a.background && (
@@ -491,6 +513,7 @@ export function SubagentCard({
   brief,
   report,
   action,
+  compact = false,
 }: {
   agent: AgentSpawn;
   turnLabel: string;
@@ -498,6 +521,9 @@ export function SubagentCard({
   brief: string | null | undefined;
   report: string | null | undefined;
   action?: ReactNode;
+  // One stats line and one-line brief/report (expandable): the scope header,
+  // where the conversation below needs the room.
+  compact?: boolean;
 }) {
   const facts: [string, string][] = [
     ["Duration", formatDuration(time(a.ended_at) - time(a.started_at))],
@@ -505,6 +531,43 @@ export function SubagentCard({
     ["Tokens", formatCompact(tokens(a))],
     ["Errors", String(a.error_count)],
   ];
+  const prose = (title: string, text: string | null | undefined) => (
+    <div className={cn(compact && "flex min-w-0 items-baseline gap-2")}>
+      <h4 className="shrink-0 text-xs text-muted-foreground">{title}</h4>
+      {text ? (
+        <ExpandableText
+          text={text}
+          lines={compact ? 1 : 3}
+          className={cn("text-sm", compact ? "min-w-0 flex-1" : "mt-0.5")}
+        />
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          {text === undefined ? "Loading…" : "Not recorded."}
+        </p>
+      )}
+    </div>
+  );
+  if (compact)
+    return (
+      <div className="flex flex-col gap-1.5">
+        <p className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+          <SubagentIcon className="size-3.5 shrink-0" />
+          <span className="text-sm font-semibold text-foreground">{a.description ?? "Subagent"}</span>
+          {a.type && <span>{a.type}</span>}
+          {a.model && <span className="font-mono">{a.model}</span>}
+          {facts.map(([k, v]) => (
+            <span key={k} className={cn(k === "Errors" && a.error_count > 0 && "text-error-deep")}>
+              <span className="font-mono text-foreground">{v}</span> {k.toLowerCase()}
+            </span>
+          ))}
+          <span>
+            spawned in {turnLabel} by {parentLabel}
+          </span>
+        </p>
+        {prose("Brief", brief)}
+        {prose("Final report", report)}
+      </div>
+    );
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -530,22 +593,8 @@ export function SubagentCard({
           </div>
         ))}
       </dl>
-      <div>
-        <h4 className="text-xs text-muted-foreground">Brief</h4>
-        {brief ? (
-          <ExpandableText text={brief} lines={3} className="mt-0.5 text-sm" />
-        ) : (
-          <p className="text-sm text-muted-foreground">{brief === undefined ? "Loading…" : "Not recorded."}</p>
-        )}
-      </div>
-      <div>
-        <h4 className="text-xs text-muted-foreground">Final report</h4>
-        {report ? (
-          <ExpandableText text={report} lines={3} className="mt-0.5 text-sm" />
-        ) : (
-          <p className="text-sm text-muted-foreground">{report === undefined ? "Loading…" : "Not recorded."}</p>
-        )}
-      </div>
+      {prose("Brief", brief)}
+      {prose("Final report", report)}
     </div>
   );
 }

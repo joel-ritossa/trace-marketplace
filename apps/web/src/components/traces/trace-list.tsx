@@ -19,7 +19,7 @@ import { SelectBox } from "@/components/traces/bulk-bar";
 import { Button } from "@/components/ui/button";
 import { downloadTrace, type TraceListItem } from "@/lib/api/traces";
 import { agentOf, cleanName, traceTitle } from "@/components/traces/names";
-import { formatDate, formatDuration } from "@/lib/format";
+import { formatDate, formatDuration, formatShortDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export type Selection = {
@@ -48,11 +48,9 @@ function detailHref(view: TraceListView, traceId: string): string {
  *  each opens the shared popovers, fetching the trace on first open. */
 function RowAnalysis({
   trace,
-  placeholder,
   skillFilter,
 }: {
   trace: TraceListItem;
-  placeholder: boolean;
   skillFilter?: SkillFilter;
 }) {
   const source = useLazySource(trace.trace_id);
@@ -62,7 +60,6 @@ function RowAnalysis({
         outcome={trace.outcome}
         status={trace.analysis_status}
         failed={trace.analysis_failed}
-        placeholder={placeholder}
         source={source}
       />
       <LabelSummary
@@ -73,6 +70,16 @@ function RowAnalysis({
         skillFilter={skillFilter}
       />
     </>
+  );
+}
+
+/** Date and time where the table has room; the day alone below xl. */
+function RowDate({ iso }: { iso: string }) {
+  return (
+    <span title={formatDate(iso)}>
+      <span className="hidden xl:inline">{formatDate(iso)}</span>
+      <span className="xl:hidden">{formatShortDate(iso)}</span>
+    </span>
   );
 }
 
@@ -148,7 +155,7 @@ export function TraceList({
                 />
               </Th>
             )}
-            <Th className="min-w-48 xl:min-w-64">Name</Th>
+            <Th className="min-w-40 xl:min-w-64">Name</Th>
             <Th className="min-w-48">Analysis</Th>
             <Th className={WIDEST_ONLY}>Spans</Th>
             <Th className={WIDE_ONLY}>Errors</Th>
@@ -183,45 +190,47 @@ export function TraceList({
                   />
                 </td>
               )}
-              <td className="max-w-80 px-4 py-2.5">
+              <td className="max-w-60 px-4 py-2.5 xl:max-w-96">
                 <span className="flex items-center gap-2">
                   <span
                     className={cn(
                       "size-2 shrink-0 rounded-full",
                       trace.status === "error" ? "bg-error-deep" : "bg-status-ok",
                     )}
-                    title={trace.status === "error" ? "Trace contains errors" : "Trace OK"}
+                    title={
+                      trace.error_count > 0
+                        ? `${trace.error_count} span error${trace.error_count === 1 ? "" : "s"}`
+                        : "No span errors"
+                    }
                   />
                   <Link
                     href={detailHref(view, trace.trace_id)}
-                    title={`First ask: ${cleanName(trace.name)}`}
+                    title={[
+                      `First ask: ${cleanName(trace.name)}`,
+                      view !== "mine" && trace.description,
+                    ]
+                      .filter(Boolean)
+                      .join("\n")}
                     className="truncate font-medium hover:underline"
                   >
                     {traceTitle(trace.name, trace.goal)}
                   </Link>
-                  {view === "mine" && agentOf(trace.name) && (
-                    <AgentBadge agent={agentOf(trace.name)!} />
+                  {/* One row layout on every list surface: title, then badges. */}
+                  {agentOf(trace.name) && <AgentBadge agent={agentOf(trace.name)!} />}
+                  {view !== "mine" && trace.is_owner && (
+                    <VisibilityBadge visibility={trace.visibility} />
                   )}
+                  {view !== "mine" && view !== "library" && trace.acquired && <LibraryBadge />}
                   {newIds?.has(trace.trace_id) && (
                     <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-secondary px-2 py-0.5 text-xs font-medium text-link-deep">
                       <Sparkles className="size-3" /> new
                     </span>
                   )}
                 </span>
-                {/* Marketplace-style rows: the title keeps the first line; badges
-                    and the description share the second. */}
-                {view !== "mine" && (
-                  <p className="mt-0.5 flex min-w-0 items-center gap-1.5 pl-4 text-xs text-muted-foreground">
-                    {agentOf(trace.name) && <AgentBadge agent={agentOf(trace.name)!} />}
-                    {trace.is_owner && <VisibilityBadge visibility={trace.visibility} />}
-                    {view !== "library" && trace.acquired && <LibraryBadge />}
-                    {trace.description && <span className="truncate">{trace.description}</span>}
-                  </p>
-                )}
               </td>
               <td className="px-4 py-2.5">
-                <span className="flex max-w-60 min-w-0 items-center gap-1.5 overflow-hidden xl:max-w-80">
-                  <RowAnalysis trace={trace} placeholder={view !== "mine"} skillFilter={skillFilter} />
+                <span className="flex max-w-56 min-w-0 items-center gap-1.5 overflow-hidden xl:max-w-72">
+                  <RowAnalysis trace={trace} skillFilter={skillFilter} />
                   {view === "mine" && trace.has_open_review_item && (
                     <NeedsReviewLink traceId={trace.trace_id} />
                   )}
@@ -238,7 +247,9 @@ export function TraceList({
                   <td className="px-4 py-2.5">
                     <VisibilityBadge visibility={trace.visibility} />
                   </td>
-                  <MonoTd>{formatDate(trace.created_at)}</MonoTd>
+                  <MonoTd>
+                    <RowDate iso={trace.created_at} />
+                  </MonoTd>
                 </>
               ) : (
                 <>
@@ -246,13 +257,10 @@ export function TraceList({
                     {trace.owner_display_name ?? "unknown contributor"}
                   </td>
                   <MonoTd>
-                    {view === "library"
-                      ? trace.acquired_at
-                        ? formatDate(trace.acquired_at)
-                        : "—"
-                      : trace.listed_at
-                        ? formatDate(trace.listed_at)
-                        : "—"}
+                    {(() => {
+                      const at = view === "library" ? trace.acquired_at : trace.listed_at;
+                      return at ? <RowDate iso={at} /> : "—";
+                    })()}
                   </MonoTd>
                 </>
               )}

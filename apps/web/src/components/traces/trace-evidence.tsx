@@ -182,9 +182,13 @@ export function TraceEvidence({
   agents,
   agentScope = null,
   onScope,
-  initialView = "conversation",
-  viewRequest,
+  view: controlledView,
   onViewChange,
+  agentFocus = null,
+  turnFocus = null,
+  onTurnSelect,
+  onShowAgents,
+  rootTitle,
 }: {
   traceId: string;
   className?: string;
@@ -196,28 +200,33 @@ export function TraceEvidence({
   // The subagent (spawn span's source id) the pane is scoped to.
   agentScope?: string | null;
   onScope?: (spanId: string | null) => void;
-  initialView?: EvidenceView;
-  // Switch view from outside (the analysis panel); turn scrolls the Agents
-  // view to that turn's group. seq re-fires.
-  viewRequest?: { view: EvidenceView; turn?: number; seq: number } | null;
+  // Controlled by the host (the trace page keeps it in the URL); internal
+  // state otherwise (the similar-trace preview).
+  view?: EvidenceView;
   onViewChange?: (view: EvidenceView) => void;
+  // Scroll the Agents view to a turn's group; seq re-fires.
+  agentFocus?: { turn: number; seq: number } | null;
+  // The selected turn: scroll the conversation to its start, or select its
+  // span in the tree. seq re-fires; only explicit selections send one.
+  turnFocus?: { turn: number; seq: number } | null;
+  // A turn span was selected here.
+  onTurnSelect?: (turnIndex: number) => void;
+  // Leave the scope for the Agents view at a turn's group.
+  onShowAgents?: (turnIndex: number) => void;
+  // The trace's display name for the root row (one name everywhere).
+  rootTitle?: string;
 }) {
   const [state, setState] = useState<LoadState>({
     phase: "loading",
     spansLoaded: 0,
     spansTotal: null,
   });
-  const [view, setViewState] = useState<EvidenceView>(initialView);
+  const [ownView, setOwnView] = useState<EvidenceView>("conversation");
+  const view = controlledView ?? ownView;
   const setView = (next: EvidenceView) => {
-    setViewState(next);
+    if (controlledView === undefined) setOwnView(next);
     onViewChange?.(next);
   };
-  const [agentFocus, setAgentFocus] = useState<{ turn: number; seq: number } | null>(null);
-  useEffect(() => {
-    if (!viewRequest) return;
-    setViewState(viewRequest.view);
-    if (viewRequest.turn !== undefined) setAgentFocus({ turn: viewRequest.turn, seq: viewRequest.seq });
-  }, [viewRequest]);
   const [expandedIds, setExpandedIds] = useState<string[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [details, setDetails] = useState<Map<string, SpanDetail>>(new Map());
@@ -232,9 +241,11 @@ export function TraceEvidence({
   const [showRaw, setShowRaw] = useState(false);
   const handledFocus = useRef(0);
 
+  const [reloadKey, setReloadKey] = useState(0);
   // Hosts remount per trace (keyed), so state never carries across traces.
   useEffect(() => {
     let cancelled = false;
+    setState({ phase: "loading", spansLoaded: 0, spansTotal: null });
     listAllSpans(traceId, (loaded, total) => {
       if (!cancelled) {
         setState((prev) =>
@@ -247,7 +258,8 @@ export function TraceEvidence({
       .then((spans) => {
         if (cancelled) return;
         const roots = buildSpanTree(spans);
-        setExpandedIds([]);
+        // Open to the turn level: a lone root shows its children.
+        setExpandedIds(roots.length === 1 ? [roots[0].id] : []);
         setState({ phase: "ready", spans, roots });
       })
       .catch(() => {
@@ -256,7 +268,7 @@ export function TraceEvidence({
     return () => {
       cancelled = true;
     };
-  }, [traceId]);
+  }, [traceId, reloadKey]);
 
   // Scope: the spawn span's subtree (by tree node id), or the whole trace.
   const scopeNodeId =
@@ -278,6 +290,21 @@ export function TraceEvidence({
     [state, scopeIds],
   );
   const fetched = useRef(new Set<string>());
+  const prefetchTurn = turnFocus?.turn;
+  // Every span's turn (by tree node id), from the turn spans' subtrees.
+  const { turnNodes, turnOfNode } = useMemo(() => {
+    const turnNodes = new Map<number, string>();
+    const turnOfNode = new Map<string, number>();
+    if (state.phase !== "ready") return { turnNodes, turnOfNode };
+    for (const node of flatten(state.roots).values()) {
+      const m = /^turn (\d+)\b/i.exec(node.title);
+      if (!m || node.type !== "agent_invocation") continue;
+      const turn = Number(m[1]) - 1;
+      turnNodes.set(turn, node.id);
+      for (const id of flatten([node]).keys()) turnOfNode.set(id, turn);
+    }
+    return { turnNodes, turnOfNode };
+  }, [state]);
 
   // Prefetch llm/tool span details for the conversation view, one at a time
   // (the per-user rate limit makes parallel fetching counterproductive);
@@ -285,7 +312,17 @@ export function TraceEvidence({
   useEffect(() => {
     if (state.phase !== "ready") return;
     let cancelled = false;
-    const content = scopedSpans.filter(isContentSpan).slice(0, MAX_CONTENT_SPANS);
+    // Only while the conversation is on screen: keeps page load to a few
+    // requests (and under the rate limit) when another view is open.
+    if (view !== "conversation") return;
+    // The selected turn's steps first, so its start can be shown.
+    const all = scopedSpans.filter(isContentSpan);
+    const inTurn = (sp: SpanListItem) =>
+      prefetchTurn !== undefined && turnOfNode.get(sp.span_id) === prefetchTurn;
+    const content = [...all.filter(inTurn), ...all.filter((sp) => !inTurn(sp))].slice(
+      0,
+      MAX_CONTENT_SPANS,
+    );
     (async () => {
       if (cancelled) return;
       setConvo({ loaded: 0, total: content.length, done: content.length === 0 });
@@ -323,7 +360,7 @@ export function TraceEvidence({
     return () => {
       cancelled = true;
     };
-  }, [state, traceId, scopedSpans]);
+  }, [state, traceId, scopedSpans, view, prefetchTurn]);
 
   async function fetchDetail(id: string) {
     if (details.has(id)) return;
@@ -358,7 +395,8 @@ export function TraceEvidence({
     const span = state.spans.find((s) => s.source_span_id === focus.sourceSpanId);
     const path = span ? ancestorIds(state.roots, span.span_id) : null;
     if (!span || path === null) return;
-    setView("spans");
+    // A controlled host switches to Spans itself (with the same history step).
+    if (controlledView === undefined) setOwnView("spans");
     setExpandedIds((prev) => [...new Set([...prev, ...path])]);
     void selectSpan(span.span_id);
     setScrollSeq((n) => n + 1);
@@ -405,6 +443,10 @@ export function TraceEvidence({
   const scopeSpawn = agentScope ? agents?.find((a) => a.span_id === agentScope) : undefined;
   useEffect(() => {
     if (!scopeNodeId) return;
+    // The card's final report: the subagent's last LLM reply.
+    const scopeRootNode = state.phase === "ready" ? flatten(state.roots).get(scopeNodeId) : undefined;
+    const reply = scopeRootNode ? lastLlmDescendant(scopeRootNode) : undefined;
+    if (reply) void fetchDetail(reply.id);
     // The scoped tree opens one level deep: the subagent's own steps.
     setExpandedIds((prev) => (prev.includes(scopeNodeId) ? prev : [...prev, scopeNodeId]));
     void fetchDetail(scopeNodeId);
@@ -421,6 +463,34 @@ export function TraceEvidence({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [agentScope, onScope]);
+  const conversationLength = conversation.length;
+  // In scope the brief is in the card: drop the message repeating it.
+  const scopeBrief = scopeNodeId ? spawnBriefOf(details.get(scopeNodeId)) : undefined;
+  const shownConversation = scopeBrief
+    ? conversation.filter((i) => !(i.kind === "message" && i.text.trim() === scopeBrief.trim()))
+    : conversation;
+  // An explicit turn selection (left pane, deep link): bring that turn into
+  // view here — its start in the conversation, its span in the tree.
+  const handledTurn = useRef(0);
+  useEffect(() => {
+    if (!turnFocus || turnFocus.seq === handledTurn.current || state.phase !== "ready") return;
+    if (view === "conversation") {
+      const anchor = document.getElementById(`conv-turn-${turnFocus.turn}`);
+      if (!anchor) return; // not reconstructed yet: retried as items load
+      handledTurn.current = turnFocus.seq;
+      anchor.scrollIntoView({ block: "start", behavior: "smooth" });
+    } else if (view === "spans") {
+      handledTurn.current = turnFocus.seq;
+      const id = turnNodes.get(turnFocus.turn);
+      const path = id ? ancestorIds(state.roots, id) : null;
+      if (!id || path === null) return;
+      setExpandedIds((prev) => [...new Set([...prev, ...path])]);
+      selectSpan(id);
+      setScrollSeq((n) => n + 1);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [turnFocus, state, view, turnNodes, conversationLength]);
+
   const turnInfo = useMemo(() => {
     const map = new Map<number, TurnInfo>();
     if (state.phase !== "ready") return map;
@@ -448,7 +518,14 @@ export function TraceEvidence({
   }
 
   if (state.phase === "error") {
-    return <p className="text-sm text-error-deep">Could not load the trace’s spans.</p>;
+    return (
+      <div className="flex flex-col items-start gap-2 rounded-lg border bg-background p-4 text-sm">
+        <p className="text-error-deep">Could not load the trace’s spans.</p>
+        <Button size="sm" variant="outline" onClick={() => setReloadKey((k) => k + 1)}>
+          Retry
+        </Button>
+      </div>
+    );
   }
 
   const selectedNode = selectedId ? nodeById.get(selectedId) : undefined;
@@ -505,7 +582,8 @@ export function TraceEvidence({
           agents={agents ?? []}
           turnInfo={turnInfo}
           onScope={onScope}
-          brief={scopeNodeId ? spawnBriefOf(details.get(scopeNodeId)) : undefined}
+          onTurn={onShowAgents}
+          brief={scopeBrief}
           report={scopeReport}
         />
       )}
@@ -524,7 +602,13 @@ export function TraceEvidence({
         <p className="text-sm text-muted-foreground">Loading subagents…</p>
       ) : view === "conversation" || view === "agents" ? (
         <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border bg-background p-4">
-          {conversation.length > 0 && <ConversationView items={conversation} />}
+          {conversation.length > 0 && (
+            <ConversationView
+              items={shownConversation}
+              turnOf={(id) => turnOfNode.get(id)}
+              activeTurn={turnFocus?.turn}
+            />
+          )}
           {!convo.done && (
             <p
               className={cn(
@@ -564,9 +648,20 @@ export function TraceEvidence({
               className="h-full overflow-y-auto rounded-lg border bg-background py-2"
             >
               <TreeView
-                spans={scopeRoot ? [scopeRoot] : state.roots}
+                spans={
+                  scopeRoot
+                    ? [scopeRoot]
+                    : rootTitle && state.roots.length === 1
+                      ? [{ ...state.roots[0], title: rootTitle }]
+                      : state.roots
+                }
                 selectedSpan={panelSpan}
-                onSpanSelect={(span) => selectSpan(span.id)}
+                onSpanSelect={(span) => {
+                  selectSpan(span.id);
+                  // Selecting a turn span selects that turn on the left too.
+                  if (turnNodes.get(turnOfNode.get(span.id) ?? -1) === span.id)
+                    onTurnSelect?.(turnOfNode.get(span.id)!);
+                }}
                 expandedSpansIds={expandedIds}
                 onExpandSpansIdsChange={setExpandedIds}
                 spanCardViewOptions={{ expandButton: "inside", durationUnknown }}
@@ -619,6 +714,7 @@ function ScopeHeader({
   agents,
   turnInfo,
   onScope,
+  onTurn,
   brief,
   report,
 }: {
@@ -626,6 +722,7 @@ function ScopeHeader({
   agents: AgentSpawn[];
   turnInfo: Map<number, TurnInfo>;
   onScope: (spanId: string | null) => void;
+  onTurn?: (turnIndex: number) => void;
   brief: string | null | undefined;
   report: string | null | undefined;
 }) {
@@ -646,14 +743,19 @@ function ScopeHeader({
           Session
         </button>
         <span aria-hidden>›</span>
-        <button
-          type="button"
-          className={crumb}
-          title={spawn.turn_index !== null ? turnInfo.get(spawn.turn_index)?.ask : undefined}
-          onClick={() => onScope(null)}
-        >
-          {turnLabel}
-        </button>
+        {spawn.turn_index !== null && onTurn ? (
+          // The turn's group in the Agents view.
+          <button
+            type="button"
+            className={crumb}
+            title={turnInfo.get(spawn.turn_index)?.ask}
+            onClick={() => onTurn(spawn.turn_index!)}
+          >
+            {turnLabel}
+          </button>
+        ) : (
+          <span>{turnLabel}</span>
+        )}
         {parents.map((p) => (
           <span key={p.span_id} className="flex min-w-0 items-center gap-1.5">
             <span aria-hidden>›</span>
@@ -668,8 +770,9 @@ function ScopeHeader({
           Back to session
         </Button>
       </nav>
-      <div className="max-h-64 overflow-y-auto rounded-lg border bg-background p-3">
+      <div className="rounded-lg border bg-background px-3 py-2">
         <SubagentCard
+          compact
           agent={spawn}
           turnLabel={turnLabel}
           parentLabel={parents.length ? (parents[parents.length - 1].description ?? "a subagent") : "the main agent"}

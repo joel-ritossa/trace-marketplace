@@ -25,3 +25,8 @@ export function formatDate(iso: string): string {
     minute: "2-digit",
   });
 }
+
+/** "Nov 10" — for narrow table columns (full date and time on hover). */
+export function formatShortDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
