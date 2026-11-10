@@ -382,6 +382,29 @@ _V5_SUBAGENTS = """\
 """
 _V5_TEMPLATE = _V4_TEMPLATE.replace(_V4_SUBAGENTS, _V5_SUBAGENTS)
 
+# V6 (first smoke run): the turn judge repeated subagent verdicts as turn
+# failure modes. A verdict is a lead; it becomes a turn label only when it
+# affected what the user got.
+_V6_SUBAGENTS = """\
+- Subagents: a subagent that was already judged on its own shows as one
+  row carrying its verdict (outcome, failure modes, summary: how it did
+  against the brief it was given) with its spans hidden; read_turn with
+  under=<span_id> still opens them. A subagent verdict is a lead, not a
+  finding about the turn. Give the turn a failure mode because of a
+  subagent only when its failure affected what the user got in this turn
+  (a wrong figure or claim that reached the answer, missing work the
+  answer presents as done), and say in the reason how it did; check that
+  in the main agent's own spans, and open the subagent when the verdict
+  alone does not settle it. Cite the main-agent span that carried it into
+  the answer; you may also cite the spawn span. A subagent failure the
+  main agent caught and corrected, rightly ignored, or that did not
+  matter to the ask stays on the subagent: no turn label, no lower
+  outcome. A subagent row without a verdict was not judged: do not rely
+  on the main agent's summary of it alone, open it (at least every such
+  subagent with errors and one reported as successful).
+"""
+_V6_TEMPLATE = _V4_TEMPLATE.replace(_V4_SUBAGENTS, _V6_SUBAGENTS)
+
 
 def build_v1(allowed: Iterable[str]) -> str:
     """`allowed` must already include "other"; order follows the canonical
@@ -415,3 +438,8 @@ def build_v4(allowed: Iterable[str]) -> str:
 def build_v5(allowed: Iterable[str]) -> str:
     """Same contract as `build_v1`."""
     return _V5_TEMPLATE.format(categories=_category_lines(allowed))
+
+
+def build_v6(allowed: Iterable[str]) -> str:
+    """Same contract as `build_v1`."""
+    return _V6_TEMPLATE.format(categories=_category_lines(allowed))

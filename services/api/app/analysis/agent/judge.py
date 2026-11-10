@@ -47,7 +47,7 @@ from app.analysis.prompts.agent import roll_up as roll_up_prompt
 from app.analysis.rendering import middle_out
 from app.analysis.trace_input import TraceInput
 
-AGENT_VERSION = "6"
+AGENT_VERSION = "7"
 
 _CITABLE_KINDS = ("llm", "tool")
 
@@ -137,7 +137,7 @@ async def judge_turn_with_meta(
     answer, read, cut_short, meta = await _judge(
         Agent(
             name="turn_judge",
-            instructions=judge_prompt.build_v5(allowed),
+            instructions=judge_prompt.build_v6(allowed),
             model=settings.judge_model,
             output_type=_Answer,
         ),
@@ -180,16 +180,21 @@ async def judge_subagent_with_meta(
         middle_out(text, cap)[0] if text else "(not recorded)"
         for text in (view.ask, content.output_text(view.span))
     )
+    page = tools.READ_TURN_PAGE_SPANS
     prompt = (
         f"Judge the subagent spawned by span {span_id} in turn {turn_index}. "
-        f"Start with {_read_call(view)}. {_budget(settings)}"
+        f"It has {len(view.spans)} spans: {_read_call(view)} shows {page} per page "
+        f"(offset 0, {page}, {2 * page}, ...). Request its pages together in your first round. "
+        f"Budget: {settings.agent_max_steps} model turns; each round of tool calls is one, and "
+        "so is your answer. Every round re-sends all you have read, so use few: put "
+        "independent calls in the same round and answer as soon as you can judge."
         f"\n\nBrief (the spawn call's input):\n{brief}"
         f"\n\nWhat the spawn call returned to its parent:\n{returned}"
     )
     answer, read, cut_short, meta = await _judge(
         Agent(
             name="subagent_judge",
-            instructions=subagent_prompt.V1,
+            instructions=subagent_prompt.V2,
             model=settings.judge_model,
             output_type=_SubagentAnswer,
         ),

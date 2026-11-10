@@ -227,4 +227,4 @@ async def test_subagent_cut_short_or_unread_gets_no_verdict(monkeypatch) -> None
 def test_turn_prompt_explains_subagent_verdict_rows() -> None:
     from app.analysis.prompts.agent import judge_turn
 
-    assert "carrying its verdict" in judge_turn.build_v5(["other"])
+    assert "is a lead, not a" in judge_turn.build_v6(["other"])
