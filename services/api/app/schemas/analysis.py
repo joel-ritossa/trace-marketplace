@@ -49,6 +49,8 @@ class TurnAnalysis(BaseModel):
 
 class SessionAnalysis(BaseModel):
     status: AnalysisStatus
+    # Turns in the trace as the judge splits them, judged or not.
+    turn_count: int
     # Set exactly when skipped.
     skip_reason: SkipReason | None = None
     goal: str | None = None

@@ -334,7 +334,7 @@ async def download_trace(trace_id: str, user: CurrentUser) -> Response:
     )
 
 
-def session_analysis(row: Mapping[str, Any]) -> SessionAnalysis:
+def session_analysis(row: Mapping[str, Any], turn_count: int) -> SessionAnalysis:
     """The session block from a trace_analysis row (left-joined: all-null
     when unanalyzed) plus `analysis_attempts`."""
     status = analysis_q.derive_status(
@@ -345,6 +345,7 @@ def session_analysis(row: Mapping[str, Any]) -> SessionAnalysis:
         signals = AnalysisSignals(**{f: row[f] for f in analysis_q.SIGNAL_FIELDS})
     return SessionAnalysis(
         status=status,
+        turn_count=turn_count,
         skip_reason=row["llm_skip_reason"] if status == "skipped" else None,
         goal=row["goal"],
         outcome=row["outcome"],
@@ -384,7 +385,7 @@ async def trace_analysis(row: Mapping[str, Any]) -> TraceAnalysis:
     trace_id = str(row["id"])
     dead_letter = await analysis_q.fetch_open_dead_letter(pool, trace_id)
     return TraceAnalysis(
-        session=session_analysis(row),
+        session=session_analysis(row, await analysis_q.count_turns(pool, trace_id)),
         turns=[turn_analysis(t) for t in await analysis_q.fetch_turns(pool, trace_id)],
         failed_reason=dead_letter["last_error"] if dead_letter is not None else None,
         open_review_item_id=(

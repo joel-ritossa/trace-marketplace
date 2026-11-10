@@ -214,6 +214,19 @@ async def fetch_turns(
     return [{**dict(t), "labels": by_turn.get(t["turn_index"], [])} for t in turns]
 
 
+async def count_turns(executor: asyncpg.Pool | asyncpg.Connection, trace_id: str) -> int:
+    """Turns as the judge splits them (agent/turns.split): spans carrying an
+    integer `turn.index`, or one synthetic turn when there are none."""
+    count = await executor.fetchval(
+        """
+        select count(*) from spans
+        where trace_id = $1 and jsonb_typeof(attributes -> 'turn.index') = 'number'
+        """,
+        trace_id,
+    )
+    return max(count, 1)
+
+
 async def fetch_analysis(pool: asyncpg.Pool, trace_id: str) -> asyncpg.Record | None:
     return await pool.fetchrow("select * from trace_analysis where trace_id = $1", trace_id)
 

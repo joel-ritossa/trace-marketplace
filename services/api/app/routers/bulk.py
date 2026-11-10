@@ -196,9 +196,10 @@ async def _label_line(pool: asyncpg.Pool, trace_id: str, caller_id: str) -> str:
     block. Unanalyzed traces get a pending session and no turns."""
     row = await traces_q.get_visible(pool, trace_id, caller_id)
     turns = await analysis_q.fetch_turns(pool, trace_id)
+    session = session_analysis(row, await analysis_q.count_turns(pool, trace_id))
     line = {
         "trace_id": trace_id,
-        "session": session_analysis(row).model_dump(mode="json"),
+        "session": session.model_dump(mode="json"),
         "turns": [turn_analysis(t).model_dump(mode="json") for t in turns],
     }
     return json.dumps(line) + "\n"
