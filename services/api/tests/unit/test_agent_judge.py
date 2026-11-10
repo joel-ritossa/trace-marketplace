@@ -5,7 +5,7 @@ import pytest
 from app.analysis import llm
 from app.analysis.agent import judge
 from app.analysis.config import AnalysisSettings
-from tests.unit.test_agent_turns import session
+from tests.unit.test_agent_turns import delegating, session
 
 LLM_SPAN = f"{2:016x}"
 SUB_TOOL_SPAN = f"{5:016x}"
@@ -187,3 +187,44 @@ async def test_malformed_output_propagates(monkeypatch) -> None:
     monkeypatch.setattr(llm, "run_agent", fake_run)
     with pytest.raises(llm.MalformedResponse):
         await judge.judge_turn(session(), 0, SETTINGS)
+
+
+async def test_subagent_judge_reads_and_cites_only_under_its_spawn_span(monkeypatch) -> None:
+    outer, own_llm, nested_llm, main_llm = (f"{i:016x}" for i in (3, 4, 6, 2))
+
+    def verdict(span_ids: list[str]) -> dict:
+        body = answer(span_ids)["answer"]
+        return {"answer": {k: body[k] for k in ("outcome", "summary", "failure_modes")}}
+
+    # Reading the whole turn is not reading the subagent; the main agent's
+    # span and the spawn span are outside it.
+    seen = install(
+        monkeypatch,
+        [
+            tool("read_turn", turn_index=0),
+            verdict([main_llm, outer]),
+            tool("read_turn", turn_index=0, under=outer),
+            verdict([main_llm, own_llm, nested_llm]),
+        ],
+    )
+    result, meta = await judge.judge_subagent_with_meta(delegating(), 0, outer, SETTINGS)
+    feedback = seen[1]["input"][-1]["content"]
+    assert f"read_turn(0, under='{outer}')" in feedback and "the subagent under" in feedback
+    assert result.span_id == outer and result.failure_modes[0].span_ids == [own_llm, nested_llm]
+    assert meta.llm_calls == 2
+    assert "Brief (the spawn call's input)" in seen[0]["input"]
+
+
+async def test_subagent_cut_short_or_unread_gets_no_verdict(monkeypatch) -> None:
+    outer = f"{3:016x}"
+    body = {"answer": {"outcome": "success", "summary": "s", "failure_modes": []}}
+    install(monkeypatch, [tool("list_turns")] * 3 + [body])  # step limit, forced answer
+    assert (await judge.judge_subagent_with_meta(delegating(), 0, outer, SETTINGS))[0] is None
+    install(monkeypatch, [body, body])  # never read, even after the feedback
+    assert (await judge.judge_subagent_with_meta(delegating(), 0, outer, SETTINGS))[0] is None
+
+
+def test_turn_prompt_explains_subagent_verdict_rows() -> None:
+    from app.analysis.prompts.agent import judge_turn
+
+    assert "carrying its verdict" in judge_turn.build_v5(["other"])

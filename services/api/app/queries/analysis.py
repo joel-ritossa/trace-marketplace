@@ -1,6 +1,7 @@
 """Analysis-domain queries: trace loading, the analyze_trace bookkeeping
 (claim / budget / sweep), and the persistence of per-turn verdicts
-(`turn_analysis` + `trace_labels`) and the session roll-up
+(`turn_analysis` + `trace_labels`), subagent verdicts
+(`subagent_analysis`) and the session roll-up
 (`trace_analysis`) per 9_session-analysis.md — with the review-item sync in
 the same transaction.
 """
@@ -12,7 +13,14 @@ from typing import Any
 import asyncpg
 
 from app.analysis import AnalyzerRun, SignalsResult, TraceInput
-from app.analysis.agent.models import AgentMeta, FailureLabel, SessionVerdict, TurnVerdict
+from app.analysis.agent.models import (
+    AgentMeta,
+    FailureLabel,
+    SessionVerdict,
+    SubagentVerdict,
+    TurnVerdict,
+    merge_labels,
+)
 from app.importers.otlp import SOURCE_FORMAT as OTLP_FORMAT
 from app.queries import dead_letters
 from app.queries import review_items as review_items_q
@@ -35,6 +43,18 @@ class TurnWrite:
     meta: AgentMeta | None = None
 
 
+@dataclass(frozen=True)
+class SubagentWrite:
+    """One judged subagent to persist. No verdict = the judge produced none
+    it can stand behind: any row it had is removed."""
+
+    span_id: str
+    turn_index: int
+    fingerprint: str
+    verdict: SubagentVerdict | None = None
+    meta: AgentMeta | None = None
+
+
 def is_session_format(source_format: str) -> bool:
     return source_format != OTLP_FORMAT
 
@@ -51,20 +71,14 @@ def needs_judging(row: Mapping[str, Any] | None, fingerprint: str, llm: bool) ->
 
 def verdict_labels(verdict: TurnVerdict) -> list[Label]:
     """One row per (field, value): a failure mode the judge cites twice is
-    merged — its span ids unioned, the first reason kept."""
-    labels: dict[tuple[str, str], Label] = {
-        ("task_category", value): ("task_category", value, [], None)
-        for value in verdict.task_categories
-    }
-    for label in verdict.failure_modes:
-        key = ("failure_mode", label.value)
-        if key in labels:
-            _, _, span_ids, reason = labels[key]
-            merged = list(dict.fromkeys([*span_ids, *label.span_ids]))
-            labels[key] = ("failure_mode", label.value, merged, reason)
-        else:
-            labels[key] = ("failure_mode", label.value, list(label.span_ids), label.reason)
-    return list(labels.values())
+    merged (`merge_labels`)."""
+    return [
+        *(("task_category", value, [], None) for value in dict.fromkeys(verdict.task_categories)),
+        *(
+            ("failure_mode", label.value, label.span_ids, label.reason)
+            for label in merge_labels(verdict.failure_modes)
+        ),
+    ]
 
 
 def roll_up_state(finalized: bool, written: int, applied: int, changed: bool) -> str:
@@ -301,6 +315,14 @@ async def fetch_turns(
     return [{**dict(t), "labels": by_turn.get(t["turn_index"], [])} for t in turns]
 
 
+async def fetch_subagents(
+    executor: asyncpg.Pool | asyncpg.Connection, trace_id: str
+) -> dict[str, dict[str, Any]]:
+    """The trace's subagent verdict rows by spawn span id."""
+    rows = await executor.fetch("select * from subagent_analysis where trace_id = $1", trace_id)
+    return {r["span_id"]: dict(r) for r in rows}
+
+
 async def turn_origins(
     executor: asyncpg.Pool | asyncpg.Connection, trace_id: str
 ) -> dict[int, str]:
@@ -349,6 +371,38 @@ async def _replace_labels(
     )
 
 
+async def _write_subagent(conn: asyncpg.Connection, trace_id: str, sub: SubagentWrite) -> None:
+    verdict, meta = sub.verdict, sub.meta
+    if verdict is None:
+        await conn.execute(
+            "delete from subagent_analysis where trace_id = $1 and span_id = $2",
+            trace_id,
+            sub.span_id,
+        )
+        return
+    await conn.execute(
+        """
+        insert into subagent_analysis (trace_id, span_id, turn_index, fingerprint, outcome,
+                                       summary, failure_modes, model, usage)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        on conflict (trace_id, span_id) do update set
+          turn_index = excluded.turn_index, fingerprint = excluded.fingerprint,
+          outcome = excluded.outcome, summary = excluded.summary,
+          failure_modes = excluded.failure_modes, model = excluded.model,
+          usage = excluded.usage, analyzed_at = now()
+        """,
+        trace_id,
+        sub.span_id,
+        sub.turn_index,
+        sub.fingerprint,
+        verdict.outcome,
+        verdict.summary,
+        [label.model_dump(mode="json") for label in verdict.failure_modes],
+        meta.model if meta else None,
+        meta.model_dump(mode="json", exclude={"model"}) if meta else None,
+    )
+
+
 async def _recompute_arrays(conn: asyncpg.Connection, trace_id: str) -> None:
     """Session task_categories / failure_modes = the union over every turn's
     labels, human and machine alike — ordered by how many turns carry each
@@ -379,6 +433,7 @@ async def rewrite(
     trace_id: str,
     *,
     turns: list[TurnWrite],
+    subagents: list[SubagentWrite],
     expected: Mapping[int, str | None],
     signals: SignalsResult,
     llm_status: str,
@@ -398,7 +453,9 @@ async def rewrite(
       the one this run read (`expected`; None = no row) and it is not human;
     - the roll-up is stamped only by a finalize whose every write landed,
       and marked stale (`analyzed_at` null) only when a turn it saw really
-      changed (`roll_up_state`); `session` is None when the LLM is gated.
+      changed (`roll_up_state`); `session` is None when the LLM is gated;
+    - subagent verdicts are written as judged (each carries its own
+      fingerprint), then rows whose spawn span left the trace are dropped.
 
     Then the session row, the union arrays, the audit row and the review
     item; open dead letters close only when the run `succeeded`.
@@ -456,6 +513,19 @@ async def rewrite(
             )
             labels = verdict_labels(verdict) if verdict else []
             await _replace_labels(conn, trace_id, turn.turn_index, labels)
+
+        for sub in subagents:
+            await _write_subagent(conn, trace_id, sub)
+        await conn.execute(
+            """
+            delete from subagent_analysis a
+            where a.trace_id = $1 and not exists (
+              select 1 from spans s
+              where s.trace_id = a.trace_id and s.source_span_id = a.span_id
+            )
+            """,
+            trace_id,
+        )
 
         await conn.execute(
             f"""

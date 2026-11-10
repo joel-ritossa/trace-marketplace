@@ -98,6 +98,54 @@ redacted):
   Responses API; OpenAI only). Model: `ANALYSIS_JUDGE_MODEL` (a plain
   OpenAI model id). Record latency/tokens and call counts per turn.
 
+## Subagent verdicts
+
+A linked subagent (a spawn tool span with `subagent.id` and at least one
+child span) is judged on its own, before the turn that contains it.
+
+```python
+class SubagentVerdict(BaseModel):
+    span_id: str             # source_span_id of the spawn span
+    outcome: Outcome
+    summary: str             # one line: what it was briefed to do, what it did
+    failure_modes: list[FailureLabel]   # span_ids inside this subagent
+```
+
+- **Judged against its brief** (the spawn span's input), not the user's ask:
+  did it do what it was told, and does its final report match what it
+  actually did. No task categories, no `uncertain`.
+- **Same agent, same tools.** The subagent judge is the turn judge scoped
+  to the spawn span: it starts with `read_turn(turn, under=<spawn span>)`,
+  and may cite only llm/tool spans below that span. Validation, the one
+  retry, the step bound and the context-limit fallback are the turn's.
+- **Nested subagents** are judged deepest first. A judged spawn span shows
+  in its parent's `read_turn` rows as one row carrying the verdict
+  (outcome, summary, failure-mode values) with its children hidden;
+  `read_turn(turn, under=<spawn span>)` still opens them. This holds for
+  the turn judge and for a parent subagent's judge.
+- **The turn judge decides what a subagent failure means for the turn.**
+  Subagent labels do not enter the turn's or the session's label arrays; a
+  failure the parent caught and corrected need not be a turn failure. The
+  turn judge may cite the spawn span.
+- **Persistence**: `subagent_analysis`, PK `(trace_id, span_id)`:
+  `turn_index`, `fingerprint` (same recipe as a turn, over the spawn span
+  and its descendants), `outcome`, `summary`, `failure_modes jsonb`
+  (`[{value, span_ids, reason}]`), `model`, `usage jsonb`, `analyzed_at`.
+  RLS mirrors `turn_analysis`. Rows for spawn spans no longer in the trace
+  are deleted by the run.
+- **When**: in the same run as its turn. A subagent is judged when its turn
+  is being judged and it has no row or its fingerprint changed. Subagent
+  and turn judging share `ANALYSIS_TURN_CONCURRENCY`. A subagent gets no
+  row, and the turn judge reads it inline as before, when the judge
+  permanently cannot process it, returns malformed output, never read it
+  (still, after the retry), or was cut short by the step bound or the
+  context window (a verdict has no `uncertain` to carry that). A transient
+  failure (rate limit, network) fails the run like a turn's. Duplicate
+  failure-mode values are merged as for a turn.
+- **API**: each item of `GET /v1/traces/{id}/agents` gains
+  `verdict: {outcome, summary, failure_modes[{value, span_ids, reason}]} | null`.
+- Unlinked spawns (no transcript) are not judged.
+
 ## Persistence
 
 - `turn_analysis` — PK `(trace_id, turn_index)`: `fingerprint`, `outcome`,

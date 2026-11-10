@@ -358,6 +358,31 @@ turn where ...". Be concise; never quote long trace content.
 """
 
 
+_V4_SUBAGENTS = """\
+- Subagents: when the turn has subagent transcripts, do not judge from the
+  main agent's summary of them alone. Open (read_turn with under=<span_id>)
+  at least every subagent with errors and one reported as successful.
+"""
+
+# V5: subagents are judged on their own first (judge_subagent.py); the turn
+# judge reads their verdict rows and decides what they mean for the turn.
+_V5_SUBAGENTS = """\
+- Subagents: a subagent that was already judged on its own shows as one
+  row carrying its verdict (outcome, failure modes, summary: how it did
+  against the brief it was given) with its spans hidden; read_turn with
+  under=<span_id> still opens them. Rely on the verdict instead of
+  re-judging the subagent, and open it when the turn's outcome hinges on a
+  detail the verdict does not settle. You decide what a subagent's failure
+  means for the turn: one the main agent caught and corrected need not
+  count against the turn; one that reached what was delivered does, as a
+  failure mode of this turn, and you may cite the spawn span for it. A
+  subagent row without a verdict was not judged: do not rely on the main
+  agent's summary of it alone, open it (at least every such subagent with
+  errors and one reported as successful).
+"""
+_V5_TEMPLATE = _V4_TEMPLATE.replace(_V4_SUBAGENTS, _V5_SUBAGENTS)
+
+
 def build_v1(allowed: Iterable[str]) -> str:
     """`allowed` must already include "other"; order follows the canonical
     taxonomy, with "other" last."""
@@ -385,3 +410,8 @@ def build_v3(allowed: Iterable[str]) -> str:
 def build_v4(allowed: Iterable[str]) -> str:
     """Same contract as `build_v1`."""
     return _V4_TEMPLATE.format(categories=_category_lines(allowed))
+
+
+def build_v5(allowed: Iterable[str]) -> str:
+    """Same contract as `build_v1`."""
+    return _V5_TEMPLATE.format(categories=_category_lines(allowed))

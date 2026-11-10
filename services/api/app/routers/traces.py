@@ -317,7 +317,10 @@ async def list_agents(trace_id: str, user: CurrentUser) -> AgentsResponse:
     order. Same visibility as the trace's spans (owner, or listed)."""
     await visible_or_404(trace_id, user)
     _, agents = spans_q.overview(await spans_q.skeleton(db.pool(), trace_id))
-    return AgentsResponse(agents=[AgentSpawn(**a) for a in agents])
+    verdicts = await analysis_q.fetch_subagents(db.pool(), trace_id)
+    return AgentsResponse(
+        agents=[AgentSpawn(**a, verdict=verdicts.get(a["span_id"])) for a in agents]
+    )
 
 
 @router.get("/{trace_id}/spans", response_model=SpanListResponse)

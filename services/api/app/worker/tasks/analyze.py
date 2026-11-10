@@ -1,11 +1,13 @@
 import asyncio
 import logging
 import time
+from dataclasses import replace
 
 from app import obs
 from app.analysis import (
     AnalysisSettings,
     AnalyzerRun,
+    MalformedResponse,
     PermanentAnalysisError,
     SignalsResult,
     TraceInput,
@@ -14,8 +16,8 @@ from app.analysis import (
     run_signals,
 )
 from app.analysis.agent import judge
-from app.analysis.agent.models import AgentMeta, SessionVerdict, TurnVerdict
-from app.analysis.agent.turns import split
+from app.analysis.agent.models import AgentMeta, SessionVerdict, SubagentVerdict, TurnVerdict
+from app.analysis.agent.turns import TurnView, deepest_first, split, subagents
 from app.analysis.embedding import EMBEDDING_VERSION, embedding_input, run_embedding
 from app.clients import db
 from app.config import settings as platform
@@ -23,7 +25,7 @@ from app.dev import faults
 from app.queries import analysis as analysis_q
 from app.queries import embeddings as embeddings_q
 from app.queries import traces as traces_q
-from app.queries.analysis import TurnWrite
+from app.queries.analysis import SubagentWrite, TurnWrite
 from app.worker.broker import broker
 from app.worker.tasks.match import match_trace
 
@@ -47,6 +49,9 @@ async def analyze_trace(trace_id: str, finalize: bool = True) -> None:
     a heartbeat while it lives); a run that finds it held exits at once,
     leaving its mode on the trace, and the holder enqueues one rerun in that
     mode when it releases — so a finalize asked for mid-run still happens.
+
+    A turn's linked subagents are judged first, deepest first, and the turn
+    judge reads their verdicts (`_judge_subagents`).
 
     Turns whose row is current are never re-judged, and human turns never
     are. A turn the judge permanently cannot process is stored as
@@ -151,22 +156,35 @@ async def _run(trace_id: str, finalize: bool, attempt: int) -> None:
         t.index: await run_signals(trace.model_copy(update={"spans": t.spans}), analysis)
         for t in pending
     }
+    judged = pending
     results: list = [(None, None)] * len(pending)
+    subagent_writes: list[SubagentWrite] = []
+    failure: BaseException | None = None
     if llm and pending:
         semaphore = asyncio.Semaphore(analysis.turn_concurrency)
+        subagent_verdicts: dict[str, SubagentVerdict] = {}
+        if canned is None:
+            with obs.stage(logger, "judge_subagents"):
+                subagent_writes, subagent_verdicts, blocked, failure = await _judge_subagents(
+                    trace,
+                    pending,
+                    await analysis_q.fetch_subagents(pool, trace_id),
+                    analysis,
+                    semaphore,
+                )
+            judged = [t for t in pending if t.index not in blocked]
 
         async def judge_one(turn_index: int) -> tuple[TurnVerdict, AgentMeta | None]:
             async with semaphore:
-                return await _judge_turn(trace, turn_index, analysis, canned)
+                return await _judge_turn(trace, turn_index, analysis, canned, subagent_verdicts)
 
         with obs.stage(logger, "judge"):
             results = await asyncio.gather(
-                *(judge_one(t.index) for t in pending), return_exceptions=True
+                *(judge_one(t.index) for t in judged), return_exceptions=True
             )
 
     writes: list[TurnWrite] = []
-    failure: BaseException | None = None
-    for turn, result in zip(pending, results, strict=True):
+    for turn, result in zip(judged, results, strict=True):
         if isinstance(result, PermanentAnalysisError):
             logger.warning(
                 "analyze_trace: turn %d permanently failed; marked uncertain", turn.index
@@ -201,8 +219,8 @@ async def _run(trace_id: str, finalize: bool, attempt: int) -> None:
         if i in stored and i not in {w.turn_index for w in writes}
     ]
     run = (
-        _audit_run(writes, roll_meta, finalize, canned, analysis)
-        if llm and (writes or session)
+        _audit_run(writes, subagent_writes, roll_meta, finalize, canned, analysis)
+        if llm and (writes or subagent_writes or session)
         else None
     )
     # The fingerprints this run read for every turn it saw as changed — the
@@ -215,6 +233,7 @@ async def _run(trace_id: str, finalize: bool, attempt: int) -> None:
             pool,
             trace_id,
             turns=writes,
+            subagents=subagent_writes,
             expected=expected,
             signals=combine(turn_signals),
             llm_status="complete" if llm else "skipped",
@@ -275,6 +294,58 @@ async def _run(trace_id: str, finalize: bool, attempt: int) -> None:
     )
 
 
+async def _judge_subagents(
+    trace: TraceInput,
+    pending: list[TurnView],
+    stored: dict[str, dict],
+    settings: AnalysisSettings,
+    semaphore: asyncio.Semaphore,
+) -> tuple[list[SubagentWrite], dict[str, SubagentVerdict], set[int], BaseException | None]:
+    """Judge the pending turns' linked subagents that have no current row,
+    deepest level first so each judge reads the verdicts below it.
+
+    Returns the rows to write, every current verdict by spawn span id (new
+    and stored), the turns to leave for the retry, and the first transient
+    failure. A subagent the judge permanently cannot process, answers
+    malformed for, or gives no verdict it can stand behind is left without
+    a row (its turn judge reads it inline); a transient failure stops its turn.
+    """
+    writes: list[SubagentWrite] = []
+    verdicts: dict[str, SubagentVerdict] = {}
+    blocked: set[int] = set()
+    failure: BaseException | None = None
+
+    async def judge_one(view: TurnView) -> tuple[SubagentVerdict | None, AgentMeta]:
+        async with semaphore:
+            return await judge.judge_subagent_with_meta(
+                trace, view.index, view.under, settings, verdicts
+            )
+
+    for level in deepest_first([v for t in pending for v in subagents(trace, t)]):
+        stale = []
+        for view in level:
+            row = stored.get(view.under)
+            if row is not None and row["fingerprint"] == view.fingerprint:
+                verdicts[view.under] = SubagentVerdict.model_validate(row)
+            elif view.index not in blocked:
+                stale.append(view)
+        results = await asyncio.gather(*(judge_one(v) for v in stale), return_exceptions=True)
+        for view, result in zip(stale, results, strict=True):
+            write = SubagentWrite(view.under, view.index, view.fingerprint)
+            if isinstance(result, (PermanentAnalysisError, MalformedResponse)):
+                logger.warning("analyze_trace: a subagent could not be judged; left without a row")
+                writes.append(write)
+            elif isinstance(result, BaseException):
+                failure = failure or result
+                blocked.add(view.index)
+            else:
+                verdict, meta = result
+                if verdict is not None:
+                    verdicts[view.under] = verdict
+                writes.append(replace(write, verdict=verdict, meta=meta))
+    return writes, verdicts, blocked, failure
+
+
 def _unprocessable(turn_index: int) -> TurnVerdict:
     """A turn the judge permanently cannot process: indeterminate, no
     labels, and uncertain so the owner is asked."""
@@ -289,10 +360,14 @@ def _unprocessable(turn_index: int) -> TurnVerdict:
 
 
 async def _judge_turn(
-    trace: TraceInput, turn_index: int, settings: AnalysisSettings, canned: Canned | None
+    trace: TraceInput,
+    turn_index: int,
+    settings: AnalysisSettings,
+    canned: Canned | None,
+    verdicts: dict[str, SubagentVerdict],
 ) -> tuple[TurnVerdict, AgentMeta | None]:
     if canned is None:
-        return await judge.judge_turn_with_meta(trace, turn_index, settings)
+        return await judge.judge_turn_with_meta(trace, turn_index, settings, verdicts)
     outcome, uncertain = canned
     verdict = TurnVerdict(
         turn_index=turn_index,
@@ -325,13 +400,14 @@ async def _roll_up(
 
 def _audit_run(
     writes: list[TurnWrite],
+    subagent_writes: list[SubagentWrite],
     roll_meta: AgentMeta | None,
     finalize: bool,
     canned: Canned | None,
     settings: AnalysisSettings,
 ) -> AnalyzerRun:
-    """The run's analyzer_results row: what each judged turn and the roll-up
-    cost (model, tokens, cost, latency, tool calls)."""
+    """The run's analyzer_results row: what each judged turn and subagent
+    and the roll-up cost (model, tokens, cost, latency, tool calls)."""
     return AnalyzerRun(
         analyzer="agent",
         analyzer_version="fault:canned" if canned else judge.AGENT_VERSION,
@@ -341,6 +417,11 @@ def _audit_run(
             "turns": [
                 {"turn_index": w.turn_index, **(w.meta.model_dump(mode="json") if w.meta else {})}
                 for w in writes
+            ],
+            "subagents": [
+                {"span_id": w.span_id, "turn_index": w.turn_index, **w.meta.model_dump(mode="json")}
+                for w in subagent_writes
+                if w.meta
             ],
             "roll_up": roll_meta.model_dump(mode="json") if roll_meta else None,
         },

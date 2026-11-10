@@ -106,3 +106,66 @@ def test_read_turn_sizes_subagents_and_pages_under_one() -> None:
     assert "subagents (1):" in page and "[subagent: 2 spans, 1 llm, 0 errors]" in page
     nested = tools.read_turn(turns, 0, config, under=f"{3:016x}")
     assert "spans 0-1 of 2" in nested and f"{2:016x}" not in nested
+
+
+def delegating():
+    """Turn 0: main llm (2) spawns linked subagent 3, whose llm (4) spawns
+    linked subagent 5 (llm 6); 7 is a spawn without a transcript."""
+    spawn = {"kind": "tool", "tool_name": "Agent"}
+    return make_trace(
+        [
+            _turn(1, 0, "ask"),
+            _span(2, 1, kind="llm"),
+            _span(3, 1, **spawn, attributes={"subagent.id": "a"}),
+            _span(4, 3, kind="llm"),
+            _span(5, 3, **spawn, attributes={"subagent.id": "b"}),
+            _span(6, 5, kind="llm"),
+            _span(7, 1, **spawn, attributes={"subagent.id": "c"}),
+        ]
+    )
+
+
+def test_linked_subagents_are_views_of_their_own_spans_deepest_first() -> None:
+    from app.analysis.agent.turns import deepest_first, subagents
+
+    trace = delegating()
+    outer, inner = subagents(trace, split(trace)[0])  # 7 has no child: not linked
+    assert (outer.under, inner.under) == (f"{3:016x}", f"{5:016x}")
+    assert [s.source_span_id for s in outer.spans] == [f"{i:016x}" for i in (4, 5, 6)]
+    assert [[v.under for v in level] for level in deepest_first([outer, inner])] == [
+        [inner.under],
+        [outer.under],
+    ]
+    changed = trace.model_copy(deep=True)
+    changed.spans[5].status = "error"  # a span of the inner subagent
+    again = subagents(changed, split(changed)[0])
+    assert again[0].fingerprint != outer.fingerprint and again[1].fingerprint != inner.fingerprint
+
+
+def test_read_turn_collapses_a_judged_subagent_until_opened() -> None:
+    from app.analysis.agent import tools
+    from app.analysis.agent.models import SubagentVerdict
+    from app.analysis.config import AnalysisSettings, RendererConfig
+
+    trace = delegating()
+    turns, config = split(trace), RendererConfig.from_settings(AnalysisSettings())
+    outer = f"{3:016x}"
+    verdict = SubagentVerdict(
+        span_id=outer,
+        outcome="partial",
+        summary="briefed X, did half",
+        failure_modes=[
+            {"value": "system_failure", "span_ids": [f"{4:016x}"], "reason": "timed out"}
+        ],
+    )
+    page = tools.read_turn(turns, 0, config, verdicts={outer: verdict})
+    assert "spans 0-2 of 3" in page and f"{4:016x} llm" not in page
+    assert "subagent verdict: partial | failure modes: system_failure | briefed X" in page
+    assert f"read_turn(0, under='{outer}')" in page
+    opened = tools.read_turn(turns, 0, config, under=outer, verdicts={outer: verdict})
+    assert "spans 0-2 of 3" in opened and f"{4:016x} llm" in opened
+    # Both levels judged: opening the inner one is not swallowed by the outer.
+    inner = f"{5:016x}"
+    both = {outer: verdict, inner: verdict.model_copy(update={"span_id": inner})}
+    assert f"{6:016x} llm" in tools.read_turn(turns, 0, config, under=inner, verdicts=both)
+    assert f"{6:016x} llm" not in tools.read_turn(turns, 0, config, under=outer, verdicts=both)

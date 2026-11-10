@@ -5,9 +5,11 @@ Field caps reuse the renderer's: a full llm field is capped at
 """
 
 import json
+from collections.abc import Mapping
 from typing import Any
 
 from app.analysis import content
+from app.analysis.agent.models import SubagentVerdict
 from app.analysis.agent.turns import TurnView
 from app.analysis.config import RendererConfig
 from app.analysis.rendering import middle_out
@@ -32,7 +34,8 @@ SPECS: list[dict[str, Any]] = [
             "duration, input/output previews. Subagent spans are indented under the call "
             f"that spawned them. Paged, {READ_TURN_PAGE_SPANS} spans per page; the first "
             "page also lists the turn's error spans and subagents (size, errors) with their "
-            "offsets. Pass `under` to page through one subagent's own spans."
+            "offsets. A subagent that was already judged is one row with its verdict and "
+            "its spans hidden. Pass `under` to page through one subagent's own spans."
         ),
         "parameters": {
             "type": "object",
@@ -91,12 +94,26 @@ def read_turn(
     config: RendererConfig,
     offset: int = 0,
     under: str | None = None,
+    verdicts: Mapping[str, SubagentVerdict] | None = None,
 ) -> str:
+    """`verdicts` (by spawn span id): a judged subagent shows as one row
+    carrying its verdict, its spans hidden unless `under` opens it."""
     turn = _turn(turns, turn_index)
     nested = _nested(turn)
     if under is not None and under not in nested:
         raise ValueError(f"{under!r} is not a subagent call in turn {turn.index}")
-    spans = turn.spans if under is None else nested[under]
+    # An opened subagent and the ones it sits inside are not collapsed.
+    judged = {
+        i: v
+        for i, v in (verdicts or {}).items()
+        if i in nested and i != under and all(s.source_span_id != under for s in nested[i])
+    }
+    hidden = {s.source_span_id for i in judged for s in nested[i]}
+    spans = [
+        s
+        for s in (turn.spans if under is None else nested[under])
+        if s.source_span_id not in hidden
+    ]
     scope = f"turn {turn.index} ({turn.origin})" + (f" under {under}" if under else "")
     offset = max(offset, 0)
     if offset and offset >= len(spans):
@@ -118,6 +135,17 @@ def read_turn(
         for label, text in (("in", content.input_text(span)), ("out", content.output_text(span))):
             if text:
                 lines.append(f"{indent}  {label}: {preview(text)}")
+        verdict = judged.get(span.source_span_id)
+        if verdict:
+            modes = ", ".join(label.value for label in verdict.failure_modes) or "none"
+            lines.append(
+                f"{indent}  subagent verdict: {verdict.outcome} | failure modes: {modes} | "
+                f"{verdict.summary}"
+            )
+            lines.append(
+                f"{indent}  (its spans are hidden: "
+                f"read_turn({turn.index}, under={span.source_span_id!r}) opens them)"
+            )
     rest = len(spans) - offset - len(page)
     if rest > 0:
         more = f", under={under!r}" if under else ""
@@ -216,7 +244,12 @@ def search(turns: list[TurnView], query: str, turn_index: int | None = None) -> 
 
 
 def run(
-    name: str, arguments: str, trace: TraceInput, turns: list[TurnView], config: RendererConfig
+    name: str,
+    arguments: str,
+    trace: TraceInput,
+    turns: list[TurnView],
+    config: RendererConfig,
+    verdicts: Mapping[str, SubagentVerdict] | None = None,
 ) -> str:
     """Dispatch one tool call. Bad calls come back as error text for the
     model to correct, never as exceptions."""
@@ -232,6 +265,7 @@ def run(
                 config,
                 int(args.get("offset") or 0),
                 None if under is None else str(under),
+                verdicts,
             )
         if name == "read_span":
             return read_span(trace, str(args["span_id"]), config)

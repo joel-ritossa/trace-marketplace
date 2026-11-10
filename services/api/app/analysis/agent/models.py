@@ -29,6 +29,17 @@ class FailureLabel(BaseModel):
     reason: str
 
 
+def merge_labels(labels: list[FailureLabel]) -> list[FailureLabel]:
+    """One label per value: a failure mode cited twice is merged — its span
+    ids unioned, the first reason kept."""
+    merged: dict[str, FailureLabel] = {}
+    for label in labels:
+        first = merged.get(label.value)
+        span_ids = list(dict.fromkeys([*(first.span_ids if first else []), *label.span_ids]))
+        merged[label.value] = (first or label).model_copy(update={"span_ids": span_ids})
+    return list(merged.values())
+
+
 class TurnVerdict(BaseModel):
     turn_index: int
     outcome: Outcome
@@ -36,6 +47,15 @@ class TurnVerdict(BaseModel):
     task_categories: list[TaskCategory] = Field(min_length=1)
     failure_modes: list[FailureLabel]
     uncertain: str | None
+
+
+class SubagentVerdict(BaseModel):
+    """One linked subagent, judged against its brief (the spawn span's input)."""
+
+    span_id: str  # source_span_id of the spawn span
+    outcome: Outcome
+    summary: str
+    failure_modes: list[FailureLabel]  # span_ids inside this subagent
 
 
 class SessionVerdict(BaseModel):
@@ -47,7 +67,7 @@ class SessionVerdict(BaseModel):
 
 
 class AgentMeta(BaseModel):
-    """What one judge_turn / roll_up run cost, summed over its LLM calls."""
+    """What one judge_turn / judge_subagent / roll_up run cost, summed over its LLM calls."""
 
     model: str
     llm_calls: int

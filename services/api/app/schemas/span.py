@@ -3,6 +3,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
+from app.analysis import Outcome
+from app.analysis.agent.models import FailureLabel
+
 # Mirrors the spans.kind / spans.status check constraints and the frontend
 # types (apps/web/src/lib/api/traces.ts).
 SpanKind = Literal["llm", "agent", "tool", "chain", "retriever", "embedding", "other"]
@@ -37,6 +40,15 @@ class SpanListResponse(BaseModel):
     total: int
 
 
+class AgentVerdict(BaseModel):
+    """A linked subagent's own verdict, judged against its brief
+    (9_session-analysis.md Subagent verdicts)."""
+
+    outcome: Outcome
+    summary: str
+    failure_modes: list[FailureLabel]
+
+
 class AgentSpawn(BaseModel):
     """One subagent: the tool span that spawned it plus totals over its
     subtree (GET /v1/traces/{id}/agents)."""
@@ -66,6 +78,8 @@ class AgentSpawn(BaseModel):
     output_tokens: int
     # ...and only its own stream (nested subagents' subtrees excluded).
     own_span_count: int
+    # Null when not judged (unlinked, analysis skipped or not run yet).
+    verdict: AgentVerdict | None = None
 
 
 class AgentsResponse(BaseModel):
