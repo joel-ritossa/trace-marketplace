@@ -134,14 +134,16 @@ async def ingest_upload(upload_id: str) -> None:
                 redaction_counts=dict(redaction_counts) or None,
             )
 
-        # Post-commit: every (re)ingest gets a fresh analysis run — analysis
-        # is idempotent, so re-analysis keeps derived rows consistent with
-        # the rewritten content (A2 decision 2). Best-effort: the ingest is
-        # already complete, so a failed kick must not fail (and re-run) the
-        # task — the stale-pending-analysis sweep recovers lost kicks.
+        # Post-commit analysis kick (9_session-analysis.md): non-session
+        # traces are analyzed and finalized now; session traces get an
+        # incremental run that judges complete turns only — the sweep
+        # finalizes them once idle. Best-effort: the ingest is already
+        # complete, so a failed kick must not fail (and re-run) the task —
+        # the sweep recovers lost kicks.
+        finalize = source_format == otlp.SOURCE_FORMAT
         for trace_id in trace_ids:
             try:
-                await analyze_trace.kiq(trace_id)
+                await analyze_trace.kiq(trace_id, finalize=finalize)
             except Exception:
                 logger.exception(
                     "ingest_upload: failed to enqueue analysis for trace %s; sweep will recover",

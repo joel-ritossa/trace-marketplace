@@ -2,8 +2,8 @@
 (CRUD, event-driven matching, digested notifications, the feed), bulk
 operations, and the listing→re-run hook.
 
-Keyless by design (A4 decision 15): label/metric predicates are exercised by
-seeding `trace_analysis` directly — the analyzer contract guarantees shape,
+Keyless by design (A4 decision 15): label predicates are exercised by
+seeding the session row (`trace_analysis`) directly — the analyzer contract guarantees shape,
 and B-stream tests own how values get computed.
 """
 
@@ -56,29 +56,22 @@ async def seed_analysis(
     trace_id: str,
     *,
     outcome: str = "failure",
-    outcome_confidence: float = 0.9,
-    metric_scores: dict | None = None,
-    **extra,
+    task_categories: list[str] | None = None,
+    failure_modes: list[str] | None = None,
 ) -> None:
-    """Promote a keyless-skipped row to a 'complete' one with known labels —
-    the analyzer contract's shape, without an LLM key."""
-    cols = {
-        "llm_status": "complete",
-        "llm_skip_reason": None,
-        "outcome": outcome,
-        "outcome_confidence": outcome_confidence,
-        "outcome_provenance": "machine",
-        "metric_scores": json.dumps(metric_scores) if metric_scores is not None else None,
-        **extra,
-    }
-    sets = ", ".join(
-        f"{name} = ${i + 2}" + ("::jsonb" if name == "metric_scores" else "")
-        for i, name in enumerate(cols)
-    )
+    """Promote a keyless-skipped session row to a final one with known
+    labels — the analyzer contract's shape, without an LLM key."""
     await db.execute(
-        f"update trace_analysis set {sets} where trace_id = $1",
+        """
+        update trace_analysis
+        set llm_status = 'complete', llm_skip_reason = null,
+            outcome = $2, task_categories = $3, failure_modes = $4
+        where trace_id = $1
+        """,
         uuid.UUID(trace_id),
-        *cols.values(),
+        outcome,
+        task_categories or [],
+        failure_modes or [],
     )
 
 
@@ -100,14 +93,10 @@ async def test_filter_extension(api: httpx.AsyncClient, db: asyncpg.Connection) 
     failure = await analyzed_trace(
         api,
         db,
-        metric_scores={"faithfulness": 0.81, "noise_sensitivity": True},
-        task_category="coding",
-        task_category_confidence=0.6,
-        task_category_provenance="machine",
-        failure_mode="invention_of_information",
-        failure_mode_provenance="machine",
+        task_categories=["coding", "debugging"],
+        failure_modes=["invention_of_information"],
     )
-    success = await analyzed_trace(api, db, outcome="success", outcome_confidence=0.7)
+    success = await analyzed_trace(api, db, outcome="success", task_categories=["web_research"])
     # A pending (never-analyzed) trace: drop the keyless row.
     pending = await upload_and_ingest(api, unique_payload())
     await wait_analysis(api, pending)
@@ -122,12 +111,12 @@ async def test_filter_extension(api: httpx.AsyncClient, db: asyncpg.Connection) 
     assert await ids(api, failure_mode="invention_of_information") == {failure}
     # Unknown-but-well-formed taxonomy value: matches nothing, never errors.
     assert await ids(api, failure_mode="some_future_mode") == set()
-    assert await ids(api, task_category="coding") == {failure}
-    assert await ids(api, outcome_provenance="machine") == {failure, success}
-    assert await ids(api, outcome_provenance="human") == set()
+    # Session sets: CSV-OR is overlap — any requested value in the array.
+    assert await ids(api, task_category="debugging") == {failure}
+    assert await ids(api, task_category="debugging,web_research") == {failure, success}
+    assert await ids(api, task_category="translation") == set()
 
-    # Confidence and signal-count min-bounds (loop payload: 1 llm, 3 tools).
-    assert await ids(api, outcome_confidence_gte=0.8) == {failure}
+    # Signal-count min-bounds (loop payload: 1 llm, 3 tools).
     assert await ids(api, tool_call_count_gte=3) >= {failure, success}
     assert await ids(api, tool_call_count_gte=4) == set()
 
@@ -135,18 +124,6 @@ async def test_filter_extension(api: httpx.AsyncClient, db: asyncpg.Connection) 
     assert await ids(api, has_retry_loop="true") >= {failure, success}
     assert await ids(api, has_retry_loop="false") == set()
     assert await ids(api, loop_kind="exact_repeat") >= {failure, success}
-
-    # Metric predicates: number min-bound, boolean flag, repeats AND.
-    assert await ids(api, metric="faithfulness:0.8") == {failure}
-    assert await ids(api, metric="faithfulness:0.9") == set()
-    assert await ids(api, metric="noise_sensitivity:true") == {failure}
-    res = await api.get(
-        "/v1/traces", params=[("metric", "faithfulness:0.8"), ("metric", "noise_sensitivity:true")]
-    )
-    assert {t["trace_id"] for t in res.json()["traces"]} == {failure}
-    # A flag queried as a number (and vice versa) matches nothing, no error.
-    assert await ids(api, metric="noise_sensitivity:0.5") == set()
-    assert await ids(api, metric="faithfulness:true") == set()
 
     # The excluded-unanalyzed note: only with analysis predicates active.
     res = await api.get("/v1/traces", params={"outcome": "failure"})
@@ -157,25 +134,19 @@ async def test_filter_extension(api: httpx.AsyncClient, db: asyncpg.Connection) 
     # Malformed values are 422s, not silent empties.
     for params in (
         {"outcome": "bogus"},
-        {"outcome_provenance": "llm"},
         {"loop_kind": "spiral"},
         {"failure_mode": "Bad-Value"},
-        {"metric": "faithfulness:high"},
-        {"metric": "faithfulness"},
-        {"outcome_confidence_gte": "1.5"},
+        {"task_category": "coding,Bad-Value"},
+        {"tool_call_count_gte": "-1"},
     ):
         res = await api.get("/v1/traces", params=params)
         assert res.status_code == 422, params
-
-    # Metric keys are enumerated from observed data, visible-to-caller.
-    res = await api.get("/v1/traces/metric-keys")
-    assert {"faithfulness", "noise_sensitivity"} <= set(res.json()["keys"])
 
 
 async def test_subscription_crud_and_validation(
     api: httpx.AsyncClient, consumer: httpx.AsyncClient
 ) -> None:
-    query = {"outcome": "failure", "metric": ["faithfulness:0.8"]}
+    query = {"outcome": "failure", "task_category": "coding,debugging"}
     res = await consumer.post("/v1/subscriptions", json={"name": "hard failures", "query": query})
     assert res.status_code == 201, res.text
     sub = res.json()
@@ -190,7 +161,10 @@ async def test_subscription_crud_and_validation(
         {"scope": "marketplace"},
         {"limit": 10},
         {"nonsense": 1},
-        {"metric": ["faithfulness:high"]},
+        # Removed filters are unknown params now.
+        {"metric": ["faithfulness:0.8"]},
+        {"outcome_confidence_gte": 0.5},
+        {"outcome_provenance": "human"},
         {},  # subscribe-to-everything is rejected at write time
     ):
         res = await consumer.post("/v1/subscriptions", json={"name": "x", "query": bad})
@@ -248,12 +222,10 @@ async def test_matching_notifications_and_feed(
     api: httpx.AsyncClient, consumer: httpx.AsyncClient, db: asyncpg.Connection
 ) -> None:
     # Subscriptions execute marketplace-wide, and the local stack's data
-    # persists across runs — a per-run metric name pins matching (and the
-    # live counts) to this test's traces. Stripped again on the way out so
-    # markers don't accumulate in the observed metric-keys vocabulary that
-    # the filter UI enumerates.
-    marker = f"m_{uuid.uuid4().hex[:10]}"
-    query = {"outcome": "failure", "metric": [f"{marker}:0.5"]}
+    # persists across runs — a per-run tag, searched with `q`, pins matching
+    # (and the live counts) to this test's traces.
+    marker = f"zq{uuid.uuid4().hex[:10]}"
+    query = {"outcome": "failure", "q": marker}
     sub = (
         await consumer.post("/v1/subscriptions", json={"name": "failures", "query": query})
     ).json()
@@ -262,8 +234,8 @@ async def test_matching_notifications_and_feed(
 
     # Trigger (a): a matching trace becomes listed → one first-match record,
     # one notification; the single-match payload deep-links the trace.
-    first = await analyzed_trace(api, db, metric_scores={marker: 0.9})
-    assert (await list_trace(api, first)).status_code == 200
+    first = await analyzed_trace(api, db)
+    assert (await list_trace(api, first, tags=[marker])).status_code == 200
     digest = await wait_for_digest(consumer, sub_id, 1)
     assert digest["payload"]["trace_id"] == first
     assert digest["payload"]["name"] == "failures"
@@ -275,8 +247,8 @@ async def test_matching_notifications_and_feed(
 
     # A second match digests into the same unread notification: count 2, the
     # deep link gives way to the feed link (trace_id dropped).
-    second = await analyzed_trace(api, db, metric_scores={marker: 0.7})
-    assert (await list_trace(api, second)).status_code == 200
+    second = await analyzed_trace(api, db)
+    assert (await list_trace(api, second, tags=[marker])).status_code == 200
     digest = await wait_for_digest(consumer, sub_id, 2)
     assert "trace_id" not in digest["payload"]
     match_rows = await db.fetchval(
@@ -287,9 +259,10 @@ async def test_matching_notifications_and_feed(
     assert len(await subscription_match_notifications(consumer)) == 1
 
     # A matching-but-private trace never matches.
-    private = await analyzed_trace(api, db, metric_scores={marker: 0.9})
-    non_matching = await analyzed_trace(api, db, outcome="success", metric_scores={marker: 0.9})
-    assert (await list_trace(api, non_matching)).status_code == 200
+    private = await analyzed_trace(api, db)
+    await api.patch(f"/v1/traces/{private}", json={"tags": [marker]})
+    non_matching = await analyzed_trace(api, db, outcome="success")
+    assert (await list_trace(api, non_matching, tags=[marker])).status_code == 200
     # (give the listing trigger a beat; the count must stay at 2)
     await wait_until(
         lambda: db.fetchval(
@@ -320,8 +293,8 @@ async def test_matching_notifications_and_feed(
 
     # Reading the digest frees the slot: the next match starts a fresh one.
     await consumer.post("/v1/notifications/read", json={"all": True})
-    third = await analyzed_trace(api, db, metric_scores={marker: 0.6})
-    assert (await list_trace(api, third)).status_code == 200
+    third = await analyzed_trace(api, db)
+    assert (await list_trace(api, third, tags=[marker])).status_code == 200
     digest = await wait_for_digest(consumer, sub_id, 1)
     assert digest["payload"]["trace_id"] == third
 
@@ -339,12 +312,6 @@ async def test_matching_notifications_and_feed(
     assert {t["trace_id"] for t in own_feed["traces"]} == {first, second, third}
     assert all(t["is_owner"] for t in own_feed["traces"])
 
-    await db.execute(
-        "update trace_analysis set metric_scores = metric_scores - $1::text"
-        " where metric_scores ? $1::text",
-        marker,
-    )
-
 
 async def test_listing_reruns_opt_out_analysis(
     api: httpx.AsyncClient, db: asyncpg.Connection
@@ -358,7 +325,7 @@ async def test_listing_reruns_opt_out_analysis(
     assert res.status_code == 200
     trace_id = await upload_and_ingest(api, unique_payload())
     analysis = await wait_analysis(api, trace_id)
-    assert analysis["skip_reason"] == "owner_opt_out"
+    assert analysis["session"]["skip_reason"] == "owner_opt_out"
 
     # Signal-only query: satisfiable keyless, and own traces are not
     # excluded (decision 8) so the owner's own subscription can prove it.
@@ -372,8 +339,8 @@ async def test_listing_reruns_opt_out_analysis(
     assert (await list_trace(api, trace_id)).status_code == 200
 
     async def reanalyzed():
-        body = (await api.get(f"/v1/traces/{trace_id}/analysis")).json()
-        return body if body["skip_reason"] == "not_configured" else None
+        session = (await api.get(f"/v1/traces/{trace_id}")).json()["analysis"]["session"]
+        return session if session["skip_reason"] == "not_configured" else None
 
     await wait_until(reanalyzed, 30.0, "listing never re-ran the opt-out skip")
 
@@ -387,22 +354,19 @@ async def test_listing_reruns_opt_out_analysis(
     await wait_until(matched, 30.0, "trigger (b) never matched the re-analyzed trace")
 
 
-async def test_resolve_fires_matching(
+async def test_relabel_fires_matching(
     api: httpx.AsyncClient, consumer: httpx.AsyncClient, db: asyncpg.Connection
 ) -> None:
-    """Trigger (c): a review resolve that relabels a listed trace re-fires
-    matching, so a human label change can land a match record and a
-    notification — not just appear in the live feed."""
-    marker = f"m_{uuid.uuid4().hex[:10]}"
+    """Trigger (c): a turn relabel on a listed trace re-fires matching, so a
+    human label change can land a match record and a notification — not
+    just appear in the live feed."""
+    marker = f"zq{uuid.uuid4().hex[:10]}"
     sub = (
         await consumer.post(
             "/v1/subscriptions",
             json={
                 "name": "relabel",
-                "query": {
-                    "failure_mode": "plan_adherence_failure",
-                    "metric": [f"{marker}:0.5"],
-                },
+                "query": {"failure_mode": "plan_adherence_failure", "q": marker},
             },
         )
     ).json()
@@ -410,8 +374,8 @@ async def test_resolve_fires_matching(
 
     # Machine labels miss the query (no failure_mode); listing fires trigger
     # (a), which must not match.
-    trace_id = await analyzed_trace(api, db, metric_scores={marker: 0.9})
-    assert (await list_trace(api, trace_id)).status_code == 200
+    trace_id = await analyzed_trace(api, db)
+    assert (await list_trace(api, trace_id, tags=[marker])).status_code == 200
     await wait_until(
         lambda: db.fetchval(
             "select case when count(*) = 0 then true end from subscription_matches"
@@ -422,12 +386,15 @@ async def test_resolve_fires_matching(
         "listing matched before the relabel",
     )
 
-    # Owner relabel: the human failure_mode satisfies the query; the resolve
+    # Owner relabel: the human failure_mode satisfies the query; the relabel
     # kick must produce the match record and the digest.
-    item = (await api.post(f"/v1/traces/{trace_id}/review-items")).json()
-    res = await api.post(
-        f"/v1/review-items/{item['review_item_id']}/resolve",
-        json={"failure_mode": "plan_adherence_failure"},
+    res = await api.put(
+        f"/v1/traces/{trace_id}/turns/0/labels",
+        json={
+            "outcome": "failure",
+            "task_categories": ["coding"],
+            "failure_modes": [{"value": "plan_adherence_failure"}],
+        },
     )
     assert res.status_code == 200, res.text
     digest = await wait_for_digest(consumer, sub_id, 1)
@@ -436,12 +403,6 @@ async def test_resolve_fires_matching(
         "select true from subscription_matches where subscription_id = $1 and trace_id = $2",
         uuid.UUID(sub_id),
         uuid.UUID(trace_id),
-    )
-
-    await db.execute(
-        "update trace_analysis set metric_scores = metric_scores - $1::text"
-        " where metric_scores ? $1::text",
-        marker,
     )
 
 
@@ -503,10 +464,11 @@ async def test_bulk_acquire_and_visibility(
 async def test_bulk_download(
     api: httpx.AsyncClient, consumer: httpx.AsyncClient, db: asyncpg.Connection
 ) -> None:
-    analyzed = await analyzed_trace(api, db, metric_scores={"faithfulness": 0.81})
+    analyzed = await analyzed_trace(api, db, task_categories=["coding"])
     plain = await upload_and_ingest(api, unique_payload())
     await wait_analysis(api, plain)
     await db.execute("delete from trace_analysis where trace_id = $1", uuid.UUID(plain))
+    await db.execute("delete from turn_analysis where trace_id = $1", uuid.UUID(plain))
     for trace_id in (analyzed, plain):
         assert (await list_trace(api, trace_id)).status_code == 200
 
@@ -527,14 +489,20 @@ async def test_bulk_download(
     lines = [json.loads(line) for line in archive.read("labels.jsonl").decode().splitlines()]
     by_id = {line["trace_id"]: line for line in lines}
     assert set(by_id) == {analyzed, plain}
-    assert by_id[analyzed]["outcome"]["value"] == "failure"
-    assert by_id[analyzed]["metric_scores"] == {"faithfulness": 0.81}
-    assert by_id[analyzed]["signals"]["has_retry_loop"] is True
-    assert by_id[analyzed]["analyzer_versions"]
-    # The unanalyzed trace gets an honest all-null line.
-    assert by_id[plain]["outcome"] is None
-    assert by_id[plain]["metric_scores"] is None
-    assert by_id[plain]["signals"] is None
+    # Same shapes as the trace detail's analysis block.
+    session = by_id[analyzed]["session"]
+    assert session["status"] == "final"
+    assert session["outcome"] == "failure"
+    assert session["task_categories"] == ["coding"]
+    assert session["signals"]["has_retry_loop"] is True
+    assert [(t["turn_index"], t["provenance"]) for t in by_id[analyzed]["turns"]] == [
+        (0, "machine")
+    ]
+    # The unanalyzed trace gets an honest pending session and no turns.
+    assert by_id[plain]["session"]["status"] == "pending"
+    assert by_id[plain]["session"]["outcome"] is None
+    assert by_id[plain]["session"]["signals"] is None
+    assert by_id[plain]["turns"] == []
 
     # Acquirer: the scrubbed artifact serves, never the raw object.
     res = await consumer.post("/v1/traces/acquire", json={"trace_ids": [analyzed]})

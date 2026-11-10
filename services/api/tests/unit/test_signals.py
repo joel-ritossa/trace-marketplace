@@ -1,5 +1,5 @@
 """Family-1 signals: loop detection, action extraction, recovery,
-truncation, failure_suspected, and fail-open nulls — all synthetic."""
+truncation, and fail-open nulls — all synthetic."""
 
 import json
 from typing import Any
@@ -182,14 +182,12 @@ async def test_recovered_error_retried_tool_then_normal_end() -> None:
     assert result.recovered_from_error is True
     # Recovered, no loop, no truncation evidence: no failure opinion even
     # though the trace status is error.
-    assert result.failure_suspected is False
 
 
 async def test_error_without_retry_is_not_recovered() -> None:
     spans = [make_span(0, kind="llm", status="error"), make_span(1, kind="llm", name="other")]
     result = await run_signals(make_trace(spans), SETTINGS)
     assert result.recovered_from_error is False
-    assert result.failure_suspected is True
 
 
 async def test_error_at_trace_end_is_not_recovered() -> None:
@@ -219,7 +217,6 @@ async def test_truncation_from_finish_reason_length() -> None:
     spans = [llm_span(0, attributes={"gen_ai.response.finish_reasons": ["length"]})]
     result = await run_signals(make_trace(spans), SETTINGS)
     assert result.truncation_suspected is True
-    assert result.failure_suspected is True
 
 
 async def test_benign_finish_reason_is_not_truncation() -> None:
@@ -274,12 +271,11 @@ async def test_flattened_finish_reason_on_later_completion() -> None:
 # --- the analyzer as a whole ---
 
 
-async def test_loop_sets_failure_suspected_even_on_ok_trace() -> None:
+async def test_loop_detected_on_ok_trace() -> None:
     spans = [tool_span(i, "search", '{"q": "x"}') for i in range(3)]
     result = await run_signals(make_trace(spans), SETTINGS)
     assert result.has_retry_loop is True
     assert result.loop_kind == "exact_repeat"
-    assert result.failure_suspected is True
 
 
 async def test_no_actions_fails_open() -> None:
@@ -288,7 +284,6 @@ async def test_no_actions_fails_open() -> None:
     assert result.loop_kind is None
     assert result.tool_call_count == 0
     assert result.llm_call_count == 0
-    assert result.failure_suspected is False
 
 
 async def test_counts_embedded_calls_as_tool_calls() -> None:

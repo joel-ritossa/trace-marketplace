@@ -24,7 +24,7 @@ _ROLE_BY_KIND = {"llm": "assistant", "tool": "tool"}
 _MAX_CAP_HALVINGS = 6
 
 
-def _middle_out(text: str, cap: int) -> tuple[str, bool]:
+def middle_out(text: str, cap: int) -> tuple[str, bool]:
     if len(text) <= cap:
         return text, False
     if cap < 48:
@@ -49,13 +49,13 @@ class _Step:
     def render(self, field_cap: int) -> tuple[str, bool]:
         """Step text at a given per-field cap; cap 0 = skeleton only."""
         if self.ask is not None:
-            return _middle_out(self.ask, field_cap)
+            return middle_out(self.ask, field_cap)
         lines = [self.skeleton]
         truncated = False
         if field_cap > 0:
             for label, text in (("input", self.input_text), ("output", self.output_text)):
                 if text:
-                    capped, cut = _middle_out(text, field_cap)
+                    capped, cut = middle_out(text, field_cap)
                     lines.append(f"{label}: {capped}")
                     truncated = truncated or cut
             if not self.input_text and not self.output_text and self.summary:
@@ -141,7 +141,7 @@ def render_trace(trace: TraceInput, config: RendererConfig) -> RenderedTrace:
     is_session = any(s.ask is not None for s in steps)
     user_message = None if is_session else content.first_user_message(trace.spans)
     if user_message:
-        capped, cut = _middle_out(user_message, config.conversation_cap_chars)
+        capped, cut = middle_out(user_message, config.conversation_cap_chars)
         truncated = truncated or cut
         fixed.append(RenderedMessage(role="user", content=capped))
 

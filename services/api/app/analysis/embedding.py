@@ -1,37 +1,28 @@
 """Trace embedding for similar-behavior retrieval
 (docs/proposals/similar-behavior.md).
 
-Embeds the judge rendering — the research result behind the feature
-(sandbox/behavior-similarity): whole-transcript embeddings are the best
-behavior retriever; structural skeletons and window matching underperform.
-Pure over normalized rows like every analyzer: no DB, no queue.
+Embeds the session roll-up text — goal, summary, one line per turn
+(9_session-analysis.md). Pure like every analyzer: no DB, no queue.
 """
 
-from app.analysis.config import CHARS_PER_TOKEN, AnalysisSettings, RendererConfig
+from app.analysis.config import CHARS_PER_TOKEN, AnalysisSettings
 from app.analysis.llm import CallMeta, embed
-from app.analysis.rendering import render_trace, rendering_text
-from app.analysis.trace_input import TraceInput
 
-EMBEDDING_VERSION = "1"
-
-_ELISION = "\n[…elided for embedding…]\n"
+EMBEDDING_VERSION = "2"
 
 
-def embedding_input(trace: TraceInput, settings: AnalysisSettings) -> str:
-    """The judge rendering, middle-out re-truncated to the embedding window
-    (the render budget is larger). Middle-out keeps the task setup and the
-    ending — where the behavior signal concentrates."""
-    rendered = render_trace(trace, RendererConfig.from_settings(settings))
-    text = rendering_text(rendered.messages)
-    budget = settings.embedding_budget_tokens * CHARS_PER_TOKEN
-    if len(text) <= budget:
-        return text
-    half = (budget - len(_ELISION)) // 2
-    return text[:half] + _ELISION + text[-half:]
+def embedding_input(
+    goal: str,
+    summary: str,
+    turns: list[tuple[int, str | None, str | None]],
+    settings: AnalysisSettings,
+) -> str:
+    """The roll-up text from (turn_index, outcome, summary) rows, cut to the
+    embedding budget."""
+    lines = [f"Goal: {goal}", f"Summary: {summary}"]
+    lines += [f"Turn {index} ({outcome}): {text}" for index, outcome, text in turns]
+    return "\n".join(lines)[: settings.embedding_budget_tokens * CHARS_PER_TOKEN]
 
 
-async def run_embedding(
-    trace: TraceInput, settings: AnalysisSettings
-) -> tuple[list[float], CallMeta]:
-    text = embedding_input(trace, settings) or "(empty trace)"
+async def run_embedding(text: str, settings: AnalysisSettings) -> tuple[list[float], CallMeta]:
     return await embed(settings.embedding_model, text)

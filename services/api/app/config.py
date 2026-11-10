@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     ingest_retry_base_seconds: float = 2.0
     ingest_retry_cap_seconds: float = 60.0
     sweep_stuck_after_minutes: int = 10
+    # Session traces are finalized (last turn + roll-up) once idle this
+    # long (9_session-analysis.md); read by the minute sweep.
+    analysis_idle_seconds: int = 7200
 
     @property
     def supabase_jwks_url(self) -> str:

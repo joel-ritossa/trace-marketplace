@@ -1,14 +1,14 @@
-"""A3 HIL loop: routing → review item + digested notification → queue →
-resolve with provenance; supersede on re-route; the human-provenance filter;
-owner relabel; upload_failed for CLI uploads.
+"""HIL loop (9_session-analysis.md Review): an uncertain turn → one review
+item per trace + a digested notification → queue → owner relabel of the
+turn; re-judging keeps, supersedes or replaces the item; human turns are
+never re-judged; upload_failed for CLI uploads.
 
 Keyless by design: the canned-verdict fault (X-Fault: analyze:verdict:…)
-stands in for the judge, so routing/digest/queue/resolve run end-to-end on
-the compose stack with no provider key (A3 decision 9).
+stands in for the judge, so the item/digest/queue/relabel loop runs
+end-to-end on the compose stack with no provider key (A3 decision 9).
 """
 
 import json
-import subprocess
 import uuid
 
 import asyncpg
@@ -16,12 +16,18 @@ import httpx
 import pytest
 
 from tests.integration.conftest import API_URL, otlp_payload, signup_token
-from tests.integration.test_analysis import SERVICE_DIR, wait_analysis, wait_until
+from tests.integration.test_analysis import upload_and_ingest, wait_analysis, wait_until
 from tests.integration.test_uploads import upload_file, wait_terminal
 
 pytestmark = pytest.mark.asyncio
 
-LOW = {"X-Fault": "analyze:verdict:success:0.4"}  # routes: low_outcome_confidence
+UNCERTAIN = {"X-Fault": "analyze:verdict:success:uncertain"}
+CANNED_TURN = {
+    "turn_index": 0,
+    "reason": "Fault injection: canned uncertain turn.",
+    "summary": "Fault injection: canned verdict.",
+}
+SPAN_ID = "cd" * 8  # otlp_payload's only span
 
 
 def two_trace_payload(marker: str) -> bytes:
@@ -50,7 +56,7 @@ async def upload_routed(
     api: httpx.AsyncClient,
     payload: bytes,
     *,
-    fault: dict = LOW,
+    fault: dict = UNCERTAIN,
     filename: str = "trace.json",
 ) -> tuple[str, list[str]]:
     """Upload with a canned-verdict fault armed; wait for ingest."""
@@ -94,19 +100,33 @@ async def rearm(upload_id: str, spec: str) -> None:
     await redis.aclose()
 
 
-def requeue_upload(upload_id: str) -> None:
-    result = subprocess.run(
-        ["uv", "run", "python", "-m", "app.cli.requeue", "upload", upload_id],
-        cwd=SERVICE_DIR,
-        capture_output=True,
-        text=True,
+async def rejudge(api: httpx.AsyncClient, db: asyncpg.Connection, trace_id: str) -> None:
+    """Re-judge the trace's machine turns as if their spans changed: stale
+    fingerprints, then the owner's analyze request; wait until rewritten."""
+    await db.execute(
+        "update turn_analysis set fingerprint = 'stale' where trace_id = $1", uuid.UUID(trace_id)
     )
-    assert result.returncode == 0, result.stderr
+    assert (await api.post(f"/v1/traces/{trace_id}/analyze")).status_code == 202
+
+    async def rewritten():
+        return await db.fetchval(
+            "select case when count(*) = 0 then true end from turn_analysis"
+            " where trace_id = $1 and fingerprint = 'stale'",
+            uuid.UUID(trace_id),
+        )
+
+    await wait_until(rewritten, 30.0, f"trace {trace_id} was never re-judged")
 
 
-async def test_routing_creates_items_and_one_digest(api: httpx.AsyncClient) -> None:
-    """Done-when core: an uncertain verdict creates review items and exactly
-    one unread digest notification per upload, item_count accumulating."""
+async def review_digests(api: httpx.AsyncClient) -> list[dict]:
+    body = (await api.get("/v1/notifications")).json()
+    return [n for n in body["notifications"] if n["type"] == "review_request"]
+
+
+async def test_uncertain_turns_create_items_and_one_digest(api: httpx.AsyncClient) -> None:
+    """Done-when core: an uncertain turn creates a review item listing it,
+    and exactly one unread digest notification per upload, item_count
+    accumulating."""
     upload_id, trace_ids = await upload_routed(
         api, two_trace_payload(uuid.uuid4().hex), filename="batch.json"
     )
@@ -114,36 +134,38 @@ async def test_routing_creates_items_and_one_digest(api: httpx.AsyncClient) -> N
 
     for item in items:
         assert item["status"] == "open"
-        assert item["question_type"] == "verdict"
         assert item["upload_filename"] == "batch.json"
-        assert item["context"]["verdict"]["outcome"] == "success"
-        assert item["context"]["verdict"]["outcome_confidence"] == 0.4
-        assert [r["code"] for r in item["context"]["reasons"]] == ["low_outcome_confidence"]
+        assert item["context"] == {"turns": [CANNED_TURN]}
         assert item["trace_id"] in trace_ids
+        assert item["resolved_by"] is None
     # Newest first (3_api.md).
     assert items == sorted(items, key=lambda i: i["created_at"], reverse=True)
 
     # One digest, not two: the second item upserted into the first's slot.
-    res = await api.get("/v1/notifications")
-    body = res.json()
-    digests = [n for n in body["notifications"] if n["type"] == "review_request"]
+    digests = await review_digests(api)
     assert len(digests) == 1
     assert digests[0]["payload"]["upload_id"] == upload_id
     assert digests[0]["payload"]["filename"] == "batch.json"
     assert digests[0]["payload"]["item_count"] == 2
     assert digests[0]["read_at"] is None
-    assert body["unread_count"] == 1
+    assert (await api.get("/v1/notifications")).json()["unread_count"] == 1
 
     # The owner's surfaces carry the open item (A3 decision 8).
     listed = (await api.get("/v1/traces?scope=mine")).json()
     by_id = {t["trace_id"]: t for t in listed["traces"]}
     open_ids = {i["trace_id"]: i["review_item_id"] for i in items}
     for trace_id in trace_ids:
+        assert by_id[trace_id]["analysis_status"] == "final"
         assert by_id[trace_id]["has_open_review_item"] is True
         assert by_id[trace_id]["open_review_item_id"] == open_ids[trace_id]
-    analysis = (await api.get(f"/v1/traces/{trace_ids[0]}/analysis")).json()
-    assert analysis["analysis_state"] == "complete"
+    analysis = (await api.get(f"/v1/traces/{trace_ids[0]}")).json()["analysis"]
+    assert analysis["session"]["status"] == "final"
+    assert analysis["session"]["outcome"] == "success"
+    assert analysis["session"]["task_categories"] == ["other"]
     assert analysis["open_review_item_id"] == open_ids[trace_ids[0]]
+    (turn,) = analysis["turns"]
+    assert turn["uncertain"] == CANNED_TURN["reason"]
+    assert turn["provenance"] == "machine"
 
     # Unresolved items leave the trace machine-labeled and listable; the
     # owner's review backlog never shows on a non-owner's card (decision 8).
@@ -159,262 +181,177 @@ async def test_routing_creates_items_and_one_digest(api: httpx.AsyncClient) -> N
         market = (await other.get("/v1/traces?scope=marketplace")).json()
         card = next(t for t in market["traces"] if t["trace_id"] == trace_ids[0])
         assert card["outcome"] == "success"  # machine label intact
-        assert card["outcome_provenance"] == "machine"
         assert card["has_open_review_item"] is False
         assert card["open_review_item_id"] is None
-        foreign_analysis = (await other.get(f"/v1/traces/{trace_ids[0]}/analysis")).json()
-        assert foreign_analysis["open_review_item_id"] is None
+        foreign = (await other.get(f"/v1/traces/{trace_ids[0]}")).json()["analysis"]
+        assert foreign["open_review_item_id"] is None
 
 
-async def test_resolve_writes_provenance(api: httpx.AsyncClient) -> None:
-    """Resolve writes the answer to trace_analysis with human provenance and
-    confidence 1.0; matching the machine value records human_confirmed;
-    repeats 409; foreign access 404s."""
+async def test_relabel_resolves_item(api: httpx.AsyncClient, db: asyncpg.Connection) -> None:
+    """Relabeling the uncertain turn makes it human, recomputes the session
+    arrays and resolves the item (resolved_by = owner); a later re-analysis
+    never re-judges the human turn or reopens the item; foreign access 404s."""
     upload_id, (trace_id,) = await upload_routed(api, otlp_payload(uuid.uuid4().hex))
     (item,) = await wait_open_items(api, upload_id, 1)
     item_id = item["review_item_id"]
+    owner_id = (await api.get("/v1/profile")).json()["id"]
 
-    # Disagree with the machine on outcome; answer the unlabelled category.
-    res = await api.post(
-        f"/v1/review-items/{item_id}/resolve",
-        json={"outcome": "failure", "task_category": "coding"},
-    )
-    assert res.status_code == 200
-    body = res.json()
-    assert body["item"]["status"] == "resolved"
-    assert body["item"]["answer"] == {
+    labels = {
         "outcome": "failure",
-        "failure_mode": None,
-        "task_category": "coding",
+        "task_categories": ["coding", "debugging"],
+        "failure_modes": [
+            {"value": "invalid_invocation", "span_ids": [SPAN_ID], "reason": "Bad args."}
+        ],
     }
-    assert body["labels"]["outcome"] == {
-        "value": "failure",
-        "confidence": 1.0,
-        "provenance": "human",
+    res = await api.put(f"/v1/traces/{trace_id}/turns/0/labels", json=labels)
+    assert res.status_code == 200, res.text
+    analysis = res.json()
+    (turn,) = analysis["turns"]
+    assert turn["provenance"] == "human"
+    assert turn["outcome"] == "failure"
+    assert turn["uncertain"] is None
+    assert {(lb["field"], lb["value"]) for lb in turn["labels"]} == {
+        ("task_category", "coding"),
+        ("task_category", "debugging"),
+        ("failure_mode", "invalid_invocation"),
     }
-    # No machine category existed, so this is a fresh human label, not a
-    # confirmation.
-    assert body["labels"]["task_category"]["provenance"] == "human"
-
-    analysis = (await api.get(f"/v1/traces/{trace_id}/analysis")).json()
-    assert analysis["labels"]["outcome"] == {
-        "value": "failure",
-        "confidence": 1.0,
-        "provenance": "human",
-    }
+    failure = next(lb for lb in turn["labels"] if lb["field"] == "failure_mode")
+    assert failure["span_ids"] == [SPAN_ID]
+    assert failure["reason"] == "Bad args."
+    assert analysis["session"]["task_categories"] == ["coding", "debugging"]
+    assert analysis["session"]["failure_modes"] == ["invalid_invocation"]
     assert analysis["open_review_item_id"] is None  # nothing open anymore
 
-    # The list-level outcome triplet reflects the human label.
+    resolved = (await api.get(f"/v1/review-items/{item_id}")).json()
+    assert resolved["status"] == "resolved"
+    assert resolved["resolved_by"] == owner_id
+    assert resolved["resolved_at"] is not None
+
+    # The list-level labels reflect the human turn.
     listed = (await api.get("/v1/traces?scope=mine")).json()
     row = next(t for t in listed["traces"] if t["trace_id"] == trace_id)
-    assert row["outcome"] == "failure"
-    assert row["outcome_provenance"] == "human"
+    assert row["task_categories"] == ["coding", "debugging"]
+    assert row["failure_modes"] == ["invalid_invocation"]
     assert row["has_open_review_item"] is False
 
-    res = await api.post(f"/v1/review-items/{item_id}/resolve", json={"outcome": "failure"})
-    assert res.status_code == 409
-    assert res.json()["error"]["code"] == "already_resolved"
+    # A finalizing re-run (stale roll-up, stale fingerprint, verdict still
+    # armed) leaves the human turn alone and opens nothing.
+    await db.execute(
+        "update turn_analysis set fingerprint = 'stale' where trace_id = $1", uuid.UUID(trace_id)
+    )
+    await db.execute(
+        "update trace_analysis set analyzed_at = null where trace_id = $1", uuid.UUID(trace_id)
+    )
+    assert (await api.post(f"/v1/traces/{trace_id}/analyze")).status_code == 202
+    analysis = await wait_analysis(api, trace_id)
+    assert analysis["session"]["status"] == "final"
+    (turn,) = analysis["turns"]
+    assert (turn["provenance"], turn["outcome"], turn["uncertain"]) == ("human", "failure", None)
+    assert analysis["session"]["task_categories"] == ["coding", "debugging"]
+    assert (await api.get(f"/v1/review-items?upload_id={upload_id}")).json()["items"] == []
+    assert (await api.get(f"/v1/review-items/{item_id}")).json()["status"] == "resolved"
+    assert (await review_digests(api))[0]["payload"]["item_count"] == 1
+    await disarm(upload_id)
 
-    # Review items are owner-scoped: foreign access is 404, not 403.
+    # Review items and relabels are owner-scoped: foreign access is 404.
     other_token = await signup_token()
     async with httpx.AsyncClient(
         base_url=API_URL, headers={"Authorization": f"Bearer {other_token}"}, timeout=30.0
     ) as other:
         assert (await other.get(f"/v1/review-items/{item_id}")).status_code == 404
-        res = await other.post(f"/v1/review-items/{item_id}/resolve", json={"outcome": "success"})
+        res = await other.put(f"/v1/traces/{trace_id}/turns/0/labels", json=labels)
         assert res.status_code == 404
         assert (await other.get("/v1/notifications")).json()["total"] == 0
 
 
-async def test_matching_machine_answer_confirms(api: httpx.AsyncClient) -> None:
-    upload_id, (trace_id,) = await upload_routed(api, otlp_payload(uuid.uuid4().hex))
-    (item,) = await wait_open_items(api, upload_id, 1)
-
-    res = await api.post(
-        f"/v1/review-items/{item['review_item_id']}/resolve", json={"outcome": "success"}
-    )
-    assert res.status_code == 200
-    assert res.json()["labels"]["outcome"] == {
-        "value": "success",
-        "confidence": 1.0,
-        "provenance": "human_confirmed",
-    }
-
-
-async def test_non_failure_outcome_nulls_machine_failure_mode(api: httpx.AsyncClient) -> None:
-    """A canned failure verdict carries a machine failure_mode; a human
-    non-failure outcome clears it (the judge only diagnoses failures)."""
-    upload_id, (trace_id,) = await upload_routed(
-        api,
-        otlp_payload(uuid.uuid4().hex),
-        fault={"X-Fault": "analyze:verdict:failure:0.4"},
-    )
-    (item,) = await wait_open_items(api, upload_id, 1)
-    assert item["context"]["verdict"]["failure_mode"] == "inconclusive"
-
-    res = await api.post(
-        f"/v1/review-items/{item['review_item_id']}/resolve", json={"outcome": "success"}
-    )
-    assert res.status_code == 200
-
-    analysis = (await api.get(f"/v1/traces/{trace_id}/analysis")).json()
-    assert analysis["labels"]["outcome"]["value"] == "success"
-    assert analysis["labels"]["failure_mode"] is None
-
-
-async def test_reroute_supersedes_then_human_filter_stops_routing(
+async def test_rejudge_keeps_supersedes_or_replaces_item(
     api: httpx.AsyncClient, db: asyncpg.Connection
 ) -> None:
-    """A re-run that routes again supersedes the open item (never
-    duplicates) and bumps the digest; once the outcome is human-resolved,
-    the same routing reasons are filtered and nothing routes again."""
+    """A re-judge asking the same question keeps the open item (no
+    duplicate, no digest bump); a confident one supersedes it; a new
+    uncertain one opens a fresh item into the same unread digest."""
     upload_id, (trace_id,) = await upload_routed(api, otlp_payload(uuid.uuid4().hex))
     (first,) = await wait_open_items(api, upload_id, 1)
 
-    # Re-ingest with the fault still armed: same uncertain verdict again.
-    requeue_upload(upload_id)
-    assert (await wait_terminal(api, upload_id))["trace_ids"] == [trace_id]
+    await rejudge(api, db, trace_id)
+    (same,) = await wait_open_items(api, upload_id, 1)
+    assert same["review_item_id"] == first["review_item_id"]
+    assert (await review_digests(api))[0]["payload"]["item_count"] == 1
 
-    async def superseded():
-        res = await api.get(f"/v1/review-items/{first['review_item_id']}")
-        return res.json() if res.json()["status"] == "superseded" else None
+    await rearm(upload_id, "analyze:verdict:success")
+    await rejudge(api, db, trace_id)
+    assert (await api.get(f"/v1/review-items/{first['review_item_id']}")).json()[
+        "status"
+    ] == "superseded"
+    assert (await api.get(f"/v1/review-items?upload_id={upload_id}")).json()["items"] == []
 
-    await wait_until(superseded, 30.0, "first item was never superseded")
-    (second,) = await wait_open_items(api, upload_id, 1)
-    assert second["review_item_id"] != first["review_item_id"]
-
-    # Still one digest; the second routing incremented it.
-    digests = [
-        n
-        for n in (await api.get("/v1/notifications")).json()["notifications"]
-        if n["type"] == "review_request"
-    ]
+    await rearm(upload_id, UNCERTAIN["X-Fault"])
+    await rejudge(api, db, trace_id)
+    (fresh,) = await wait_open_items(api, upload_id, 1)
+    assert fresh["review_item_id"] != first["review_item_id"]
+    digests = await review_digests(api)
     assert len(digests) == 1
     assert digests[0]["payload"]["item_count"] == 2
 
-    # Human-resolve the outcome, re-run again: the only routing reason
-    # targets outcome, which now carries human provenance — filtered out.
-    res = await api.post(
-        f"/v1/review-items/{second['review_item_id']}/resolve", json={"outcome": "failure"}
-    )
-    assert res.status_code == 200
-    before = await db.fetchval(
-        "select analyzed_at from trace_analysis where trace_id = $1", uuid.UUID(trace_id)
-    )
-    requeue_upload(upload_id)
-    assert (await wait_terminal(api, upload_id))["trace_ids"] == [trace_id]
-
-    async def reanalyzed():
-        ts = await db.fetchval(
-            "select analyzed_at from trace_analysis where trace_id = $1", uuid.UUID(trace_id)
-        )
-        return ts if ts is not None and ts != before else None
-
-    await wait_until(reanalyzed, 30.0, "trace was never re-analyzed")
-
-    open_items = (await api.get(f"/v1/review-items?upload_id={upload_id}")).json()["items"]
-    assert open_items == []
-    resolved = (await api.get(f"/v1/review-items/{second['review_item_id']}")).json()
-    assert resolved["status"] == "resolved"  # newer truth never reopens it
-    # The human label survived the machine rewrite.
-    analysis = (await api.get(f"/v1/traces/{trace_id}/analysis")).json()
-    assert analysis["labels"]["outcome"]["provenance"] == "human"
-    # And no third digest bump.
-    digests = [
-        n
-        for n in (await api.get("/v1/notifications")).json()["notifications"]
-        if n["type"] == "review_request"
-    ]
-    assert digests[0]["payload"]["item_count"] == 2
-
     await disarm(upload_id)
 
 
-async def test_clean_rerun_supersedes_stale_item(api: httpx.AsyncClient) -> None:
-    """A re-run whose fresh verdict no longer routes supersedes the stale
-    open item instead of leaving it asking an answered question
-    (1_analysis.md: a re-run supersedes the open item)."""
-    upload_id, (trace_id,) = await upload_routed(api, otlp_payload(uuid.uuid4().hex))
-    (item,) = await wait_open_items(api, upload_id, 1)
-
-    await rearm(upload_id, "analyze:verdict:success:0.95")
-    requeue_upload(upload_id)
-    assert (await wait_terminal(api, upload_id))["trace_ids"] == [trace_id]
-
-    async def superseded():
-        res = await api.get(f"/v1/review-items/{item['review_item_id']}")
-        return res.json() if res.json()["status"] == "superseded" else None
-
-    await wait_until(superseded, 30.0, "stale item was never superseded")
-    assert (await api.get(f"/v1/review-items?upload_id={upload_id}")).json()["items"] == []
-
-    await disarm(upload_id)
-
-
-async def test_owner_relabel(api: httpx.AsyncClient, db: asyncpg.Connection) -> None:
-    """The owner can self-create an item on an analyzed trace (idempotent
-    while open) — even a keyless-skipped one; unanalyzed traces 409."""
-    res = await upload_file(api, otlp_payload(uuid.uuid4().hex))
-    upload_id = res.json()["upload_id"]
-    status = await wait_terminal(api, upload_id)
-    trace_id = status["trace_ids"][0]
+async def test_relabel_validation(api: httpx.AsyncClient, db: asyncpg.Connection) -> None:
+    """Owners relabel any analyzed turn — even a keyless-skipped one, with
+    no review item involved. Bad vocabularies and span ids outside the
+    turn are 422; an unknown turn 404s; a turn with no row yet 409s;
+    non-owners get 404 on private traces and 403 on listed ones."""
+    trace_id = await upload_and_ingest(api, otlp_payload(uuid.uuid4().hex))
     analysis = await wait_analysis(api, trace_id)
-    assert analysis["analysis_state"] == "skipped"  # keyless, no fault
+    assert analysis["session"]["status"] == "skipped"  # keyless, no fault
+    url = f"/v1/traces/{trace_id}/turns/0/labels"
 
-    res = await api.post(f"/v1/traces/{trace_id}/review-items")
-    assert res.status_code == 201
-    item = res.json()
-    assert item["context"]["reasons"] == []  # owner-initiated marker
-    assert item["context"]["verdict"]["outcome"] is None  # no machine take
+    for bad in (
+        {},
+        {"outcome": "maybe", "task_categories": ["coding"]},
+        {"outcome": "success", "task_categories": []},
+        {"outcome": "success", "task_categories": ["x"]},
+        {"outcome": "failure", "task_categories": ["coding"], "failure_modes": [{"value": "x"}]},
+        # `inconclusive` left the taxonomy: an empty set says "none identified".
+        {
+            "outcome": "failure",
+            "task_categories": ["coding"],
+            "failure_modes": [{"value": "inconclusive"}],
+        },
+        {
+            "outcome": "failure",
+            "task_categories": ["coding"],
+            "failure_modes": [{"value": "invalid_invocation", "span_ids": ["ff" * 8]}],
+        },
+    ):
+        res = await api.put(url, json=bad)
+        assert res.status_code == 422, bad
 
-    # Idempotent while open.
-    res = await api.post(f"/v1/traces/{trace_id}/review-items")
+    body = {"outcome": "indeterminate", "task_categories": ["other"]}
+    res = await api.put(f"/v1/traces/{trace_id}/turns/5/labels", json=body)
+    assert res.status_code == 404
+
+    res = await api.put(url, json=body)
     assert res.status_code == 200
-    assert res.json()["review_item_id"] == item["review_item_id"]
+    assert res.json()["turns"][0]["provenance"] == "human"
+    assert (await api.get("/v1/review-items?status=all")).json()["items"] == []
 
-    # Owner-only, 404-not-403 (review state is private even on listed traces).
     other_token = await signup_token()
     async with httpx.AsyncClient(
         base_url=API_URL, headers={"Authorization": f"Bearer {other_token}"}, timeout=30.0
     ) as other:
-        assert (await other.post(f"/v1/traces/{trace_id}/review-items")).status_code == 404
+        assert (await other.put(url, json=body)).status_code == 404
+        res = await api.patch(
+            f"/v1/traces/{trace_id}", json={"visibility": "listed", "confirm_ownership": True}
+        )
+        assert res.status_code == 200
+        assert (await other.put(url, json=body)).status_code == 403
 
-    # Resolving against a null machine value is a fresh human label.
-    res = await api.post(
-        f"/v1/review-items/{item['review_item_id']}/resolve", json={"outcome": "indeterminate"}
-    )
-    assert res.status_code == 200
-    assert res.json()["labels"]["outcome"]["provenance"] == "human"
-
-    # Resolved item frees the slot: relabel again creates a fresh one.
-    res = await api.post(f"/v1/traces/{trace_id}/review-items")
-    assert res.status_code == 201
-    assert res.json()["review_item_id"] != item["review_item_id"]
-
-    # No trace_analysis row -> nothing to resolve into -> 409.
-    await db.execute("delete from review_items where trace_id = $1", uuid.UUID(trace_id))
-    await db.execute("delete from trace_analysis where trace_id = $1", uuid.UUID(trace_id))
-    res = await api.post(f"/v1/traces/{trace_id}/review-items")
+    # No turn row yet -> nothing to relabel -> 409.
+    await db.execute("delete from turn_analysis where trace_id = $1", uuid.UUID(trace_id))
+    res = await api.put(url, json=body)
     assert res.status_code == 409
     assert res.json()["error"]["code"] == "analysis_pending"
-
-
-async def test_resolve_validates_taxonomies(api: httpx.AsyncClient) -> None:
-    upload_id, _ = await upload_routed(api, otlp_payload(uuid.uuid4().hex))
-    (item,) = await wait_open_items(api, upload_id, 1)
-    item_id = item["review_item_id"]
-
-    for bad in (
-        {},
-        {"outcome": "maybe"},
-        {"failure_mode": "gremlins"},
-        {"task_category": "x"},
-        # failure_mode only accompanies a failure outcome (label model).
-        {"outcome": "success", "failure_mode": "inconclusive"},
-        {"outcome": "indeterminate", "failure_mode": "inconclusive"},
-    ):
-        res = await api.post(f"/v1/review-items/{item_id}/resolve", json=bad)
-        assert res.status_code == 422, bad
 
 
 async def test_upload_failed_notification_is_cli_only(api: httpx.AsyncClient) -> None:

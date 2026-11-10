@@ -73,7 +73,7 @@ def vec(plane: tuple[list[float], list[float]], x: float, y: float) -> str:
 async def seed_embedding(db: asyncpg.Connection, trace_id: str, literal: str) -> None:
     await db.execute(
         """
-        insert into trace_embeddings (trace_id, embedding, model, renderer_version)
+        insert into trace_embeddings (trace_id, embedding, model, input_version)
         values ($1, $2::vector, 'seeded', '1')
         on conflict (trace_id) do update set
           embedding = excluded.embedding, model = excluded.model

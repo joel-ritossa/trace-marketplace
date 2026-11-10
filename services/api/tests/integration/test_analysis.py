@@ -89,57 +89,65 @@ async def upload_and_ingest(api: httpx.AsyncClient, payload: bytes, **kwargs) ->
 
 
 async def wait_analysis(api: httpx.AsyncClient, trace_id: str, timeout: float = 30.0) -> dict:
-    """Poll the analysis endpoint until it leaves `pending`."""
+    """Poll the trace detail until its analysis block is terminal: the
+    session is final or skipped, or the run failed (open dead letter)."""
 
     async def probe():
-        res = await api.get(f"/v1/traces/{trace_id}/analysis")
+        res = await api.get(f"/v1/traces/{trace_id}")
         res.raise_for_status()
-        body = res.json()
-        return body if body["analysis_state"] != "pending" else None
+        analysis = res.json()["analysis"]
+        done = analysis["session"]["status"] in ("final", "skipped") or analysis["failed_reason"]
+        return analysis if done else None
 
-    return await wait_until(probe, timeout, f"trace {trace_id} analysis never left pending")
+    return await wait_until(probe, timeout, f"trace {trace_id} analysis never became terminal")
 
 
 async def test_real_signals_persisted_keyless_skip(
     api: httpx.AsyncClient, db: asyncpg.Connection
 ) -> None:
-    """Done-when #1 and #2: upload → trace_analysis row with real signals;
-    a keyless run shows `skipped` with the right reason, never fake pending."""
+    """Upload → session and turn rows with real signals; a keyless run shows
+    `skipped` with the right reason, never fake pending or fake labels."""
     trace_id = await upload_and_ingest(api, loop_payload(uuid.uuid4().hex))
     analysis = await wait_analysis(api, trace_id)
+    session = analysis["session"]
 
-    assert analysis["analysis_state"] == "skipped"
-    assert analysis["skip_reason"] == "not_configured"
+    assert session["status"] == "skipped"
+    assert session["skip_reason"] == "not_configured"
     # Signals are real, computed from the payload's actual structure.
-    signals = analysis["signals"]
+    signals = session["signals"]
     assert signals["has_retry_loop"] is True
     assert signals["loop_kind"] == "exact_repeat"
     assert signals["tool_call_count"] == 3
     assert signals["llm_call_count"] == 1
-    # No LLM ran: every label honestly null, audit carries signals only.
-    assert analysis["labels"] == {"outcome": None, "failure_mode": None, "task_category": None}
-    assert [a["analyzer"] for a in analysis["audit"]["analyzers"]] == ["signals"]
-
-    # failure_suspected is routing-internal: stored on the result row,
-    # never in the API response (1_analysis.md).
-    assert "failure_suspected" not in signals
-    stored = await db.fetchval(
-        "select output from analyzer_results where trace_id = $1 and analyzer = 'signals'",
-        uuid.UUID(trace_id),
+    # No LLM ran: no verdict, no labels, no audit row.
+    assert (session["goal"], session["outcome"], session["summary"]) == (None, None, None)
+    assert session["task_categories"] == session["failure_modes"] == []
+    assert (
+        await db.fetchval(
+            "select count(*) from analyzer_results where trace_id = $1", uuid.UUID(trace_id)
+        )
+        == 0
     )
-    assert "failure_suspected" in json.loads(stored)
+    # A non-session trace is one turn covering every span.
+    (turn,) = analysis["turns"]
+    assert turn["turn_index"] == 0
+    assert turn["outcome"] is None
+    assert turn["provenance"] == "machine"
+    assert turn["labels"] == []
+    assert turn["signals"]["has_retry_loop"] is True
+    assert turn["signals"]["tool_call_count"] == 3
 
     # Importer deltas: trace-level token sum on the detail.
     detail = (await api.get(f"/v1/traces/{trace_id}")).json()
     assert detail["total_tokens"] == 45
-    assert detail["analysis_state"] == "skipped"
-    assert detail["outcome"] is None
 
-    # List surfaces carry the derived state too.
+    # List surfaces carry the derived status too.
     listed = (await api.get("/v1/traces?scope=mine")).json()
     row = next(t for t in listed["traces"] if t["trace_id"] == trace_id)
-    assert row["analysis_state"] == "skipped"
+    assert row["analysis_status"] == "skipped"
+    assert row["analysis_failed"] is False
     assert row["outcome"] is None
+    assert row["task_categories"] == row["failure_modes"] == []
 
 
 async def test_owner_opt_out_beats_not_configured(api: httpx.AsyncClient) -> None:
@@ -150,11 +158,11 @@ async def test_owner_opt_out_beats_not_configured(api: httpx.AsyncClient) -> Non
     assert res.status_code == 200
 
     trace_id = await upload_and_ingest(api, loop_payload(uuid.uuid4().hex))
-    analysis = await wait_analysis(api, trace_id)
-    assert analysis["analysis_state"] == "skipped"
-    assert analysis["skip_reason"] == "owner_opt_out"
+    session = (await wait_analysis(api, trace_id))["session"]
+    assert session["status"] == "skipped"
+    assert session["skip_reason"] == "owner_opt_out"
     # Signals still run for skipped traces.
-    assert analysis["signals"]["has_retry_loop"] is True
+    assert session["signals"]["has_retry_loop"] is True
 
 
 async def test_trace_name_falls_back_to_filename(api: httpx.AsyncClient) -> None:
@@ -183,7 +191,7 @@ async def test_transient_failure_retries_to_success(
     trace_id = status["trace_ids"][0]
 
     analysis = await wait_analysis(api, trace_id, timeout=60.0)
-    assert analysis["analysis_state"] == "skipped"  # recovered, keyless-complete
+    assert analysis["session"]["status"] == "skipped"  # recovered, keyless-complete
     attempts = await db.fetchval(
         "select analysis_attempts from traces where id = $1", uuid.UUID(trace_id)
     )
@@ -196,7 +204,7 @@ async def test_transient_failure_retries_to_success(
 
 async def test_analysis_access_mirrors_trace_visibility(api: httpx.AsyncClient) -> None:
     """Private analysis 404s for non-owners (not 403 — existence isn't
-    leaked); listing opens it."""
+    leaked); listing opens it. Only the owner can request analysis."""
     from tests.integration.conftest import signup_token
 
     trace_id = await upload_and_ingest(api, loop_payload(uuid.uuid4().hex))
@@ -208,8 +216,8 @@ async def test_analysis_access_mirrors_trace_visibility(api: httpx.AsyncClient) 
         headers={"Authorization": f"Bearer {other_token}"},
         timeout=30.0,
     ) as other:
-        res = await other.get(f"/v1/traces/{trace_id}/analysis")
-        assert res.status_code == 404
+        assert (await other.get(f"/v1/traces/{trace_id}")).status_code == 404
+        assert (await other.post(f"/v1/traces/{trace_id}/analyze")).status_code == 404
 
         listed = await api.patch(
             f"/v1/traces/{trace_id}",
@@ -217,16 +225,20 @@ async def test_analysis_access_mirrors_trace_visibility(api: httpx.AsyncClient) 
         )
         assert listed.status_code == 200
 
-        res = await other.get(f"/v1/traces/{trace_id}/analysis")
+        res = await other.get(f"/v1/traces/{trace_id}")
         assert res.status_code == 200
-        assert res.json()["analysis_state"] == "skipped"
+        assert res.json()["analysis"]["session"]["status"] == "skipped"
+        assert (await other.post(f"/v1/traces/{trace_id}/analyze")).status_code == 403
+
+    assert (await api.post(f"/v1/traces/{uuid.uuid4()}/analyze")).status_code == 404
+    assert (await api.post(f"/v1/traces/{trace_id}/analyze")).status_code == 202
 
 
 async def test_injected_failure_dead_letters_and_requeues(
     api: httpx.AsyncClient, db: asyncpg.Connection
 ) -> None:
     """Done-when #4: an injected analysis failure dead-letters and surfaces
-    as `failed`; the operator requeue recovers it."""
+    as failed; the operator requeue recovers it."""
     res = await upload_file(
         api, loop_payload(uuid.uuid4().hex), headers={"X-Fault": "analyze:permanent"}
     )
@@ -237,8 +249,11 @@ async def test_injected_failure_dead_letters_and_requeues(
     trace_id = status["trace_ids"][0]
 
     analysis = await wait_analysis(api, trace_id)
-    assert analysis["analysis_state"] == "failed"
     assert "Fault injection" in analysis["failed_reason"]
+    assert analysis["session"]["status"] == "pending"  # nothing was persisted
+    listed = (await api.get("/v1/traces?scope=mine")).json()
+    row = next(t for t in listed["traces"] if t["trace_id"] == trace_id)
+    assert row["analysis_failed"] is True
 
     row = await db.fetchrow(
         "select task_name, attempts, upload_id, requeued_at from dead_letters where trace_id = $1",
@@ -268,7 +283,8 @@ async def test_injected_failure_dead_letters_and_requeues(
     assert result.returncode == 0, result.stderr
 
     analysis = await wait_analysis(api, trace_id)
-    assert analysis["analysis_state"] == "skipped"  # keyless stack
+    assert analysis["session"]["status"] == "skipped"  # keyless stack
+    assert analysis["failed_reason"] is None
     requeued_at = await db.fetchval(
         "select requeued_at from dead_letters where trace_id = $1", uuid.UUID(trace_id)
     )
@@ -278,7 +294,7 @@ async def test_injected_failure_dead_letters_and_requeues(
 async def test_reingest_clears_failed_state(api: httpx.AsyncClient, db: asyncpg.Connection) -> None:
     """A successful re-run is newer truth than an old dead letter: operator
     re-ingest of the upload (not just `requeue trace`) closes the open dead
-    letter in the rewrite, so the trace can't stay `failed` after recovery."""
+    letter in the rewrite, so the trace can't stay failed after recovery."""
     res = await upload_file(
         api, loop_payload(uuid.uuid4().hex), headers={"X-Fault": "analyze:permanent"}
     )
@@ -287,7 +303,7 @@ async def test_reingest_clears_failed_state(api: httpx.AsyncClient, db: asyncpg.
     status = await wait_terminal(api, upload_id)
     trace_id = status["trace_ids"][0]
     analysis = await wait_analysis(api, trace_id)
-    assert analysis["analysis_state"] == "failed"
+    assert analysis["failed_reason"] is not None
 
     from redis.asyncio import Redis
 
@@ -308,10 +324,11 @@ async def test_reingest_clears_failed_state(api: httpx.AsyncClient, db: asyncpg.
     assert status["trace_ids"] == [trace_id]
 
     async def recovered():
-        body = (await api.get(f"/v1/traces/{trace_id}/analysis")).json()
-        return body if body["analysis_state"] == "skipped" else None
+        analysis = (await api.get(f"/v1/traces/{trace_id}")).json()["analysis"]
+        return analysis if analysis["session"]["status"] == "skipped" else None
 
-    await wait_until(recovered, 30.0, f"trace {trace_id} stayed failed after re-ingest")
+    analysis = await wait_until(recovered, 30.0, f"trace {trace_id} stayed failed after re-ingest")
+    assert analysis["failed_reason"] is None
     open_dlq = await db.fetchval(
         "select count(*) from dead_letters where trace_id = $1 and requeued_at is null",
         uuid.UUID(trace_id),
@@ -319,67 +336,77 @@ async def test_reingest_clears_failed_state(api: httpx.AsyncClient, db: asyncpg.
     assert open_dlq == 0
 
 
-async def test_sweep_predicate_recovers_lost_kicks(
-    api: httpx.AsyncClient, db: asyncpg.Connection
-) -> None:
-    """stale_pending_ids covers both lost-kick shapes — re-ingest reset
-    (attempts = 0 beside an existing row) and a crash on the final budgeted
-    attempt (no row, budget exhausted) — and excludes the healthy case."""
+async def test_sweep_due_ids(api: httpx.AsyncClient, db: asyncpg.Connection) -> None:
+    """due_ids covers both lost-kick shapes — re-ingest reset (attempts = 0
+    beside an existing row) and a crash on the final budgeted attempt (no
+    row, budget exhausted) — plus session finalization once idle, and
+    excludes the healthy case. Claims are backdated past a real timeout:
+    the query stamps every trace it returns, so a zero timeout would touch
+    the whole shared database."""
     from app.config import settings
     from app.queries import analysis as analysis_q
 
     trace_id = await upload_and_ingest(api, loop_payload(uuid.uuid4().hex))
     await wait_analysis(api, trace_id)
 
-    # Analyzed and claimed: never re-enqueued, even with a zero timeout.
-    assert trace_id not in await analysis_q.stale_pending_ids(db, older_than_minutes=0)
+    async def due(sets: str, *args) -> dict[str, bool]:
+        await db.execute(
+            f"update traces set analysis_attempted_at = now() - interval '1 hour', {sets} "
+            "where id = $1",
+            uuid.UUID(trace_id),
+            *args,
+        )
+        rows = await analysis_q.due_ids(
+            db, older_than_minutes=30, idle_seconds=settings.analysis_idle_seconds
+        )
+        return dict(rows)
 
+    # Analyzed, rolled up and claimed: never re-enqueued.
+    assert trace_id not in await due("analysis_attempts = 1")
     # Re-ingest whose analyze kick was lost: budget reset beside a stale row.
-    await db.execute(
-        "update traces set analysis_attempts = 0, analysis_attempted_at = null where id = $1",
-        uuid.UUID(trace_id),
-    )
-    assert trace_id in await analysis_q.stale_pending_ids(db, older_than_minutes=0)
+    assert (await due("analysis_attempts = 0"))[trace_id] is True
 
     # Crash on the final budgeted attempt: claimed to the cap, no row, no
     # dead letter — must still re-enqueue (the middleware enforces the
     # budget on failure), never an eternal pending.
     await db.execute("delete from trace_analysis where trace_id = $1", uuid.UUID(trace_id))
-    await db.execute(
-        "update traces set analysis_attempts = $2, "
-        "analysis_attempted_at = now() - interval '1 hour' where id = $1",
-        uuid.UUID(trace_id),
-        settings.ingest_max_attempts,
-    )
-    assert trace_id in await analysis_q.stale_pending_ids(db, older_than_minutes=30)
+    assert (await due("analysis_attempts = $2", settings.ingest_max_attempts))[trace_id] is True
+
+    # Session formats finalize only once idle; before that only a lost kick
+    # re-enqueues, as an incremental run.
+    assert trace_id not in await due("source_format = 'codex_jsonl', ended_at = now()")
+    idle = float(settings.analysis_idle_seconds + 60)
+    assert (await due("ended_at = now() - make_interval(secs => $2)", idle))[trace_id] is True
+    assert (await due("ended_at = now(), analysis_attempts = 0"))[trace_id] is False
+
+    assert (await api.delete(f"/v1/traces/{trace_id}")).status_code == 204
 
 
-async def test_reingest_keeps_identity_and_reanalyzes(
+async def test_reingest_keeps_identity_and_human_turn(
     api: httpx.AsyncClient, db: asyncpg.Connection
 ) -> None:
     """Done-when #3 plus the stable-identity decision: re-ingesting a
-    complete upload preserves traces.id, reproduces analysis rows, and
-    keeps human-provenance labels."""
+    complete upload preserves traces.id, reproduces the machine output, and
+    never re-judges or overwrites a human-relabeled turn."""
     res = await upload_file(api, loop_payload(uuid.uuid4().hex))
     assert res.status_code == 201
     upload_id = res.json()["upload_id"]
     status = await wait_terminal(api, upload_id)
     trace_id = status["trace_ids"][0]
     first = await wait_analysis(api, trace_id)
-    first_analyzed_at = await db.fetchval(
-        "select analyzed_at from trace_analysis where trace_id = $1", uuid.UUID(trace_id)
-    )
 
-    # Simulate A3's human relabel: outcome with human provenance.
+    res = await api.put(
+        f"/v1/traces/{trace_id}/turns/0/labels",
+        json={"outcome": "failure", "task_categories": ["coding"]},
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["turns"][0]["provenance"] == "human"
+
+    # Mark the roll-up stale so the re-run has to write — its completion
+    # signal (a current roll-up is otherwise left untouched).
     await db.execute(
-        """
-        update trace_analysis
-        set outcome = 'failure', outcome_confidence = null, outcome_provenance = 'human'
-        where trace_id = $1
-        """,
-        uuid.UUID(trace_id),
+        "update trace_analysis set analyzed_at = null where trace_id = $1", uuid.UUID(trace_id)
     )
-
     result = subprocess.run(
         ["uv", "run", "python", "-m", "app.cli.requeue", "upload", upload_id],
         cwd=SERVICE_DIR,
@@ -393,20 +420,19 @@ async def test_reingest_keeps_identity_and_reanalyzes(
     # Stable identity: the same trace id survives the rewrite.
     assert status["trace_ids"] == [trace_id]
 
-    async def reanalyzed():
-        ts = await db.fetchval(
+    async def rolled_up():
+        return await db.fetchval(
             "select analyzed_at from trace_analysis where trace_id = $1", uuid.UUID(trace_id)
         )
-        return ts if ts is not None and ts != first_analyzed_at else None
 
-    await wait_until(reanalyzed, 30.0, f"trace {trace_id} was never re-analyzed")
+    await wait_until(rolled_up, 30.0, f"trace {trace_id} was never re-analyzed")
 
     second = await wait_analysis(api, trace_id)
-    # Machine output reproduces; the human label survives the rewrite.
-    assert second["signals"] == first["signals"]
-    assert second["analysis_state"] == first["analysis_state"] == "skipped"
-    assert second["labels"]["outcome"] == {
-        "value": "failure",
-        "confidence": None,
-        "provenance": "human",
-    }
+    # Machine output reproduces; the human turn survives the rewrite.
+    assert second["session"]["signals"] == first["session"]["signals"]
+    assert second["session"]["status"] == first["session"]["status"] == "skipped"
+    (turn,) = second["turns"]
+    assert turn["provenance"] == "human"
+    assert turn["outcome"] == "failure"
+    assert [(lb["field"], lb["value"]) for lb in turn["labels"]] == [("task_category", "coding")]
+    assert second["session"]["task_categories"] == ["coding"]

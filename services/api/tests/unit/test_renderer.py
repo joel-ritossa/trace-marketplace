@@ -3,7 +3,7 @@
 import json
 
 from app.analysis import RendererConfig, render_trace
-from app.analysis.rendering import _middle_out
+from app.analysis.rendering import middle_out
 from tests.unit.analysis_factories import make_span, make_trace
 
 
@@ -115,12 +115,12 @@ def test_skeleton_floor_when_must_haves_exceed_budget() -> None:
 
 def test_middle_out_marker_counts_removed_chars() -> None:
     text = "a" * 100 + "b" * 100
-    capped, cut = _middle_out(text, 100)
+    capped, cut = middle_out(text, 100)
     assert cut
     assert len(capped) <= 100
     assert capped.startswith("a") and capped.endswith("b")
     assert "chars truncated" in capped
-    same, uncut = _middle_out("short", 100)
+    same, uncut = middle_out("short", 100)
     assert same == "short" and not uncut
 
 

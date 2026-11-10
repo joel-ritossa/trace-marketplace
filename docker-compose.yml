@@ -16,9 +16,9 @@ x-backend-env: &backend-env
   # when unset (a bare key would poison the keyless skip: an empty-string
   # provider key counts as configured). Keyless = the judge skips honestly.
   ANALYSIS_JUDGE_MODEL:
-  ANALYSIS_JUDGE_VOTES:
-  ANALYSIS_JUDGE_CONSENSUS:
-  ANALYSIS_CONFIDENCE_THRESHOLD:
+  ANALYSIS_AGENT_MAX_STEPS:
+  ANALYSIS_TURN_CONCURRENCY:
+  ANALYSIS_IDLE_SECONDS:
   ANALYSIS_LOOP_N:
   ANALYSIS_RENDER_BUDGET_TOKENS:
   ANALYSIS_RENDER_FINAL_STEPS:
@@ -27,8 +27,6 @@ x-backend-env: &backend-env
   ANALYSIS_EMBEDDING_MODEL:
   ANALYSIS_EMBEDDING_BUDGET_TOKENS:
   OPENAI_API_KEY:
-  ANTHROPIC_API_KEY:
-  OPENROUTER_API_KEY:
 
 services:
   redis:

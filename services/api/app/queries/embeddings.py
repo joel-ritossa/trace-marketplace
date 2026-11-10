@@ -21,22 +21,22 @@ async def upsert(
     *,
     embedding: list[float],
     model: str,
-    renderer_version: str,
+    input_version: str,
 ) -> None:
     await pool.execute(
         """
-        insert into trace_embeddings (trace_id, embedding, model, renderer_version)
+        insert into trace_embeddings (trace_id, embedding, model, input_version)
         values ($1, $2::vector, $3, $4)
         on conflict (trace_id) do update set
           embedding = excluded.embedding,
           model = excluded.model,
-          renderer_version = excluded.renderer_version,
+          input_version = excluded.input_version,
           created_at = now()
         """,
         trace_id,
         vector_literal(embedding),
         model,
-        renderer_version,
+        input_version,
     )
 
 
@@ -70,7 +70,8 @@ async def similar_traces(
                p.display_name as owner_display_name,
                (t.owner_id = $2) as is_owner,
                (a.id is not null) as acquired, a.acquired_at,
-               ta.outcome, ta.outcome_confidence, ta.outcome_provenance, ta.llm_status,
+               t.analysis_attempts, ta.outcome, ta.task_categories, ta.failure_modes,
+               ta.llm_status, ta.analyzed_at,
                exists (
                  select 1 from dead_letters dl
                  where dl.trace_id = t.id and dl.requeued_at is null

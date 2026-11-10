@@ -6,8 +6,7 @@ Mirrors the importer's `mapping.py` approach: OTel GenAI conventions first
 `gen_ai.prompt.N.*`, `traceloop.entity.*`), then span events. Fail open:
 no extractable content returns None and the caller keeps the step skeleton.
 
-Shared by the renderer (judge prompt surface) and the trace→sample adapter
-(family 3 / RAGAS).
+Shared by the renderer, the signals, and the agent judge's tools.
 """
 
 import json
@@ -196,7 +195,7 @@ def _user_text_from_generic(value: str | None) -> str | None:
 
 def first_user_message(spans: list[SpanInput]) -> str | None:
     """The earliest user-role message across LLM spans — a rendering must-have
-    and the sample adapter's `user_input`. Per-span fallback chain mirrors
+    and a turn-less trace's ask. Per-span fallback chain mirrors
     `input_text`: GenAI messages, Traceloop flattened prompts, generic input.
     Session traces carry the ask on their turn spans; the first one wins."""
     for span in spans:
@@ -311,18 +310,3 @@ def _flattened_tool_calls(attributes: dict[str, Any]) -> list[tuple[None, str, A
                 break
             calls.append((None, name, attributes.get(f"{prefix}.tool_calls.{j}.arguments")))
     return calls
-
-
-def retrieved_contexts(span: SpanInput) -> list[str]:
-    """Document contents from a retriever span: OpenInference indexed
-    documents, else the span's output text as one context."""
-    contexts = []
-    for i in range(MAX_INDEXED_ATTRS):
-        content = span.attributes.get(f"retrieval.documents.{i}.document.content")
-        if not isinstance(content, str) or not content:
-            break
-        contexts.append(content)
-    if contexts:
-        return contexts
-    text = output_text(span)
-    return [text] if text else []

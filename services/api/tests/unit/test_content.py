@@ -150,20 +150,3 @@ def test_attribute_summary_skips_noise_and_caps() -> None:
         },
     )
     assert content.attribute_summary(span) == "retrieval.documents=3; session.id=abc"
-
-
-def test_retrieved_contexts_indexed_documents_then_output() -> None:
-    indexed = make_span(
-        0,
-        kind="retriever",
-        attributes={
-            "retrieval.documents.0.document.content": "doc a",
-            "retrieval.documents.1.document.content": "doc b",
-        },
-    )
-    assert content.retrieved_contexts(indexed) == ["doc a", "doc b"]
-
-    plain = make_span(1, kind="retriever", attributes={"output.value": "one doc"})
-    assert content.retrieved_contexts(plain) == ["one doc"]
-
-    assert content.retrieved_contexts(make_span(2, kind="retriever")) == []

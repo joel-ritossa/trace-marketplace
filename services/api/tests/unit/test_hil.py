@@ -1,57 +1,138 @@
-"""A3 HIL pure logic: the provenance reason-filter, the canned-verdict fault
-grammar, the resolve request's coherence validation, and the resolve
-write-set arithmetic (label_updates / verdict_snapshot). The transactional
-plumbing is integration-tested."""
+"""Session-analysis pure logic (9_session-analysis.md): which turns get
+(re)judged, the derived status, the review-item context rule, stored turns
+back as verdicts, the relabel request, session signal aggregation, and the
+canned-verdict fault grammar. The transactional plumbing (union recompute,
+human-turn guard, review sync) is integration-tested."""
 
 import pytest
 from pydantic import ValidationError
 
-from app.analysis.routing import RoutingReason
+from app.analysis import SignalsResult, combine
 from app.dev import faults
-from app.queries.analysis import filter_reasons
-from app.queries.review_items import label_updates, verdict_snapshot
-from app.schemas.review import ReviewResolveRequest
+from app.queries.analysis import derive_status, needs_judging, stored_verdict
+from app.queries.review_items import review_context
+from app.schemas.analysis import TurnLabelsRequest
 
 
-def reasons(*codes: str) -> list[RoutingReason]:
-    return [RoutingReason(code=code, message=f"msg {code}") for code in codes]
+def turn(**overrides) -> dict:
+    return {"provenance": "machine", "fingerprint": "f1", "outcome": "success", **overrides}
 
 
-ALL_CODES = [
-    "signals_judge_disagreement",
-    "outcome_indeterminate",
-    "low_outcome_confidence",
-    "low_task_category_confidence",
-]
+# --- needs_judging: which turns a run judges ---
 
 
-# --- filter_reasons (decision 3: don't re-ask answered questions) ---
+def test_missing_turn_is_judged() -> None:
+    assert needs_judging(None, "f1", llm=True)
+    assert needs_judging(None, "f1", llm=False)  # signals-only row still written
 
 
-def test_machine_provenance_keeps_everything() -> None:
-    provs = {"outcome": "machine", "failure_mode": None, "task_category": "machine"}
-    assert filter_reasons(reasons(*ALL_CODES), provs) == reasons(*ALL_CODES)
+def test_current_turn_is_not_rejudged() -> None:
+    assert not needs_judging(turn(), "f1", llm=True)
 
 
-def test_no_row_keeps_everything() -> None:
-    assert filter_reasons(reasons(*ALL_CODES), {}) == reasons(*ALL_CODES)
+def test_changed_fingerprint_is_rejudged() -> None:
+    assert needs_judging(turn(), "f2", llm=True)
 
 
-@pytest.mark.parametrize("prov", ["human", "human_confirmed"])
-def test_human_outcome_drops_outcome_reasons(prov: str) -> None:
-    provs = {"outcome": prov, "task_category": "machine"}
-    assert filter_reasons(reasons(*ALL_CODES), provs) == reasons("low_task_category_confidence")
+def test_human_turn_is_never_rejudged() -> None:
+    assert not needs_judging(turn(provenance="human"), "f2", llm=True)
 
 
-@pytest.mark.parametrize("prov", ["human", "human_confirmed"])
-def test_human_category_drops_category_reason(prov: str) -> None:
-    provs = {"outcome": "machine", "task_category": prov}
-    assert filter_reasons(reasons(*ALL_CODES), provs) == reasons(*ALL_CODES[:3])
+def test_unjudged_turn_waits_for_a_judge() -> None:
+    keyless = turn(outcome=None)
+    assert needs_judging(keyless, "f1", llm=True)
+    assert not needs_judging(keyless, "f1", llm=False)
 
 
-def test_all_answered_drops_all() -> None:
-    provs = {"outcome": "human", "task_category": "human_confirmed"}
-    assert filter_reasons(reasons(*ALL_CODES), provs) == []
+# --- derive_status ---
+
+
+def test_status() -> None:
+    assert derive_status(None, None, 0) == "pending"
+    assert derive_status("skipped", None, 1) == "skipped"
+    assert derive_status("complete", None, 1) == "in_progress"
+    assert derive_status("complete", "2026-01-01", 1) == "final"
+    # Re-ingested since the last claim: not final until re-seen.
+    assert derive_status("complete", "2026-01-01", 0) == "in_progress"
+
+
+# --- review_context: one open item listing the uncertain turns ---
+
+
+def test_no_uncertain_turn_no_item() -> None:
+    assert review_context([]) is None
+
+
+def test_item_lists_uncertain_turns() -> None:
+    rows = [{"turn_index": 2, "uncertain": "step limit", "summary": "Ran tests"}]
+    assert review_context(rows) == {
+        "turns": [{"turn_index": 2, "reason": "step limit", "summary": "Ran tests"}]
+    }
+
+
+# --- stored_verdict: stored rows back into the roll-up ---
+
+
+def test_stored_verdict_splits_labels() -> None:
+    row = {
+        "turn_index": 1,
+        "outcome": "partial",
+        "summary": None,
+        "uncertain": None,
+        "labels": [
+            {"field": "task_category", "value": "coding", "span_ids": [], "reason": None},
+            {"field": "failure_mode", "value": "system_failure", "span_ids": [], "reason": None},
+        ],
+    }
+    verdict = stored_verdict(row)
+    assert verdict.task_categories == ["coding"]
+    assert verdict.failure_modes[0].value == "system_failure"
+    assert verdict.failure_modes[0].span_ids == []  # human labels may cite no span
+    assert verdict.summary == ""
+
+
+# --- TurnLabelsRequest ---
+
+
+def test_relabel_request_validates_vocabularies() -> None:
+    ok = TurnLabelsRequest(
+        outcome="partial",
+        task_categories=["coding", "coding"],
+        failure_modes=[{"value": "invalid_invocation", "span_ids": ["a"]}],
+    )
+    assert ok.task_categories == ["coding"]
+    for bad in (
+        {"outcome": "partial", "task_categories": []},
+        {"outcome": "partial", "task_categories": ["nope"]},
+        {"outcome": "maybe", "task_categories": ["coding"]},
+        {"outcome": "failure", "task_categories": ["coding"], "failure_modes": [{"value": "x"}]},
+        # An empty set already says "none identified".
+        {
+            "outcome": "failure",
+            "task_categories": ["coding"],
+            "failure_modes": [{"value": "inconclusive"}],
+        },
+    ):
+        with pytest.raises(ValidationError):
+            TurnLabelsRequest.model_validate(bad)
+
+
+# --- combine: session signals from turns ---
+
+
+def test_combine_any_and_sums() -> None:
+    combined = combine(
+        [
+            SignalsResult(has_retry_loop=False, recovered_from_error=None, llm_call_count=2),
+            SignalsResult(has_retry_loop=True, loop_kind="cycle", llm_call_count=3),
+            SignalsResult(),
+        ]
+    )
+    assert combined.has_retry_loop is True
+    assert combined.loop_kind == "cycle"
+    assert combined.recovered_from_error is None
+    assert combined.llm_call_count == 5
+    assert combined.tool_call_count is None
 
 
 # --- canned-verdict fault grammar ---
@@ -60,9 +141,8 @@ def test_all_answered_drops_all() -> None:
 @pytest.mark.parametrize(
     "spec",
     [
-        "analyze:verdict:success:0.4",
-        "analyze:verdict:failure:1.0",
-        "analyze:verdict:indeterminate:0.95:coding:0.5",
+        "analyze:verdict:success",
+        "analyze:verdict:partial:uncertain",
         "analyze:permanent",  # the A2 grammar still validates
         "transient:2",
     ],
@@ -73,41 +153,18 @@ def test_fault_grammar_accepts(spec: str) -> None:
 
 @pytest.mark.parametrize(
     "spec",
-    [
-        "verdict:success:0.4",  # verdict is analysis-only
-        "analyze:verdict:success",  # confidence required
-        "analyze:verdict:maybe:0.4",  # not in the ternary
-        "analyze:verdict:success:1.5",  # confidence out of range
-        "analyze:verdict:success:0.4:coding",  # category needs its confidence
-    ],
+    ["verdict:success", "analyze:verdict:maybe", "analyze:verdict:success:0.4"],
 )
 def test_fault_grammar_rejects(spec: str) -> None:
     assert not faults.is_valid(spec)
 
 
-async def test_canned_verdict_construction(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_canned_verdict(monkeypatch: pytest.MonkeyPatch) -> None:
     async def armed(upload_id: str) -> str:
-        return "analyze:verdict:failure:0.6:coding:0.3"
+        return "analyze:verdict:failure:uncertain"
 
     monkeypatch.setattr(faults, "_armed_spec", armed)
-    verdict = await faults.canned_verdict("u1")
-    assert verdict is not None
-    assert verdict.outcome == "failure"
-    assert verdict.outcome_confidence == 0.6
-    assert verdict.failure_mode == "inconclusive"  # failure gets a placeholder mode
-    assert verdict.task_category == "coding"
-    assert verdict.task_category_confidence == 0.3
-
-
-async def test_canned_verdict_success_has_no_failure_mode(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def armed(upload_id: str) -> str:
-        return "analyze:verdict:success:0.4"
-
-    monkeypatch.setattr(faults, "_armed_spec", armed)
-    verdict = await faults.canned_verdict("u1")
-    assert verdict is not None
-    assert verdict.failure_mode is None
-    assert verdict.task_category is None
+    assert await faults.canned_verdict("u1") == ("failure", True)
 
 
 async def test_non_verdict_spec_is_not_canned(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -120,118 +177,7 @@ async def test_non_verdict_spec_is_not_canned(monkeypatch: pytest.MonkeyPatch) -
 
 async def test_verdict_spec_never_trips(monkeypatch: pytest.MonkeyPatch) -> None:
     async def armed(upload_id: str) -> str:
-        return "analyze:verdict:success:0.4"
+        return "analyze:verdict:success"
 
     monkeypatch.setattr(faults, "_armed_spec", armed)
     await faults.trip_analysis("u1", attempt=1)  # must not raise
-
-
-# --- ReviewResolveRequest coherence (the resolve boundary) ---
-
-
-@pytest.mark.parametrize("outcome", ["success", "indeterminate"])
-def test_resolve_request_rejects_failure_mode_with_non_failure_outcome(outcome: str) -> None:
-    with pytest.raises(ValidationError):
-        ReviewResolveRequest(outcome=outcome, failure_mode="inconclusive")
-
-
-def test_resolve_request_allows_failure_mode_alone() -> None:
-    # Refining a machine failure verdict without touching its outcome.
-    ReviewResolveRequest(failure_mode="inconclusive")
-
-
-def test_resolve_request_allows_failure_mode_with_failure() -> None:
-    ReviewResolveRequest(outcome="failure", failure_mode="system_failure")
-
-
-# --- label_updates (decision 6: the resolve write-set) ---
-
-
-def row(**overrides) -> dict:
-    base = {
-        "outcome": "success",
-        "outcome_confidence": 0.4,
-        "outcome_provenance": "machine",
-        "failure_mode": None,
-        "failure_mode_confidence": None,
-        "failure_mode_provenance": None,
-        "task_category": "coding",
-        "task_category_confidence": 0.9,
-        "task_category_provenance": "machine",
-    }
-    return {**base, **overrides}
-
-
-def test_differing_answer_is_human() -> None:
-    updates = label_updates({"outcome": "failure"}, row())
-    assert updates["outcome"] == "failure"
-    assert updates["outcome_confidence"] == 1.0
-    assert updates["outcome_provenance"] == "human"
-
-
-def test_matching_machine_answer_is_confirmed() -> None:
-    updates = label_updates({"outcome": "success"}, row())
-    assert updates["outcome_provenance"] == "human_confirmed"
-    assert updates["outcome_confidence"] == 1.0
-
-
-def test_matching_human_answer_stays_human() -> None:
-    # Confirmation compares against machine values only: re-answering a
-    # previously human-set value is a fresh human assertion.
-    updates = label_updates({"outcome": "success"}, row(outcome_provenance="human"))
-    assert updates["outcome_provenance"] == "human"
-
-
-def test_partial_answer_touches_only_answered_fields() -> None:
-    updates = label_updates({"task_category": "coding"}, row())
-    assert set(updates) == {"task_category", "task_category_confidence", "task_category_provenance"}
-    assert updates["task_category_provenance"] == "human_confirmed"
-
-
-def test_non_failure_outcome_nulls_machine_failure_mode() -> None:
-    current = row(
-        outcome="failure",
-        failure_mode="system_failure",
-        failure_mode_confidence=0.8,
-        failure_mode_provenance="machine",
-    )
-    updates = label_updates({"outcome": "success"}, current)
-    assert updates["failure_mode"] is None
-    assert updates["failure_mode_confidence"] is None
-    assert updates["failure_mode_provenance"] is None
-
-
-def test_non_failure_outcome_keeps_human_failure_mode() -> None:
-    current = row(outcome="failure", failure_mode="system_failure", failure_mode_provenance="human")
-    updates = label_updates({"outcome": "indeterminate"}, current)
-    assert "failure_mode" not in updates  # the human's label is their business
-
-
-def test_failure_outcome_keeps_machine_failure_mode() -> None:
-    current = row(
-        outcome="failure", failure_mode="system_failure", failure_mode_provenance="machine"
-    )
-    updates = label_updates({"outcome": "failure"}, current)
-    assert "failure_mode" not in updates
-
-
-def test_answered_failure_mode_beats_the_nulling_rule() -> None:
-    # Unreachable through the API since the request validator rejects this
-    # shape; documents the pure function's standalone precedence.
-    current = row(failure_mode="system_failure", failure_mode_provenance="machine")
-    updates = label_updates({"outcome": "indeterminate", "failure_mode": "inconclusive"}, current)
-    assert updates["failure_mode"] == "inconclusive"
-    assert updates["failure_mode_provenance"] == "human"
-
-
-# --- verdict_snapshot (owner-relabel context) ---
-
-
-def test_snapshot_takes_machine_fields_only() -> None:
-    current = row(outcome_provenance="human", outcome="failure", outcome_confidence=1.0)
-    snapshot = verdict_snapshot(current)
-    assert snapshot["outcome"] is None  # human-resolved: not the machine's take
-    assert snapshot["outcome_confidence"] is None
-    assert snapshot["task_category"] == "coding"
-    assert snapshot["task_category_confidence"] == 0.9
-    assert snapshot["failure_mode"] is None
