@@ -1,6 +1,7 @@
 from datetime import timedelta
 
 from app.analysis.agent.turns import split
+from app.redaction import scrub_text
 from tests.unit.analysis_factories import make_span, make_trace
 
 
@@ -79,3 +80,18 @@ def test_split_ignores_bool_and_duplicate_indices_and_reads_origin() -> None:
     turns = split(trace)
     assert [(t.index, t.origin) for t in turns] == [(0, "human"), (1, "automated")]
     assert turns[1].span.source_span_id == f"{6:016x}"
+
+
+def _with_output(text: str):
+    trace = session()
+    span = trace.spans[7]
+    trace.spans[7] = span.model_copy(update={"attributes": {"gen_ai.tool.call.result": text}})
+    return split(trace)[1].fingerprint
+
+
+def test_fingerprint_ignores_the_upload_salt_but_not_content() -> None:
+    raw = "mailed jane@example.com the key"
+    one, two = scrub_text(raw, "salt-a")[0], scrub_text(raw, "salt-b")[0]
+    assert one != two
+    assert _with_output(one) == _with_output(two)
+    assert _with_output(one) != _with_output(scrub_text(raw + " twice", "salt-a")[0])

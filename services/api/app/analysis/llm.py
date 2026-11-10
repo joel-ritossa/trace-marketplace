@@ -7,11 +7,13 @@ declared fields, this module bootstraps `os.environ` from the same files
 (`OPENAI_*` keys only, non-empty values, real-env-wins) so file-kept keys
 reach the SDK in the runner and worker alike.
 
-Privacy: nothing here logs, and the Agents SDK's trace export to OpenAI is
-disabled at import. Prompts and raw outputs exist only in memory; only
+Privacy: the only log line is a provider error's class, status, type and
+code (never its message or any content), and the Agents SDK's trace
+export to OpenAI is disabled at import. Prompts and raw outputs exist only in memory; only
 parsed results and call metadata (latency/tokens) leave the call site.
 """
 
+import logging
 import os
 import time
 from dataclasses import dataclass
@@ -33,6 +35,7 @@ from pydantic import BaseModel
 from app.env import env_files
 
 set_tracing_disabled(True)
+logger = logging.getLogger(__name__)
 
 _env_loaded = False
 
@@ -70,9 +73,14 @@ def llm_configured(model: str) -> bool:
 
 
 class PermanentAnalysisError(Exception):
-    """Provider failure retrying cannot fix (auth, bad request, context
-    window — not bad infra). Mirrors PermanentIngestError: the worker marks
-    analysis failed immediately; anything else is transient and retried."""
+    """Provider failure retrying cannot fix (auth, bad request — not bad
+    infra). Mirrors PermanentIngestError: the worker marks analysis failed
+    immediately; anything else is transient and retried. `code` is the
+    provider's error code (or type/class when it has none), safe to store."""
+
+    def __init__(self, message: str, code: str | None = None):
+        super().__init__(message)
+        self.code = code
 
 
 class MalformedResponse(Exception):
@@ -159,11 +167,12 @@ async def run_agent(agent: Agent, input: str | list[Any], max_turns: int) -> Age
     except ModelBehaviorError as exc:
         raise MalformedResponse(str(exc)) from exc
     except _PERMANENT as exc:
-        if getattr(exc, "code", None) == "context_length_exceeded":
+        code = _log_provider_error(exc)
+        if code == "context_length_exceeded":
             usage = last.context.usage if last.context else None
             history = last.input or _as_list(input)
             raise ContextLimitExceeded(history, _meta(usage, started)) from None
-        raise PermanentAnalysisError(str(exc)) from exc
+        raise PermanentAnalysisError(str(exc), code) from exc
     return AgentRun(
         result.final_output, result.to_input_list(), _meta(result.context_wrapper.usage, started)
     )
@@ -177,12 +186,23 @@ async def embed(model: str, text: str) -> tuple[list[float], CallMeta]:
     try:
         response = await openai.AsyncOpenAI().embeddings.create(model=model, input=[text])
     except _PERMANENT as exc:
-        raise PermanentAnalysisError(str(exc)) from exc
+        raise PermanentAnalysisError(str(exc), _log_provider_error(exc)) from exc
     meta = CallMeta(
         latency_ms=int((time.perf_counter() - started) * 1000),
         input_tokens=response.usage.prompt_tokens,
     )
     return list(response.data[0].embedding), meta
+
+
+def _log_provider_error(exc: Exception) -> str:
+    """Log a permanent provider error's metadata only; return its code."""
+    status = getattr(exc, "status_code", None)
+    kind = getattr(exc, "type", None)
+    code = getattr(exc, "code", None)
+    logger.warning(
+        "provider error %s: status=%s type=%s code=%s", type(exc).__name__, status, kind, code
+    )
+    return str(code or kind or type(exc).__name__)
 
 
 def _as_list(input: str | list[Any]) -> list[Any]:

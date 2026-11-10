@@ -44,9 +44,12 @@ async def test_result_meta(monkeypatch) -> None:
 
 
 async def test_permanent_provider_error_is_classified(monkeypatch) -> None:
-    monkeypatch.setattr(Runner, "run", raising(api_error(openai.AuthenticationError, 401)))
-    with pytest.raises(llm.PermanentAnalysisError):
+    exc = api_error(openai.BadRequestError, 400)
+    exc.code = "invalid_prompt"
+    monkeypatch.setattr(Runner, "run", raising(exc))
+    with pytest.raises(llm.PermanentAnalysisError) as info:
         await llm.run_agent(AGENT, "hi", 3)
+    assert info.value.code == "invalid_prompt"
 
 
 async def test_context_overflow_is_not_permanent(monkeypatch) -> None:

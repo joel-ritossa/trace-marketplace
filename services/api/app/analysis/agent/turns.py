@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from app.analysis.content import first_user_message, input_text, output_text
 from app.analysis.trace_input import SpanInput, TraceInput
+from app.redaction import unsalted
 
 
 @dataclass(frozen=True)
@@ -17,9 +18,9 @@ class TurnView:
     spans: list[SpanInput]
     # source_span_id -> nesting depth below the turn (0 = direct child).
     depth: dict[str, int]
-    # Stable across re-ingest of unchanged content (no timestamps: clockless
-    # logs get synthesized ones); changes when a span is added or its
-    # status or content changes.
+    # Stable across re-uploads of unchanged content: no timestamps (clockless
+    # logs get synthesized ones) and no salted redaction digests; changes
+    # when a span is added or its status or content changes.
     fingerprint: str
     # "human" (a person's ask) or "automated" (a CI, scheduled or peer
     # event that started the work cycle); from the turn span's `turn.origin`.
@@ -80,7 +81,7 @@ def _view(
     spans = [s for s in trace.spans if s.source_span_id in depth]
     digest = hashlib.sha256()
     for s in ([span] if span else []) + spans:
-        text = f"{input_text(s) or ''}\0{output_text(s) or ''}"
+        text = unsalted(f"{input_text(s) or ''}\0{output_text(s) or ''}")
         signal = hashlib.sha256(text.encode()).hexdigest()
         digest.update(f"{s.source_span_id} {s.status} {signal}\n".encode())
     origin = "automated" if span and span.attributes.get("turn.origin") == "automated" else "human"
