@@ -190,10 +190,14 @@ class SessionBuilder:
             for i in range(first + 1, len(events)):
                 if events[i].ts is None:
                     events[i].ts = events[i - 1].ts + NANO
-        for i, event in enumerate(events):
-            if event.end is None:
-                nxt = events[i + 1].ts if i + 1 < len(events) else None
-                event.end = max(event.ts + NANO // 1000, nxt or event.ts + NANO)
+        # Missing ends run to the next event of the same turn; never across
+        # turns, or idle time between asks would read as model latency.
+        for turn in self.turns:
+            turn_events = flatten(turn.events)
+            for i, event in enumerate(turn_events):
+                if event.end is None:
+                    nxt = turn_events[i + 1].ts if i + 1 < len(turn_events) else None
+                    event.end = max(event.ts + NANO // 1000, nxt or event.ts + NANO)
 
         key = f"{self.agent}:{self.session_id}"
         trace_id = hashlib.sha256(key.encode()).hexdigest()[:32]

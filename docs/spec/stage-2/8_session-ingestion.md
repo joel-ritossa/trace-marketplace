@@ -52,7 +52,7 @@ pointed at the directories the tools already write.
   at ingest (e.g. a detected schema yielding zero turns) are
   `PermanentIngestError`s — verbatim on `/uploads`, never retried.
 - `uploads.source_format` and `traces.source_format` record the detected
-  format; session-converted traces carry the sessions importer version (`2.0.0`: one trace per session; `2.1.0`: harness-injected user records no longer open turns; `2.2.0`: subagents nest under their spawning call).
+  format; session-converted traces carry the sessions importer version (`2.0.0`: one trace per session; `2.1.0`: harness-injected user records no longer open turns; `2.2.0`: subagents nest under their spawning call; `2.3.0`: synthesized span ends never cross a turn).
 
 ## Per-Session Granularity
 
@@ -78,7 +78,10 @@ turns are spans inside the session trace, not traces.
 - Timestamps: real where the log has them (Codex, Claude). Cursor
   transcripts carry none: synthesized at one second per event anchored to
   the upload's `created_at`, marked `converted.synthesized_timestamps`.
-  Anchoring to the upload row keeps re-ingest deterministic.
+  Anchoring to the upload row keeps re-ingest deterministic. Logs record
+  when a response arrived, not how long it took: a span without an end runs
+  to the next event of the same turn (the turn's last event gets 1s), so
+  idle time between asks never reads as latency.
 - No content caps: span attributes carry full prompt/tool text (the 50 MB
   upload limit bounds size; redaction (7_redaction.md) applies unchanged).
 

@@ -189,6 +189,25 @@ def test_claude_subagent_nests_under_its_spawning_call():
     assert len([s for s in trace.spans if "turn.index" in s.attributes]) == 1
 
 
+def test_missing_end_stays_inside_its_turn():
+    """A response's synthesized end runs to the next event of its own turn,
+    never across an idle gap to the next ask."""
+
+    def rec(kind, ts, text):
+        return {"type": kind, "timestamp": ts, "message": {"role": kind, "content": text}}
+
+    records = [
+        rec("user", "2026-01-01T00:00:00Z", "first"),
+        rec("assistant", "2026-01-01T00:00:05Z", "answer"),
+        rec("user", "2026-01-04T00:00:00Z", "three days later"),
+        rec("assistant", "2026-01-04T00:00:02Z", "again"),
+    ]
+    payload = sessions.convert("anthropic_jsonl", records, session_id="s", anchor=ANCHOR)
+    (trace,) = otlp.import_payload(payload, redaction_salt=OFFLINE_SALT).traces
+    first = next(s for s in trace.spans if s.attributes.get("output.value") == "answer")
+    assert first.duration_ms <= 1000
+
+
 # --- golden-corpus semantics (fixtures/golden/, real-log shapes) ----------------
 
 
